@@ -359,3 +359,72 @@ For questions about:
 ---
 
 **Ready to use?** Start with `docs/README.md` for navigation, or go directly to `SKILL/SKILL.md` to see how Claude will orchestrate your documentation.
+
+# Agentic Development Repository
+
+This repository contains reusable tools for AI agentic platform development.
+
+## Contents
+
+### 1. Platform Documentation Orchestrator Skill
+**Location**: `/SKILL/`
+
+Reusable skill for Claude that generates comprehensive documentation for AI agentic platforms.
+
+- **`SKILL.md`**: Original orchestrator skill
+- **`platform-documentation-orchestrator-v2.md`**: Enhanced version with automation script integration
+
+**Usage with Claude**:
+```
+"Using the platform-documentation-orchestrator-v2 skill, generate 
+complete documentation for [your platform]"
+```
+
+### 2. Tax-Efficient Income Investment Platform
+**Location**: `/income-platform/`
+
+Complete AI-powered investment platform with:
+- 11 specialized AI agents
+- ML-powered income scoring (XGBoost)
+- Tax optimization across account types
+- Hybrid orchestration (n8n + Prefect)
+
+**Quick Start**: See [income-platform/README.md](income-platform/README.md)
+
+**Documentation**: See [income-platform/docs/index.md](income-platform/docs/index.md)
+
+### 3. Supporting References
+**Location**: `/references/`
+
+Best practices and patterns for documentation generation.
+
+## Repository Structure
+```
+Agentic/
+├── SKILL/                    # Reusable documentation orchestrator
+├── references/               # Supporting documentation
+├── income-platform/          # Investment platform project
+└── README.md                # This file
+```
+
+## Using This Repository
+
+### For New Projects
+
+1. Use the skill to generate documentation:
+```
+   Upload SKILL/ to Claude
+   "Use platform-documentation-orchestrator-v2 to document my new project"
+```
+
+2. Automation scripts will maintain documentation automatically
+
+### For the Income Platform
+
+1. See [income-platform/README.md](income-platform/README.md) for platform overview
+2. See [income-platform/INTEGRATION_GUIDE.md](income-platform/INTEGRATION_GUIDE.md) for Claude automation
+3. Development: See [income-platform/docs/index.md](income-platform/docs/index.md)
+
+## License
+
+[Your License]
