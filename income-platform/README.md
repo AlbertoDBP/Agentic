@@ -299,7 +299,7 @@ Tracks covered call ETF performance:
 **Steps**:
 ```bash
 # 1. Clone repo
-git clone https://github.com/your-org/income-platform.git
+git clone https://github.com/albertoDBP/agentic/income-platform.git
 cd income-platform
 
 # 2. Copy environment template
@@ -407,9 +407,9 @@ We welcome contributions! Please see:
 ## 📞 Support
 
 - **Documentation**: [docs/index.md](docs/index.md)
-- **Issues**: [GitHub Issues](https://github.com/your-org/income-platform/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/income-platform/discussions)
-- **Security**: security@your-domain.com
+- **Issues**: [GitHub Issues](https://github.com/albertoDBP/agentic/income-platform/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/albertoDBP/agentic/income-platform/discussions)
+- **Security**: security@dbp.it.com
 
 ---
 
