@@ -8,7 +8,7 @@
 
 ## 🎯 Overview
 
-The Tax-Efficient Income Investment Platform is a sophisticated AI-powered system that helps investors optimize covered call ETF portfolios for **12-18% annual income yields** while managing:
+The Tax-Efficient Income Investment Platform is a sophisticated AI-powered system that helps investors optimize income stocks and covered call ETF portfolios for **12-18% annual income yields** while managing:
 - **Tax efficiency** across account types (IRA, 401k, taxable)
 - **NAV erosion** common in covered call ETFs
 - **Dividend sustainability** and quality
@@ -48,7 +48,7 @@ The Tax-Efficient Income Investment Platform is a sophisticated AI-powered syste
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/income-platform.git
+git clone https://github.com/albertoDBP/agentic/income-platform.git
 cd income-platform
 
 # Start local environment
