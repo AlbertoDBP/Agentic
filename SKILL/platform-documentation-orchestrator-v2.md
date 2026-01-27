@@ -690,9 +690,4 @@ This enhanced orchestrator skill enables Claude to:
 The result: **Seamless documentation workflow** where users focus on design and development while Claude handles documentation mechanics.
 
 ---
-
-**Next**: Add this enhanced skill to your skill collection and invoke with:
-```
-"Using the platform-documentation-orchestrator-v2 skill, update Agent 3 
-documentation with the new XGBoost model design."
 ```
