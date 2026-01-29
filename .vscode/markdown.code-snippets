@@ -1,0 +1,167 @@
+{
+  "Functional Specification Header": {
+    "prefix": "funcspec",
+    "body": [
+      "# ${1:Component Name} - Functional Specification",
+      "",
+      "**Version**: 1.0  ",
+      "**Date**: ${CURRENT_YEAR}-${CURRENT_MONTH}-${CURRENT_DATE}  ",
+      "**Status**: ${2|Draft,In Progress,Review,Complete|}  ",
+      "**Priority**: ${3|P0,P1,P2,P3|}",
+      "",
+      "## Purpose & Scope",
+      "",
+      "${4:What does this component do in 2-3 sentences}",
+      "",
+      "### What This Component Does",
+      "- ${5:Primary function 1}",
+      "- ${6:Primary function 2}",
+      "",
+      "### What This Component Does NOT Do",
+      "- ${7:Out of scope item}",
+      "",
+      "---",
+      "",
+      "## Responsibilities",
+      "",
+      "### Primary Responsibilities",
+      "1. **${8:Responsibility 1}**: ${9:Description}",
+      "",
+      "$0"
+    ],
+    "description": "Functional specification header"
+  },
+  
+  "ADR Entry": {
+    "prefix": "adr",
+    "body": [
+      "## ADR-${1:XXX}: ${2:Decision Title}",
+      "",
+      "**Date**: ${CURRENT_YEAR}-${CURRENT_MONTH}-${CURRENT_DATE}  ",
+      "**Status**: ${3|Proposed,Accepted,Deprecated,Superseded|}  ",
+      "**Component**: ${4:Component Name}",
+      "",
+      "### Context",
+      "",
+      "${5:What problem are you solving? What's the situation?}",
+      "",
+      "### Decision",
+      "",
+      "${6:What did you decide to do?}",
+      "",
+      "### Rationale",
+      "",
+      "${7:Why this decision? What are the key reasons?}",
+      "",
+      "### Consequences",
+      "",
+      "**Positive**:",
+      "- ✅ ${8:Benefit 1}",
+      "",
+      "**Negative**:",
+      "- ❌ ${9:Trade-off 1}",
+      "",
+      "**Neutral**:",
+      "- ${10:Neutral impact}",
+      "",
+      "### Alternatives Considered",
+      "",
+      "**Alternative 1**: ${11:Option}",
+      "- Rejected because: ${12:Reason}",
+      "",
+      "$0"
+    ],
+    "description": "Architecture Decision Record"
+  },
+  
+  "CHANGELOG Entry": {
+    "prefix": "changelog",
+    "body": [
+      "### ${1|Added,Changed,Deprecated,Removed,Fixed,Security|}",
+      "- **${2:Component}**: ${3:Description}",
+      "$0"
+    ],
+    "description": "CHANGELOG.md entry"
+  },
+  
+  "Mermaid Flowchart": {
+    "prefix": "mermaid-flow",
+    "body": [
+      "```mermaid",
+      "graph TB",
+      "    A[${1:Start}] --> B{${2:Decision?}}",
+      "    B -->|Yes| C[${3:Action 1}]",
+      "    B -->|No| D[${4:Action 2}]",
+      "    C --> E[${5:End}]",
+      "    D --> E",
+      "    $0",
+      "```"
+    ],
+    "description": "Mermaid flowchart diagram"
+  },
+  
+  "Mermaid Sequence Diagram": {
+    "prefix": "mermaid-seq",
+    "body": [
+      "```mermaid",
+      "sequenceDiagram",
+      "    participant ${1:User}",
+      "    participant ${2:System}",
+      "    participant ${3:Database}",
+      "    ",
+      "    ${1:User}->>${2:System}: ${4:Request}",
+      "    ${2:System}->>${3:Database}: ${5:Query}",
+      "    ${3:Database}-->>${2:System}: ${6:Response}",
+      "    ${2:System}-->>${1:User}: ${7:Result}",
+      "    $0",
+      "```"
+    ],
+    "description": "Mermaid sequence diagram"
+  },
+  
+  "Python FastAPI Endpoint": {
+    "prefix": "fastapi-endpoint",
+    "body": [
+      "@app.${1|post,get,put,delete|}(\"/${2:endpoint}\")",
+      "async def ${3:function_name}(",
+      "    request: ${4:RequestModel},",
+      "    current_user: User = Depends(get_current_user)",
+      ") -> ${5:ResponseModel}:",
+      "    \"\"\"",
+      "    ${6:Description of what this endpoint does}",
+      "    \"\"\"",
+      "    try:",
+      "        # ${7:Implementation}",
+      "        $0",
+      "        return ${5:ResponseModel}(...)",
+      "    except Exception as e:",
+      "        logger.error(f\"Error in ${3:function_name}: {e}\")",
+      "        raise HTTPException(status_code=500, detail=str(e))"
+    ],
+    "description": "FastAPI endpoint template"
+  },
+  
+  "Test Function": {
+    "prefix": "pytest-func",
+    "body": [
+      "def test_${1:function_name}_${2:scenario}():",
+      "    \"\"\"",
+      "    Test that ${3:description}",
+      "    ",
+      "    Given: ${4:preconditions}",
+      "    When: ${5:action}",
+      "    Then: ${6:expected outcome}",
+      "    \"\"\"",
+      "    # Arrange",
+      "    ${7:setup}",
+      "    ",
+      "    # Act",
+      "    result = ${8:function_call}",
+      "    ",
+      "    # Assert",
+      "    assert ${9:condition}",
+      "    $0"
+    ],
+    "description": "pytest test function"
+  }
+}

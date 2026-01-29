@@ -1,0 +1,101 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Validate Documentation",
+      "type": "shell",
+      "command": "python3 scripts/validate-lenient.py",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Validate Documentation (Strict)",
+      "type": "shell",
+      "command": "python3 scripts/validate-documentation.py --strict",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Update Documentation - Design Change",
+      "type": "shell",
+      "command": "./scripts/update-documentation.sh",
+      "args": [
+        "--design-change",
+        "${input:componentName}"
+      ],
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Update Documentation - Dev Complete",
+      "type": "shell",
+      "command": "./scripts/update-documentation.sh",
+      "args": [
+        "--dev-complete",
+        "${input:componentName}"
+      ],
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Full Documentation Sync",
+      "type": "shell",
+      "command": "./scripts/update-documentation.sh",
+      "args": [
+        "--full-sync"
+      ],
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Git: Sync with GitHub",
+      "type": "shell",
+      "command": "git pull origin main && git status",
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Preview Markdown (Mermaid)",
+      "type": "shell",
+      "command": "echo 'Open Command Palette: Markdown Preview Enhanced: Open Preview to the Side'",
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "componentName",
+      "type": "promptString",
+      "description": "Component name (e.g., agent-03-income-scoring)",
+      "default": "agent-01-market-data-sync"
+    }
+  ]
+}

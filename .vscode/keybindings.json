@@ -1,0 +1,17 @@
+[
+  {
+    "key": "cmd+k cmd+v",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Validate Documentation"
+  },
+  {
+    "key": "cmd+k cmd+m",
+    "command": "markdown-preview-enhanced.openPreview",
+    "when": "editorLangId == markdown"
+  },
+  {
+    "key": "cmd+k cmd+g",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Git: Sync with GitHub"
+  }
+]
