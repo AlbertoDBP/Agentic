@@ -1,45 +1,47 @@
 # Tax-Efficient Income Investment Platform
 
-**AI-Powered Portfolio Optimization for Covered Call ETFs & Income Investing**
+**Version:** 1.0.0  
+**Status:** Design Complete - Ready for Implementation  
+**Last Updated:** 2026-01-28
 
-[![Status](https://img.shields.io/badge/status-active%20development-blue)]()
-[![Version](https://img.shields.io/badge/version-1.0-green)]()
-[![Documentation](https://img.shields.io/badge/docs-complete-success)]()
+## Overview
 
-## 🎯 Overview
+The Tax-Efficient Income Investment Platform is an AI-powered investment management system designed to help investors build and manage income-generating portfolios while prioritizing capital preservation, tax efficiency, and avoiding yield traps.
 
+<<<<<<< HEAD
 The Tax-Efficient Income Investment Platform is a sophisticated AI-powered system that helps investors optimize income stocks and covered call ETF portfolios for **12-18% annual income yields** while managing:
 - **Tax efficiency** across account types (IRA, 401k, taxable)
 - **NAV erosion** common in covered call ETFs
 - **Dividend sustainability** and quality
 - **Portfolio risk** and concentration
+=======
+### Core Principles
+>>>>>>> 3c2d3e7 (docs: complete income platform design specification)
 
-### Key Features
+1. **Capital Safety First** - 70% safety threshold with VETO power
+2. **Income Generation Second** - Maximize sustainable income
+3. **Avoid Yield Traps** - Intelligent analysis to detect unsustainable dividends
+4. **Tax Efficiency** - Comprehensive tax optimization across account types
+5. **User Control** - Proposal-based workflow, no auto-execution
 
-✨ **ML-Powered Intelligence**
-- Income Scoring (XGBoost with 50+ features)
-- Smart Alert Classification (learns from user feedback)
-- Scenario-based stress testing
-- Automated rebalancing suggestions
+## Key Features
 
-📊 **Comprehensive Analysis**
-- Real-time portfolio monitoring
-- Tax drag calculations across account types
-- NAV erosion tracking for ETFs
-- 12-month income projections
+- **22 Specialized AI Agents** - Purpose-built agents for scoring, analysis, and recommendations
+- **9 Asset Classes Supported** - Stocks, REITs, BDCs, Preferreds, CEFs, Covered Call ETFs, and more
+- **Comprehensive Tax Intelligence** - 6-layer learning system with tax document processing
+- **Advanced Portfolio Analytics** - Monte Carlo simulation, backtesting, rebalancing
+- **Multi-Broker Integration** - Plaid, Alpaca, Schwab support
+- **GDPR Compliant** - Full data privacy and compliance framework
 
-🤖 **11 Specialized AI Agents**
-- Market data synchronization
-- Newsletter ingestion & analysis
-- Opportunity scanning
-- Entry/exit price recommendations
+## Technology Stack
 
-🔒 **Enterprise-Grade Security**
-- Row-Level Security (RLS) for multi-tenancy
-- End-to-end encryption
-- Complete audit logging
-- GDPR/CCPA compliant
+- **Frontend:** React (TypeScript), React Native, Tailwind CSS
+- **Backend:** FastAPI (Python), PostgreSQL (Supabase), Redis
+- **AI/ML:** Claude Sonnet 4, XGBoost, OpenAI Embeddings
+- **Orchestration:** Temporal, Prefect, N8N
+- **Infrastructure:** Kubernetes, Kong Gateway, Grafana Stack
 
+<<<<<<< HEAD
 ---
 
 ## 🚀 Quick Start
@@ -354,38 +356,137 @@ pytest test_full_workflow.py
 ---
 
 ## 📚 Documentation Structure
+=======
+## Documentation Structure
+>>>>>>> 3c2d3e7 (docs: complete income platform design specification)
 
 ```
 docs/
-├── index.md                    # Master navigation (start here)
-├── architecture/
-│   └── reference-architecture.md
-├── functional/                 # What each component does
-│   ├── agent-01-market-data-sync.md
-│   ├── agent-03-income-scoring.md
-│   ├── agent-11-alert-classification.md
-│   └── ...
-├── implementation/             # How to build each component
-│   ├── agent-03-income-scoring-impl.md
-│   ├── supabase-setup-impl.md
-│   └── ...
-├── security/
-│   └── security-architecture.md
-├── deployment/
-│   ├── local-setup.md
-│   └── production-deployment.md
-├── testing/
+├── architecture/           # System architecture and diagrams
+│   ├── reference-architecture.md
+│   ├── system-overview.mmd
+│   ├── agent-architecture.md
+│   ├── data-model.md
+│   └── api-architecture.md
+├── functional/            # Functional specifications by component
+│   ├── portfolio-management.md
+│   ├── agent-system.md
+│   ├── scoring-system.md
+│   ├── alert-system.md
+│   ├── tax-system.md
+│   ├── simulation-system.md
+│   └── [24 more specs...]
+├── implementation/        # Implementation specifications
+│   ├── database-schema.md
+│   ├── api-specification.md
+│   ├── agent-implementations.md
+│   ├── integration-guide.md
+│   └── [15 more specs...]
+├── testing/               # Testing specifications
+│   ├── test-strategy.md
 │   ├── test-matrix.md
 │   └── edge-cases.md
-└── diagrams/                   # Mermaid diagrams
-    ├── system-architecture.mmd
-    └── data-model.mmd
+├── deployment/            # Deployment guides
+│   ├── deployment-guide.md
+│   ├── disaster-recovery.md
+│   └── infrastructure-requirements.md
+├── CHANGELOG.md           # Version history
+├── decisions-log.md       # Architecture decisions
+└── index.md               # Master navigation
+
+src/                       # Code scaffolds (implementation)
+scripts/                   # Automation scripts
 ```
 
-**Start here**: [Documentation Index](docs/index.md)
+## Quick Start
+
+### For Developers
+
+1. **Read Architecture**: Start with [Reference Architecture](docs/architecture/reference-architecture.md)
+2. **Understand Agents**: Review [Agent Architecture](docs/architecture/agent-architecture.md)
+3. **Explore API**: Check [API Specification](docs/implementation/api-specification.md)
+4. **Implementation**: Follow [Implementation Guide](docs/implementation/implementation-guide.md)
+
+### For System Architects
+
+1. [System Overview Diagram](docs/architecture/system-overview.mmd)
+2. [Data Model](docs/architecture/data-model.md) - 97 tables
+3. [Agent Interactions](docs/architecture/agent-interactions.mmd)
+4. [Deployment Architecture](docs/deployment/deployment-guide.md)
+
+### For Product Managers
+
+1. [Functional Specifications Index](docs/functional/README.md)
+2. [User Stories & Requirements](docs/functional/user-requirements.md)
+3. [Success Metrics](docs/functional/success-metrics.md)
+
+## Key Statistics
+
+- **Database Tables:** 97 (complete schema)
+- **API Endpoints:** 88+ RESTful endpoints + WebSocket
+- **AI Agents:** 22 specialized agents
+- **Supported Asset Classes:** 9 income-focused classes
+- **Supported Brokers:** 3 (Plaid, Alpaca, Schwab)
+- **Learning Systems:** 6 layers (analyst, tax, model, execution, conversational, LLM)
+- **Documentation Pages:** 50+ comprehensive specifications
+
+## Design Completeness
+
+| Category | Completeness | Details |
+|----------|-------------|---------|
+| Core Requirements | ✅ 100% | All 5 core principles addressed |
+| Data Model | ✅ 100% | 97 tables, full RLS, optimistic locking |
+| Agent Architecture | ✅ 100% | 22 agents with complete specifications |
+| API Design | ✅ 100% | 88+ endpoints, OpenAPI 3.0 spec |
+| Security & Compliance | ✅ 100% | GDPR, RBAC, encryption, session mgmt |
+| Scalability | ✅ 100% | Partitioning, caching, agent scaling |
+| Deployment | ✅ 100% | Complete guide + DR plan |
+| Testing | ✅ 100% | Integrated test specs per component |
+
+## Implementation Phases
+
+### Phase 1: Core Platform (Weeks 1-8)
+- Database setup + migrations
+- Core API (portfolios, holdings, auth)
+- Basic agents (scoring, analysis)
+- Plaid/Alpaca integration
+
+### Phase 2: Intelligence (Weeks 9-12)
+- Analyst extraction
+- Learning systems
+- Alert system
+- Proposal generation
+
+### Phase 3: Advanced Features (Weeks 13-16)
+- DRIP, Rebalancing, Goals
+- Document generation
+- Backtesting, Simulation
+- Analytics dashboard
+
+### Phase 4: Polish (Weeks 17-20)
+- Multi-currency
+- GDPR compliance
+- Admin features
+- Performance optimization
+
+## Project Links
+
+- **GitHub Repository:** `AlbertoDBP/Agentic/income-platform`
+- **Design Sessions:** Documented in project history
+- **Status:** Design Complete, Ready for Implementation
+
+## License
+
+[To be determined]
+
+## Contributors
+
+- **Lead Architect:** Alberto
+- **AI Design Partner:** Claude (Anthropic)
 
 ---
 
+<<<<<<< HEAD
 ## 🤝 Contributing
 
 We welcome contributions! Please see:
@@ -445,3 +546,6 @@ If you find this project useful, please consider giving it a star on GitHub!
 **Last Updated**: 2026-01-23  
 **Documentation Version**: 1.0  
 **Platform Version**: 1.0 (Active Development)
+=======
+**Next Steps:** Begin Phase 1 implementation following the [Implementation Guide](docs/implementation/implementation-guide.md).
+>>>>>>> 3c2d3e7 (docs: complete income platform design specification)
