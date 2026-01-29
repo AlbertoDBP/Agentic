@@ -1,0 +1,246 @@
+name: Auto-Documentation
+
+on:
+  # Scheduled trigger - runs daily at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # Manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Specific project to document (leave empty for all)'
+        required: false
+        default: ''
+      force_update:
+        description: 'Force update even if no changes detected'
+        required: false
+        type: boolean
+        default: false
+  
+  # Trigger on pull requests to validate docs
+  pull_request:
+    paths:
+      - '**/docs/**'
+      - '**/scripts/**'
+      - '.github/workflows/auto-documentation.yml'
+  
+  # Repository dispatch for Claude Code integration
+  repository_dispatch:
+    types: [update-docs]
+
+env:
+  PYTHON_VERSION: '3.11'
+  DOCS_PATH: '.'
+  COMMIT_MESSAGE_PREFIX: 'docs(auto):'
+
+jobs:
+  auto-documentation:
+    name: Generate and Validate Documentation
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog generation
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Detect Changes
+        id: changes
+        run: |
+          # Check for changes in project directories
+          CHANGED_PROJECTS=$(git diff --name-only HEAD~1 HEAD | grep -E '^[^/]+/' | cut -d'/' -f1 | sort -u || echo "")
+          
+          if [ -n "$CHANGED_PROJECTS" ]; then
+            echo "projects=$CHANGED_PROJECTS" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Override if force_update is set
+          if [ "${{ github.event.inputs.force_update }}" == "true" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run Documentation Update
+        if: steps.changes.outputs.has_changes == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          PROJECT_FILTER: ${{ github.event.inputs.project }}
+        run: |
+          # Find all update-documentation.sh scripts
+          PROJECTS=$(find . -type f -name "update-documentation.sh" -not -path "*/\.*" | sed 's|/scripts/update-documentation.sh||' | sed 's|^\./||')
+          
+          for PROJECT_DIR in $PROJECTS; do
+            # Skip if project filter is set and doesn't match
+            if [ -n "$PROJECT_FILTER" ] && [ "$PROJECT_DIR" != "$PROJECT_FILTER" ]; then
+              continue
+            fi
+            
+            echo "::group::Updating documentation for $PROJECT_DIR"
+            
+            if [ -f "$PROJECT_DIR/scripts/update-documentation.sh" ]; then
+              cd "$PROJECT_DIR/scripts"
+              bash update-documentation.sh --auto-commit=false
+              cd -
+            fi
+            
+            echo "::endgroup::"
+          done
+      
+      - name: Validate Documentation
+        if: steps.changes.outputs.has_changes == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          PROJECTS=$(find . -type f -name "validate-documentation.py" -not -path "*/\.*" | sed 's|/scripts/validate-documentation.py||' | sed 's|^\./||')
+          
+          EXIT_CODE=0
+          
+          for PROJECT_DIR in $PROJECTS; do
+            echo "::group::Validating documentation for $PROJECT_DIR"
+            
+            if [ -f "$PROJECT_DIR/scripts/validate-documentation.py" ]; then
+              cd "$PROJECT_DIR/scripts"
+              
+              if ! python validate-documentation.py; then
+                echo "::error::Validation failed for $PROJECT_DIR"
+                EXIT_CODE=1
+              fi
+              
+              cd -
+            fi
+            
+            echo "::endgroup::"
+          done
+          
+          exit $EXIT_CODE
+      
+      - name: Check for Documentation Changes
+        id: doc_changes
+        run: |
+          if git diff --quiet; then
+            echo "changes_detected=false" >> $GITHUB_OUTPUT
+            echo "No documentation changes detected"
+          else
+            echo "changes_detected=true" >> $GITHUB_OUTPUT
+            echo "Documentation changes detected:"
+            git diff --name-only
+          fi
+      
+      - name: Commit and Push Changes
+        if: steps.doc_changes.outputs.changes_detected == 'true' && github.event_name != 'pull_request'
+        run: |
+          # Add all changed documentation files
+          git add -A
+          
+          # Create commit message with details
+          CHANGED_FILES=$(git diff --cached --name-only | wc -l)
+          COMMIT_MSG="${{ env.COMMIT_MESSAGE_PREFIX }} Updated documentation ($CHANGED_FILES files)"
+          
+          if [ -n "${{ github.event.inputs.project }}" ]; then
+            COMMIT_MSG="$COMMIT_MSG for ${{ github.event.inputs.project }}"
+          fi
+          
+          git commit -m "$COMMIT_MSG"
+          git push origin HEAD:${{ github.ref_name }}
+      
+      - name: Create Summary
+        if: always()
+        run: |
+          echo "## Documentation Automation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.changes.outputs.has_changes }}" == "true" ]; then
+            echo "✅ Changes detected and processed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "ℹ️ No changes detected" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.doc_changes.outputs.changes_detected }}" == "true" ]; then
+            echo "### Modified Files" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            git diff HEAD~1 --name-only >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow:** ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Run:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+
+  # Validation-only job for pull requests
+  validate-pr:
+    name: Validate PR Documentation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Validate Documentation
+        run: |
+          VALIDATION_FAILED=false
+          
+          PROJECTS=$(find . -type f -name "validate-documentation.py" -not -path "*/\.*" | sed 's|/scripts/validate-documentation.py||' | sed 's|^\./||')
+          
+          for PROJECT_DIR in $PROJECTS; do
+            echo "::group::Validating $PROJECT_DIR"
+            
+            if [ -f "$PROJECT_DIR/scripts/validate-documentation.py" ]; then
+              cd "$PROJECT_DIR/scripts"
+              
+              if ! python validate-documentation.py; then
+                VALIDATION_FAILED=true
+                echo "::error::Documentation validation failed for $PROJECT_DIR"
+              fi
+              
+              cd -
+            fi
+            
+            echo "::endgroup::"
+          done
+          
+          if [ "$VALIDATION_FAILED" = true ]; then
+            echo "::error::One or more projects failed documentation validation"
+            exit 1
+          fi
+      
+      - name: Comment on PR
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ Documentation validation failed. Please check the workflow logs for details.'
+            })
