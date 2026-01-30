@@ -1,0 +1,80 @@
+sequenceDiagram
+    participant User
+    participant GitHub
+    participant Actions as GitHub Actions
+    participant Workflow as auto-documentation.yml
+    participant UpdateScript as update-documentation.sh
+    participant ValidateScript as validate-documentation.py
+    participant Repo as Repository
+
+    Note over User,Repo: Scheduled Execution (Daily 2 AM UTC)
+    
+    Actions->>Workflow: Trigger on schedule
+    Workflow->>Repo: Checkout repository
+    Repo-->>Workflow: Repository files
+    
+    Workflow->>Workflow: Set up Python 3.11
+    Workflow->>Workflow: Configure Git
+    
+    Workflow->>Repo: git diff HEAD~1 HEAD
+    Repo-->>Workflow: Changed files list
+    
+    Workflow->>Workflow: Identify changed projects
+    
+    alt Changes detected
+        loop For each changed project
+            Workflow->>UpdateScript: Execute update script
+            UpdateScript->>UpdateScript: Update CHANGELOG
+            UpdateScript->>UpdateScript: Create/update ADRs
+            UpdateScript->>UpdateScript: Update component status
+            UpdateScript-->>Workflow: Success
+        end
+        
+        loop For each project
+            Workflow->>ValidateScript: Execute validation
+            ValidateScript->>ValidateScript: Check required files
+            ValidateScript->>ValidateScript: Validate Markdown
+            ValidateScript->>ValidateScript: Check internal links
+            ValidateScript->>ValidateScript: Validate Mermaid diagrams
+            ValidateScript-->>Workflow: Validation results
+        end
+        
+        alt Validation passed
+            Workflow->>Repo: git add -A
+            Workflow->>Repo: git commit
+            Workflow->>Repo: git push
+            Workflow->>GitHub: Create summary
+            GitHub-->>User: Email notification (if configured)
+        else Validation failed
+            Workflow->>GitHub: Report failure
+            GitHub-->>User: Failure notification
+        end
+    else No changes detected
+        Workflow->>GitHub: Skip - no changes
+    end
+
+    Note over User,Repo: Manual Trigger (CLI or GitHub UI)
+    
+    User->>GitHub: Trigger workflow manually
+    Note right of User: With optional parameters:<br/>- project filter<br/>- force update
+    
+    GitHub->>Actions: Start workflow
+    Actions->>Workflow: Execute with inputs
+    
+    Note over Workflow,Repo: Same flow as scheduled,<br/>but respects user parameters
+    
+    Workflow-->>User: Execution complete
+
+    Note over User,Repo: Pull Request Validation
+    
+    User->>Repo: Create pull request
+    Repo->>Actions: Trigger validate-pr job
+    Actions->>ValidateScript: Run validation only
+    ValidateScript-->>Actions: Results
+    
+    alt Validation passed
+        Actions->>Repo: Post success comment
+    else Validation failed
+        Actions->>Repo: Post failure comment
+        Note right of Actions: Includes error details
+    end

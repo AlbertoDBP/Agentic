@@ -1,0 +1,72 @@
+graph TB
+    subgraph "User Environment"
+        User[👤 User]
+        ClaudeChat[💬 Claude Chat]
+        ClaudeCode[💻 Claude Code<br/>VSCode]
+        LocalRepo[📁 Local Repository<br/>/Volumes/.../Agentic]
+    end
+    
+    subgraph "GitHub Cloud"
+        Repo[📦 GitHub Repository<br/>AlbertoDBP/Agentic]
+        Actions[⚙️ GitHub Actions<br/>Workflow Runner]
+        API[🔌 GitHub API<br/>Repository Dispatch]
+    end
+    
+    subgraph "Automation Components"
+        Workflow[📋 auto-documentation.yml<br/>Main Workflow]
+        TriggerScript[🔧 trigger-docs-workflow.sh<br/>CLI Tool]
+        UpdateScript[📝 update-documentation.sh<br/>Per Project]
+        ValidateScript[✅ validate-documentation.py<br/>Quality Checks]
+    end
+    
+    subgraph "Documentation System"
+        Orchestrator[🤖 platform-documentation<br/>-orchestrator<br/>Claude Skill]
+        Docs[📚 Documentation Files<br/>Markdown + Mermaid]
+        CHANGELOG[📋 CHANGELOG.md]
+        ADRs[📝 decisions-log.md]
+    end
+    
+    %% User Interactions
+    User -->|"1. 'Document'"| ClaudeChat
+    ClaudeChat -->|"2. Generate docs"| Orchestrator
+    Orchestrator -->|"3. Create files"| Docs
+    User -->|"4. Download & commit"| LocalRepo
+    
+    User -->|"5. Trigger workflow"| ClaudeCode
+    ClaudeCode -->|"6. Execute script"| TriggerScript
+    
+    %% GitHub Flow
+    LocalRepo -->|"7. git push"| Repo
+    TriggerScript -->|"8. POST dispatch"| API
+    API -->|"9. Trigger"| Actions
+    Repo -->|"10. On push/schedule"| Actions
+    
+    %% Workflow Execution
+    Actions -->|"11. Execute"| Workflow
+    Workflow -->|"12. Detect changes"| Repo
+    Workflow -->|"13. Run updates"| UpdateScript
+    UpdateScript -->|"14. Update"| CHANGELOG
+    UpdateScript -->|"15. Update"| ADRs
+    Workflow -->|"16. Validate"| ValidateScript
+    ValidateScript -->|"17. Check"| Docs
+    Workflow -->|"18. Commit & push"| Repo
+    
+    %% Feedback
+    Actions -.->|"19. Status"| User
+    ValidateScript -.->|"20. Results"| Actions
+    
+    style User fill:#e1f5ff
+    style ClaudeChat fill:#e1f5ff
+    style ClaudeCode fill:#e1f5ff
+    style LocalRepo fill:#f0f0f0
+    style Repo fill:#fff4e1
+    style Actions fill:#fff4e1
+    style API fill:#fff4e1
+    style Workflow fill:#e8f5e9
+    style TriggerScript fill:#e8f5e9
+    style UpdateScript fill:#e8f5e9
+    style ValidateScript fill:#e8f5e9
+    style Orchestrator fill:#f3e5f5
+    style Docs fill:#fce4ec
+    style CHANGELOG fill:#fce4ec
+    style ADRs fill:#fce4ec
