@@ -1,7 +1,7 @@
 # Monitoring Guide - Income Fortress Platform
 
 **Version:** 1.0.0  
-**Last Updated:** February 2, 2026  
+**Last Updated:** February 3, 2026  
 **Audience:** DevOps, SRE, Platform Engineers
 
 ---
@@ -14,7 +14,7 @@
 4. [Grafana Dashboards](#grafana-dashboards)
 5. [Log Analysis](#log-analysis)
 6. [SLA Monitoring](#sla-monitoring)
-7. [Troubleshooting Metrics](#troubleshooting-metrics)
+7. [Performance Baselines](#performance-baselines)
 
 ---
 
@@ -23,492 +23,629 @@
 ### Architecture
 
 ```
-┌─────────────────────┐
-│   Application       │
-│   (FastAPI + Celery)│
-│   Exposes /metrics  │
-└──────────┬──────────┘
-           │
-           │ HTTP GET /metrics
-           ▼
-┌─────────────────────┐
-│   Prometheus        │
-│   Scrapes metrics   │
-│   Stores time-series│
-└──────────┬──────────┘
-           │
-           │ PromQL queries
-           ▼
-┌─────────────────────┐
-│   Grafana           │
-│   Visualizations    │
-│   Dashboards        │
-└─────────────────────┘
-           │
-           │ Alerts
-           ▼
-┌─────────────────────┐
-│   AlertManager      │
-│   Email/Slack       │
-│   PagerDuty         │
-└─────────────────────┘
+┌─────────────────┐
+│  Application    │──┐
+│  (FastAPI)      │  │
+└─────────────────┘  │
+                     │ /metrics
+┌─────────────────┐  │   endpoint
+│  Celery         │──┤
+│  Workers        │  │
+└─────────────────┘  │
+                     │
+┌─────────────────┐  │
+│  PostgreSQL     │──┤
+│  Exporter       │  │
+└─────────────────┘  │
+                     ↓
+                ┌──────────────┐
+                │  Prometheus  │
+                │  (Scraping)  │
+                └──────┬───────┘
+                       │
+                       ↓
+                ┌──────────────┐
+                │   Grafana    │
+                │ (Dashboards) │
+                └──────────────┘
 ```
 
-### Monitoring Stack Components
+### Key Components
 
-| Component | Purpose | Port | Access |
-|-----------|---------|------|--------|
-| Prometheus | Metrics collection & storage | 9090 | http://localhost:9090 |
-| Grafana | Visualization & dashboards | 3000 | http://localhost:3000 |
-| AlertManager | Alert routing | 9093 | http://localhost:9093 |
-| Application | Metrics endpoint | 8000 | http://localhost:8000/metrics |
+**Prometheus** (Port 9090)
+- Metrics collection and storage
+- Alerting rules engine
+- 15-day retention period
+- Scrape interval: 15 seconds
 
-### Key Metrics Categories
+**Grafana** (Port 3000)
+- Visualization dashboards
+- Alert notifications
+- User authentication
+- Dashboard sharing
 
-1. **Application Metrics** - Request rates, latencies, errors
-2. **Business Metrics** - Scoring requests, feature extraction success
-3. **Infrastructure Metrics** - CPU, memory, disk, network
-4. **Celery Metrics** - Queue depth, task success/failure rates
-5. **Database Metrics** - Connection pool, query performance
-6. **Redis Metrics** - Memory usage, hit rates, evictions
+**Exporters**
+- Node Exporter (system metrics)
+- PostgreSQL Exporter (database metrics)
+- Redis Exporter (cache metrics)
+- Custom application metrics
+
+### Monitored Services
+
+1. **API Service** - Request rates, latency, errors
+2. **Celery Workers** - Task processing, queue lengths
+3. **PostgreSQL** - Connections, queries, locks
+4. **Redis** - Cache hit rates, memory usage
+5. **Nginx** - Request rates, response codes
+6. **System** - CPU, memory, disk, network
 
 ---
 
 ## Prometheus Metrics
 
-### Accessing Metrics
-
-```bash
-# View raw metrics
-curl http://localhost:8000/metrics
-
-# Query specific metric
-curl http://localhost:9090/api/v1/query?query=http_requests_total
-
-# Prometheus web UI
-open http://localhost:9090
-```
-
 ### Application Metrics
 
-#### HTTP Request Metrics
+#### HTTP Metrics
 
-**http_requests_total** - Counter
-```promql
-# Total HTTP requests
-http_requests_total
+```python
+# Request counter
+http_requests_total{method, path, status}
+# Total HTTP requests by method, path, and status code
 
-# By endpoint
-http_requests_total{endpoint="/stocks/{symbol}/score"}
+# Request duration histogram
+http_request_duration_seconds{method, path}
+# Distribution of request latencies
 
-# By status code
-http_requests_total{status="200"}
-
-# Rate over 5 minutes
-rate(http_requests_total[5m])
+# Concurrent requests gauge
+http_requests_in_progress{method, path}
+# Number of requests currently being processed
 ```
 
-**http_request_duration_seconds** - Histogram
+**Example Queries:**
+
 ```promql
-# p95 latency by endpoint
-histogram_quantile(0.95, http_request_duration_seconds_bucket)
+# Request rate (requests per second)
+rate(http_requests_total[5m])
 
-# p99 latency
-histogram_quantile(0.99, http_request_duration_seconds_bucket)
+# P95 latency
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
 
-# Average latency
-rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])
+# Error rate percentage
+rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100
 ```
 
 #### Scoring Metrics
 
-**scoring_requests_total** - Counter
-```promql
-# Total scoring requests
-scoring_requests_total
+```python
+# Scoring duration histogram
+scoring_duration_seconds{agent, symbol}
+# Time taken to score a symbol by each agent
 
-# By asset type
-scoring_requests_total{asset_type="bdc"}
+# Scoring success counter
+scoring_success_total{agent, symbol}
+# Successful scoring operations
 
-# Success rate
-rate(scoring_requests_total{result="success"}[5m]) / rate(scoring_requests_total[5m])
+# Scoring failure counter
+scoring_failure_total{agent, symbol, error_type}
+# Failed scoring operations with error classification
+
+# Feature extraction duration
+feature_extraction_duration_seconds{source}
+# Time to extract features from data sources
 ```
 
-**scoring_duration_seconds** - Histogram
-```promql
-# p95 scoring latency
-histogram_quantile(0.95, scoring_duration_seconds_bucket)
+**Example Queries:**
 
-# By asset type
-histogram_quantile(0.95, scoring_duration_seconds_bucket{asset_type="covered_call_etf"})
+```promql
+# Average scoring time by agent
+avg(rate(scoring_duration_seconds_sum[5m])) by (agent)
+
+# Scoring success rate
+rate(scoring_success_total[5m]) / (rate(scoring_success_total[5m]) + rate(scoring_failure_total[5m])) * 100
+
+# Feature extraction latency P99
+histogram_quantile(0.99, rate(feature_extraction_duration_seconds_bucket[5m]))
 ```
 
-**asset_scores** - Histogram
-```promql
-# Distribution of scores
-histogram_quantile(0.50, asset_scores_bucket)  # Median score
+#### Celery Metrics
 
-# Average score by asset type
-rate(asset_scores_sum{asset_type="bdc"}[5m]) / rate(asset_scores_count{asset_type="bdc"}[5m])
+```python
+# Task counter
+celery_tasks_total{task_name, state}
+# Total tasks by name and state (PENDING, STARTED, SUCCESS, FAILURE)
+
+# Task duration histogram
+celery_task_duration_seconds{task_name}
+# Distribution of task execution times
+
+# Queue length gauge
+celery_queue_length{queue_name}
+# Current number of tasks in each queue
+
+# Worker status
+celery_workers_active{worker_name}
+# Number of active workers
 ```
 
-#### Feature Extraction Metrics
+**Example Queries:**
 
-**feature_extraction_total** - Counter
 ```promql
-# Total extractions
-feature_extraction_total
+# Tasks per second by state
+rate(celery_tasks_total[5m]) by (state)
 
-# Success rate
-rate(feature_extraction_total{result="success"}[5m]) / rate(feature_extraction_total[5m])
-
-# Failure rate
-rate(feature_extraction_total{result="failure"}[5m])
-```
-
-**feature_cache_hits_total** - Counter
-```promql
-# Cache hit rate
-rate(feature_cache_hits_total[5m]) / (rate(feature_cache_hits_total[5m]) + rate(feature_cache_misses_total[5m]))
-```
-
-#### Circuit Breaker Metrics
-
-**circuit_breaker_triggers_total** - Counter
-```promql
-# Total triggers
-circuit_breaker_triggers_total
-
-# By level
-circuit_breaker_triggers_total{level="EMERGENCY"}
-circuit_breaker_triggers_total{level="CRITICAL"}
-
-# EMERGENCY triggers in last hour
-increase(circuit_breaker_triggers_total{level="EMERGENCY"}[1h])
-```
-
-**active_positions_monitored** - Gauge
-```promql
-# Current positions being monitored
-active_positions_monitored
-
-# By tenant
-active_positions_monitored{tenant_id="001"}
-```
-
-### Celery Metrics
-
-**celery_task_total** - Counter
-```promql
-# Total tasks
-celery_task_total
-
-# By queue
-celery_task_total{queue="scoring"}
-
-# Success rate
-rate(celery_task_total{state="SUCCESS"}[5m]) / rate(celery_task_total[5m])
-
-# Failure rate
-rate(celery_task_total{state="FAILURE"}[5m])
-```
-
-**celery_task_duration_seconds** - Histogram
-```promql
-# p95 task duration
-histogram_quantile(0.95, celery_task_duration_seconds_bucket)
-
-# By task name
-histogram_quantile(0.95, celery_task_duration_seconds_bucket{task="app.tasks.scoring.score_asset"})
-```
-
-**celery_queue_length** - Gauge
-```promql
-# Current queue depth
-celery_queue_length
-
-# By queue
-celery_queue_length{queue="scoring"}
-
-# Alerts trigger if > 100
+# Queue backlog
 celery_queue_length > 100
+
+# Average task duration
+avg(rate(celery_task_duration_seconds_sum[5m])) by (task_name)
 ```
 
-**celery_worker_up** - Gauge
+### Database Metrics
+
+```python
+# Connection pool
+pg_stat_database_numbackends
+# Current number of database connections
+
+# Transaction rate
+pg_stat_database_xact_commit
+# Committed transactions
+
+# Slow queries
+pg_slow_queries_total
+# Number of slow queries (>1s)
+
+# Locks
+pg_locks_count{mode, locktype}
+# Current database locks
+
+# Table size
+pg_table_size_bytes{table_name}
+# Size of each table in bytes
+```
+
+**Example Queries:**
+
 ```promql
-# Worker availability (1 = up, 0 = down)
-celery_worker_up
+# Connection pool utilization
+pg_stat_database_numbackends / pg_settings_max_connections * 100
 
-# Count of active workers
-sum(celery_worker_up)
+# Transaction rate
+rate(pg_stat_database_xact_commit[5m])
 
-# Alert if any worker down
-celery_worker_up == 0
+# Lock contention
+sum(pg_locks_count) by (locktype)
+```
+
+### Redis Metrics
+
+```python
+# Memory usage
+redis_memory_used_bytes
+# Current memory usage
+
+# Cache hit rate
+redis_keyspace_hits_total
+redis_keyspace_misses_total
+# Cache hit/miss counters
+
+# Connected clients
+redis_connected_clients
+# Number of client connections
+
+# Evicted keys
+redis_evicted_keys_total
+# Keys evicted due to maxmemory limit
+```
+
+**Example Queries:**
+
+```promql
+# Cache hit rate percentage
+rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m])) * 100
+
+# Memory utilization
+redis_memory_used_bytes / redis_memory_max_bytes * 100
+
+# Eviction rate
+rate(redis_evicted_keys_total[5m])
 ```
 
 ### System Metrics
 
-**CPU Usage**
-```promql
-# CPU usage percentage
-100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+```python
+# CPU usage
+node_cpu_seconds_total{mode}
+# CPU time by mode (user, system, idle, etc.)
 
-# Alert if > 80%
-100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+# Memory
+node_memory_MemAvailable_bytes
+node_memory_MemTotal_bytes
+# Available and total memory
+
+# Disk
+node_filesystem_avail_bytes{mountpoint}
+node_filesystem_size_bytes{mountpoint}
+# Available and total disk space
+
+# Network
+node_network_receive_bytes_total{device}
+node_network_transmit_bytes_total{device}
+# Network traffic
 ```
 
-**Memory Usage**
+**Example Queries:**
+
 ```promql
-# Memory usage percentage
+# CPU utilization percentage
+100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+# Memory utilization percentage
 (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
 
-# Available memory in GB
-node_memory_MemAvailable_bytes / 1024 / 1024 / 1024
-
-# Alert if > 85%
-(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
-```
-
-**Disk Usage**
-```promql
-# Disk usage percentage
+# Disk utilization percentage
 (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100
 
-# Alert if > 85%
-(1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+# Network throughput (MB/s)
+rate(node_network_receive_bytes_total[5m]) / 1024 / 1024
 ```
 
 ---
 
 ## Alert Configuration
 
-### Alert Rules File Location
+### Critical Alerts (P0)
 
-```
-/opt/income-platform/prometheus/alerts/income_platform.yml
-```
+#### 1. API Down
 
-### Critical Alerts (Immediate Action Required)
-
-#### API Down
 ```yaml
-- alert: APIDown
-  expr: up{job="income-api"} == 0
-  for: 1m
-  labels:
-    severity: critical
-    component: api
-  annotations:
-    summary: "API is down"
-    description: "Income Platform API has been down for 1 minute"
-    action: "Check container status, review logs, restart if needed"
+alert: APIDown
+expr: up{job="api"} == 0
+for: 5m
+labels:
+  severity: critical
+annotations:
+  summary: "API service is down"
+  description: "API has been unavailable for 5+ minutes"
+  runbook: "https://docs.incomefortress.com/runbook#api-down"
 ```
 
 **Response:**
-1. Check container: `docker-compose ps api`
-2. View logs: `docker-compose logs --tail=100 api`
-3. Restart: `docker-compose restart api`
-4. Escalate if persists > 5 minutes
+1. Check container status: `docker compose ps api`
+2. Check logs: `docker compose logs api`
+3. Restart if crashed: `docker compose restart api`
+4. Escalate if not resolved in 10 minutes
 
-#### Database Down
+#### 2. High Error Rate
+
 ```yaml
-- alert: DatabaseDown
-  expr: up{job="postgres"} == 0
-  for: 1m
-  labels:
-    severity: critical
-    component: database
-  annotations:
-    summary: "Database is down"
-    description: "PostgreSQL database is unreachable"
+alert: HighErrorRate
+expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+for: 10m
+labels:
+  severity: critical
+annotations:
+  summary: "Error rate above 5%"
+  description: "API error rate is {{ $value | humanizePercentage }}"
 ```
 
 **Response:**
-1. Check DigitalOcean database status
-2. Verify IP whitelist
-3. Check connection pool
-4. Contact DigitalOcean support if managed DB issue
+1. Check error logs for patterns
+2. Review recent deployments/changes
+3. Consider rollback if related to recent release
 
-#### Circuit Breaker Emergency
+#### 3. Database Connection Pool Exhausted
+
 ```yaml
-- alert: CircuitBreakerEmergency
-  expr: circuit_breaker_triggers_total{level="EMERGENCY"} > 0
-  for: 0m
-  labels:
-    severity: critical
-    component: scoring
-  annotations:
-    summary: "Circuit breaker EMERGENCY triggered"
-    description: "EMERGENCY circuit breaker for {{ $labels.symbol }}"
+alert: DatabaseConnectionPoolExhausted
+expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.90
+for: 5m
+labels:
+  severity: critical
+annotations:
+  summary: "Database connection pool nearly exhausted"
+  description: "{{ $value | humanizePercentage }} of connections in use"
 ```
 
 **Response:**
-1. Review position immediately
-2. Check market conditions
-3. Notify portfolio owner
-4. Consider manual intervention
+1. Check for connection leaks in application
+2. Kill long-running queries if found
+3. Increase connection pool size if sustained load
 
-### Warning Alerts (Action Within 1 Hour)
+#### 4. Disk Space Critical
 
-#### High API Latency
 ```yaml
-- alert: APIHighLatency
-  expr: histogram_quantile(0.95, http_request_duration_seconds_bucket{job="income-api"}) > 1
-  for: 5m
-  labels:
-    severity: warning
-    component: api
-  annotations:
-    summary: "API high latency"
-    description: "API p95 latency is {{ $value }}s (threshold: 1s)"
+alert: DiskSpaceCritical
+expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) > 0.90
+for: 10m
+labels:
+  severity: critical
+annotations:
+  summary: "Disk space critically low"
+  description: "Only {{ $value | humanizePercentage }} space remaining"
 ```
 
 **Response:**
-1. Review slow queries in database
-2. Check feature extraction latency
-3. Review CPU/memory usage
-4. Consider scaling if sustained
+1. Clear old logs: `docker compose logs --tail=0 > /dev/null`
+2. Remove old Docker images: `docker image prune -a`
+3. Delete old backups (keep last 7 days)
 
-#### Celery Queue Backlog
+#### 5. Celery Workers Down
+
 ```yaml
-- alert: CeleryQueueBacklog
-  expr: celery_queue_length > 100
-  for: 10m
-  labels:
-    severity: warning
-    component: celery
-  annotations:
-    summary: "Celery queue backlog"
-    description: "Queue {{ $labels.queue }} has {{ $value }} pending tasks"
+alert: CeleryWorkersDown
+expr: celery_workers_active == 0
+for: 5m
+labels:
+  severity: critical
+annotations:
+  summary: "All Celery workers are offline"
+  description: "No active Celery workers detected"
 ```
 
 **Response:**
-1. Check worker status
-2. Review task execution times
-3. Check for stuck tasks
-4. Consider adding workers
+1. Check worker containers: `docker compose ps`
+2. Restart workers: `docker compose restart celery_default celery_scoring`
+3. Check for blocked tasks
 
-#### High Memory Usage
+### High Priority Alerts (P1)
+
+#### 6. High API Latency
+
 ```yaml
-- alert: HighMemoryUsage
-  expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
-  for: 10m
-  labels:
-    severity: warning
-    component: system
-  annotations:
-    summary: "High memory usage"
-    description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+alert: HighAPILatency
+expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1.0
+for: 15m
+labels:
+  severity: high
+annotations:
+  summary: "API P95 latency above 1 second"
+  description: "P95 latency is {{ $value }}s"
 ```
 
 **Response:**
-1. Identify high-memory containers: `docker stats`
-2. Check for memory leaks
-3. Restart high-memory services
-4. Consider upgrading droplet if sustained
+1. Check database query performance
+2. Review slow query logs
+3. Check resource utilization (CPU, memory)
 
-### Info Alerts (For Awareness)
+#### 7. Celery Queue Backing Up
 
-#### Redis Evictions
 ```yaml
-- alert: RedisEvictions
-  expr: rate(redis_evicted_keys_total[5m]) > 0
-  for: 5m
-  labels:
-    severity: info
-    component: redis
-  annotations:
-    summary: "Redis evicting keys"
-    description: "Redis evicting {{ $value }} keys/sec - consider increasing memory"
+alert: CeleryQueueBackingUp
+expr: celery_queue_length > 500
+for: 30m
+labels:
+  severity: high
+annotations:
+  summary: "Celery queue has {{ $value }} pending tasks"
+  description: "Queue not processing fast enough"
 ```
 
 **Response:**
-1. Review Redis memory usage
-2. Check cache TTL settings
-3. Consider increasing Redis instance size
-4. No immediate action required
+1. Check worker capacity
+2. Scale workers if needed
+3. Investigate slow tasks
+
+#### 8. High Memory Usage
+
+```yaml
+alert: HighMemoryUsage
+expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.80
+for: 30m
+labels:
+  severity: high
+annotations:
+  summary: "Memory usage above 80%"
+  description: "{{ $value | humanizePercentage }} memory in use"
+```
+
+**Response:**
+1. Identify memory-hungry processes
+2. Restart services to free memory
+3. Consider upgrading droplet tier
+
+### Medium Priority Alerts (P2)
+
+#### 9. Certificate Expiring Soon
+
+```yaml
+alert: CertificateExpiringSoon
+expr: (ssl_certificate_expiry_seconds < 7 * 24 * 3600)
+for: 1h
+labels:
+  severity: medium
+annotations:
+  summary: "SSL certificate expires in {{ $value | humanizeDuration }}"
+  description: "Renew certificate soon"
+```
+
+**Response:**
+1. Run `sudo certbot renew`
+2. Verify renewal successful
+3. Update monitoring to confirm new expiry
+
+#### 10. Backup Failed
+
+```yaml
+alert: BackupFailed
+expr: time() - backup_last_success_timestamp > 86400
+for: 1h
+labels:
+  severity: medium
+annotations:
+  summary: "Database backup has not succeeded in 24+ hours"
+```
+
+**Response:**
+1. Check backup script logs
+2. Verify disk space available
+3. Run manual backup: `./scripts/backup_database.sh`
+
+### Alert Routing
+
+```yaml
+# alertmanager.yml
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'cluster']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  routes:
+    - match:
+        severity: critical
+      receiver: 'pagerduty'
+      continue: true
+    
+    - match:
+        severity: critical
+      receiver: 'slack-critical'
+    
+    - match:
+        severity: high
+      receiver: 'slack-ops'
+    
+    - match:
+        severity: medium
+      receiver: 'slack-ops'
+
+receivers:
+  - name: 'default'
+    email_configs:
+      - to: 'ops@incomefortress.com'
+  
+  - name: 'pagerduty'
+    pagerduty_configs:
+      - service_key: '<pagerduty-key>'
+  
+  - name: 'slack-critical'
+    slack_configs:
+      - api_url: '<slack-webhook-url>'
+        channel: '#ops-critical'
+        title: 'CRITICAL: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+  
+  - name: 'slack-ops'
+    slack_configs:
+      - api_url: '<slack-webhook-url>'
+        channel: '#ops'
+        title: '{{ .GroupLabels.alertname }}'
+```
 
 ---
 
 ## Grafana Dashboards
 
-### Accessing Grafana
+### 1. System Overview Dashboard
 
+**Panels:**
+
+**Row 1: API Health**
+- Request rate (requests/second)
+- Error rate (percentage)
+- P95 latency (milliseconds)
+- Active connections
+
+**Row 2: Database Health**
+- Connection pool utilization
+- Transaction rate
+- Slow queries count
+- Table sizes
+
+**Row 3: Celery Health**
+- Queue lengths by queue
+- Task processing rate
+- Worker status
+- Failed tasks count
+
+**Row 4: System Resources**
+- CPU utilization
+- Memory utilization
+- Disk space
+- Network throughput
+
+**Example Panel (Request Rate):**
+```json
+{
+  "targets": [
+    {
+      "expr": "sum(rate(http_requests_total[5m])) by (method)",
+      "legendFormat": "{{method}}"
+    }
+  ],
+  "title": "Request Rate by Method",
+  "type": "graph"
+}
+```
+
+### 2. Application Performance Dashboard
+
+**Panels:**
+
+**Row 1: Endpoint Performance**
+- Requests by endpoint
+- Latency by endpoint (P50, P95, P99)
+- Error rate by endpoint
+
+**Row 2: Scoring Performance**
+- Scoring duration by agent
+- Feature extraction latency
+- Scoring success rate
+- Failed scorings by error type
+
+**Row 3: Cache Performance**
+- Cache hit rate
+- Cache memory usage
+- Eviction rate
+- Most accessed keys
+
+**Row 4: Background Jobs**
+- DRIP executions (success/failure)
+- Rebalancing proposals generated
+- Tax loss harvesting opportunities
+- NAV erosion calculations
+
+### 3. Business Metrics Dashboard
+
+**Panels:**
+
+**Row 1: User Activity**
+- Active users (daily)
+- Proposals generated
+- Proposals approved/rejected
+- Portfolio count
+
+**Row 2: Portfolio Metrics**
+- Total AUM by tenant
+- Average portfolio value
+- Income generated (monthly)
+- Tax savings (YTD)
+
+**Row 3: System Efficiency**
+- API availability (SLA: 99.9%)
+- Average response time (SLA: <500ms)
+- Scoring accuracy (vs benchmark)
+- Feature extraction success rate (SLA: 99%+)
+
+**Row 4: Cost Tracking**
+- Anthropic API costs (daily)
+- External API costs (daily)
+- Infrastructure costs (monthly trend)
+- Cost per tenant
+
+### Dashboard JSON Export
+
+Dashboards available in repository:
+- `grafana/dashboards/system-overview.json`
+- `grafana/dashboards/application-performance.json`
+- `grafana/dashboards/business-metrics.json`
+
+**Import Instructions:**
 ```bash
-# Start Grafana (if using monitoring profile)
-docker-compose --profile monitoring up -d grafana
+# Copy dashboards to Grafana
+docker cp grafana/dashboards/ grafana_container:/var/lib/grafana/dashboards/
 
-# Access
-open http://localhost:3000
-
-# Default credentials
-Username: admin
-Password: admin (change on first login)
-```
-
-### Dashboard 1: Application Overview
-
-**Panels:**
-1. **Request Rate** - Rate of HTTP requests per second
-2. **Response Time (p95)** - 95th percentile latency
-3. **Error Rate** - Percentage of 5xx responses
-4. **Active Connections** - Current active connections
-5. **Scoring Requests** - Scoring requests per minute
-6. **Feature Cache Hit Rate** - Cache efficiency
-
-**PromQL Queries:**
-```promql
-# Request rate
-rate(http_requests_total[5m])
-
-# p95 latency
-histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
-
-# Error rate
-rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])
-```
-
-### Dashboard 2: Celery Monitoring
-
-**Panels:**
-1. **Queue Depth by Queue** - Current tasks in each queue
-2. **Task Success Rate** - Percentage of successful tasks
-3. **Task Duration (p95)** - Task execution time
-4. **Worker Status** - Which workers are up/down
-5. **Task Throughput** - Tasks completed per minute
-
-**PromQL Queries:**
-```promql
-# Queue depth
-celery_queue_length
-
-# Success rate
-rate(celery_task_total{state="SUCCESS"}[5m]) / rate(celery_task_total[5m])
-
-# Task duration p95
-histogram_quantile(0.95, rate(celery_task_duration_seconds_bucket[5m]))
-```
-
-### Dashboard 3: System Resources
-
-**Panels:**
-1. **CPU Usage** - CPU percentage over time
-2. **Memory Usage** - Memory percentage over time
-3. **Disk Usage** - Disk space used
-4. **Network I/O** - Network traffic in/out
-5. **Container Memory** - Memory by container
-6. **Container CPU** - CPU by container
-
-**PromQL Queries:**
-```promql
-# CPU usage
-100 - (avg(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
-
-# Memory usage
-(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
-
-# Disk usage
-(1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100
+# Import via UI: Configuration > Dashboards > Import
 ```
 
 ---
@@ -517,211 +654,227 @@ histogram_quantile(0.95, rate(celery_task_duration_seconds_bucket[5m]))
 
 ### Log Locations
 
+**Application Logs:**
 ```bash
-# Application logs
-/opt/income-platform/logs/app.log
-/opt/income-platform/logs/error.log
+# API logs
+docker compose logs api
 
-# Container logs
-docker-compose logs [service-name]
+# Celery worker logs
+docker compose logs celery_default
+docker compose logs celery_scoring
 
-# Nginx logs
-/opt/income-platform/logs/nginx/access.log
-/opt/income-platform/logs/nginx/error.log
+# Beat scheduler logs
+docker compose logs celery_beats
 ```
 
-### Searching Logs
-
-**Find errors in last hour:**
+**System Logs:**
 ```bash
-grep -i "error" logs/app.log | tail -n 100
+# Docker daemon
+journalctl -u docker
 
-# With jq for JSON logs
-cat logs/app.log | jq 'select(.level=="ERROR")' | tail -n 20
+# Nginx access logs
+tail -f /var/log/nginx/access.log
+
+# Nginx error logs
+tail -f /var/log/nginx/error.log
 ```
 
-**Find slow requests:**
-```bash
-cat logs/app.log | jq 'select(.duration_ms > 1000)' | tail -n 20
-```
+### Log Patterns to Monitor
 
-**Find failed scoring requests:**
-```bash
-docker-compose logs celery-worker-scoring | grep -i "failed\|exception"
-```
-
-**Find circuit breaker triggers:**
-```bash
-docker-compose logs celery-worker-monitoring | grep -i "EMERGENCY\|CRITICAL"
-```
-
-### Log Analysis Commands
+#### 1. Error Patterns
 
 ```bash
-# Count errors by type
-cat logs/app.log | jq -r '.error_type' | sort | uniq -c | sort -nr
+# API errors
+docker compose logs api | grep -E "ERROR|CRITICAL"
 
-# Average request duration
-cat logs/app.log | jq -r '.duration_ms' | awk '{sum+=$1; count++} END {print sum/count}'
+# Database errors
+docker compose logs api | grep -i "database error"
 
-# Top 10 slowest endpoints
-cat logs/app.log | jq -r '[.endpoint, .duration_ms] | @tsv' | sort -k2 -nr | head -10
-
-# Error rate per hour
-cat logs/app.log | jq -r 'select(.level=="ERROR") | .timestamp' | cut -d'T' -f2 | cut -d':' -f1 | sort | uniq -c
+# External API failures
+docker compose logs celery_scoring | grep "API.*failed"
 ```
+
+#### 2. Performance Patterns
+
+```bash
+# Slow queries (>1s)
+docker compose logs api | grep "slow query"
+
+# Long-running tasks (>60s)
+docker compose logs celery_scoring | grep "Task.*took.*6[0-9]s"
+
+# Memory warnings
+docker compose logs | grep -i "memory"
+```
+
+#### 3. Security Patterns
+
+```bash
+# Failed authentication attempts
+docker compose logs api | grep "authentication failed"
+
+# Suspicious requests
+docker compose logs api | grep -E "SQL injection|XSS attempt"
+
+# Rate limit violations
+docker compose logs api | grep "rate limit exceeded"
+```
+
+### Log Aggregation
+
+**Recommended Setup (Future):**
+- **ELK Stack** (Elasticsearch, Logstash, Kibana)
+- **Loki + Grafana** (lightweight alternative)
+- **CloudWatch Logs** (if on AWS)
+
+**Current Setup:**
+- Docker logs with 7-day retention
+- Log rotation via logrotate
+- Manual log analysis via grep/awk
 
 ---
 
 ## SLA Monitoring
 
-### SLA Targets
+### Service Level Objectives (SLOs)
 
-| Metric | Target | Measurement Period |
-|--------|--------|-------------------|
-| API Availability | 99.9% | Monthly |
-| API Response Time (p95) | <500ms | 5-minute window |
-| Scoring Latency (p95) | <3s | 5-minute window |
-| Feature Extraction Success | >99% | Daily |
-| Circuit Breaker Alert Delivery | <1 min | Per incident |
+**API Availability**
+- **Target:** 99.9% uptime
+- **Measurement:** `up{job="api"} == 1`
+- **Budget:** 43.2 minutes downtime/month
 
-### Calculating SLA Compliance
+**API Response Time**
+- **Target:** P95 <500ms, P99 <1s
+- **Measurement:** `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))`
+- **Budget:** 5% of requests >500ms
 
-**API Availability (99.9% = 43.2 minutes downtime/month):**
-```promql
-# Uptime percentage over 30 days
-(count_over_time(up{job="income-api"}[30d]) - count_over_time((up{job="income-api"} == 0)[30d])) / count_over_time(up{job="income-api"}[30d]) * 100
-```
+**Scoring Latency**
+- **Target:** <3 seconds per symbol
+- **Measurement:** `avg(rate(scoring_duration_seconds_sum[5m]))`
+- **Budget:** 10% of scorings >3s
 
-**Response Time SLA:**
-```promql
-# Percentage of requests under 500ms
-sum(rate(http_request_duration_seconds_bucket{le="0.5"}[5m])) / sum(rate(http_request_duration_seconds_count[5m])) * 100
-```
+**Feature Extraction**
+- **Target:** 99%+ success rate
+- **Measurement:** `rate(feature_extraction_success_total[5m]) / rate(feature_extraction_attempts_total[5m])`
+- **Budget:** 1% failures allowed
 
-**Feature Extraction Success Rate:**
-```promql
-# Daily success rate
-sum(increase(feature_extraction_total{result="success"}[24h])) / sum(increase(feature_extraction_total[24h])) * 100
-```
+### SLA Dashboard Panel
 
----
-
-## Troubleshooting Metrics
-
-### High Error Rate Investigation
-
-```promql
-# 1. Identify which endpoints have errors
-sum by (endpoint) (rate(http_requests_total{status=~"5.."}[5m]))
-
-# 2. Check if database is issue
-up{job="postgres"}
-
-# 3. Check if specific workers failing
-sum by (worker) (rate(celery_task_total{state="FAILURE"}[5m]))
-
-# 4. Memory pressure?
-(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
-```
-
-### Slow Response Investigation
-
-```promql
-# 1. Which endpoints are slow?
-histogram_quantile(0.95, sum by (endpoint) (rate(http_request_duration_seconds_bucket[5m])))
-
-# 2. Is database slow?
-rate(pg_stat_statements_mean_exec_time[5m])
-
-# 3. Is feature extraction slow?
-histogram_quantile(0.95, rate(feature_extraction_duration_seconds_bucket[5m]))
-
-# 4. CPU bottleneck?
-100 - (avg(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
-```
-
-### Queue Backlog Investigation
-
-```promql
-# 1. Which queues are backed up?
-celery_queue_length
-
-# 2. Are workers processing tasks?
-sum by (worker) (rate(celery_task_total[5m]))
-
-# 3. Are tasks failing?
-sum by (task) (rate(celery_task_total{state="FAILURE"}[5m]))
-
-# 4. Are tasks taking too long?
-histogram_quantile(0.95, sum by (task) (rate(celery_task_duration_seconds_bucket[5m])))
+```json
+{
+  "title": "SLA Compliance",
+  "targets": [
+    {
+      "expr": "avg_over_time(up{job='api'}[30d]) * 100",
+      "legendFormat": "API Uptime (Target: 99.9%)"
+    },
+    {
+      "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[30d])) * 1000",
+      "legendFormat": "P95 Latency (Target: <500ms)"
+    },
+    {
+      "expr": "rate(feature_extraction_success_total[30d]) / rate(feature_extraction_attempts_total[30d]) * 100",
+      "legendFormat": "Feature Success Rate (Target: >99%)"
+    }
+  ],
+  "type": "stat",
+  "thresholds": [
+    {"value": 99.0, "color": "red"},
+    {"value": 99.5, "color": "yellow"},
+    {"value": 99.9, "color": "green"}
+  ]
+}
 ```
 
 ---
 
-## Best Practices
+## Performance Baselines
 
-### Metric Naming Conventions
-- Use snake_case: `http_requests_total`, not `httpRequestsTotal`
-- Include units in name: `duration_seconds`, not `duration`
-- Use base units: seconds not milliseconds, bytes not MB
-- Add `_total` suffix to counters
-- Add unit suffix to gauges/histograms
+### Expected Metrics (Production)
 
-### Query Performance
-- Use `rate()` for counters, not `increase()` for alerting
-- Use recording rules for frequently-queried expressions
-- Keep query time range reasonable (5m-1h typically)
-- Use `sum by (label)` to reduce cardinality
+**API Performance:**
+- Request rate: 10-50 req/s (steady state)
+- P50 latency: 100-200ms
+- P95 latency: 300-500ms
+- P99 latency: 500-1000ms
+- Error rate: <1%
 
-### Alert Tuning
-- Set appropriate `for:` duration to avoid flapping
-- Use multiple severity levels (critical, warning, info)
-- Include actionable information in annotations
-- Test alerts in staging before production
+**Database Performance:**
+- Connection pool: 30-50 connections
+- Transaction rate: 50-100 txn/s
+- Query execution: P95 <100ms
+- Slow queries: <10/hour
+
+**Celery Performance:**
+- Queue length: <50 tasks (steady state)
+- Task processing: 10-20 tasks/minute
+- Task duration: P95 <5s (varies by task)
+- Worker utilization: 60-80%
+
+**System Resources:**
+- CPU: 20-40% (idle), 60-80% (busy)
+- Memory: 60-70% utilized
+- Disk: <70% utilized
+- Network: 1-10 Mbps
+
+### Performance Testing
+
+**Load Testing Script:**
+```bash
+# Install Apache Bench
+sudo apt install apache2-utils
+
+# Test API performance (100 concurrent, 1000 requests)
+ab -n 1000 -c 100 https://api.incomefortress.com/health
+
+# Test scoring endpoint (10 concurrent, 100 requests)
+ab -n 100 -c 10 -p score-request.json -T application/json \
+  https://api.incomefortress.com/api/v1/scores/VYM
+```
+
+**Expected Results:**
+- Requests per second: >100
+- Time per request (mean): <500ms
+- Failed requests: 0
 
 ---
 
 ## Quick Reference
 
-### Useful Prometheus Queries
+### Key Prometheus Queries
 
 ```promql
-# Top 5 endpoints by request count
-topk(5, sum by (endpoint) (rate(http_requests_total[5m])))
+# Request rate
+rate(http_requests_total[5m])
 
-# Error rate by endpoint
-sum by (endpoint) (rate(http_requests_total{status=~"5.."}[5m])) / sum by (endpoint) (rate(http_requests_total[5m]))
+# Error rate
+rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100
 
-# Memory usage by container
-container_memory_usage_bytes / container_spec_memory_limit_bytes * 100
+# P95 latency
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
 
-# Disk write IOPS
-rate(node_disk_writes_completed_total[5m])
+# Memory usage
+(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
 
-# Network receive bytes/sec
-rate(node_network_receive_bytes_total[5m])
+# Disk usage
+(1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100
+
+# Queue length
+celery_queue_length
 ```
 
-### Useful Commands
+### Alert Investigation Checklist
 
-```bash
-# Reload Prometheus config
-curl -X POST http://localhost:9090/-/reload
-
-# Check Prometheus targets
-curl http://localhost:9090/api/v1/targets
-
-# Query Prometheus API
-curl 'http://localhost:9090/api/v1/query?query=up'
-
-# Check alert status
-curl http://localhost:9090/api/v1/alerts
-```
+- [ ] Check alert details in Prometheus UI
+- [ ] Review Grafana dashboards for context
+- [ ] Check service logs for errors
+- [ ] Verify recent deployments/changes
+- [ ] Check resource utilization
+- [ ] Review similar past incidents
+- [ ] Document findings and resolution
 
 ---
 
-**Document Version:** 1.0.0  
-**Last Updated:** February 2, 2026  
-**Maintained By:** Alberto DBP  
-**Review Frequency:** Quarterly
+**Monitoring Guide Version:** 1.0.0  
+**Last Updated:** February 3, 2026  
+**Next Review:** May 1, 2026

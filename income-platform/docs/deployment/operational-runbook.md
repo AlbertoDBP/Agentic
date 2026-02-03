@@ -1,7 +1,7 @@
 # Operational Runbook - Income Fortress Platform
 
 **Version:** 1.0.0  
-**Last Updated:** February 2, 2026  
+**Last Updated:** February 3, 2026  
 **Audience:** DevOps, SRE, On-Call Engineers
 
 ---
@@ -23,887 +23,902 @@
 
 ```bash
 # 1. Check all services are running
-docker-compose ps
+docker compose ps
 
 # Expected: All services "Up (healthy)"
 
-# 2. Check API health
-curl https://api.incomefortress.com/health
+# 2. Check health endpoint
+curl https://api.incomefortress.com/health/detailed
 
-# Expected: {"status":"healthy"}
+# Expected: {"status": "healthy", "services": {...}}
 
-# 3. Review overnight logs for errors
-docker-compose logs --since 12h | grep -i error
+# 3. Check error rates (last 24 hours)
+docker compose logs --since 24h | grep ERROR | wc -l
 
-# 4. Check Celery workers
-docker-compose exec api celery -A app.celery_app inspect active
+# Expected: <10 errors
 
-# Expected: All workers responding
+# 4. Check database connections
+docker compose exec api python -c "from django.db import connection; print(connection.queries)"
 
-# 5. Verify database connections
-docker-compose exec api python -c "from app.database import db; print('OK' if db else 'FAIL')"
+# Expected: Connection successful
 
-# 6. Check Redis
-docker-compose exec redis redis-cli ping
-# Expected: PONG
+# 5. Review Prometheus alerts
+curl http://localhost:9090/api/v1/alerts
 
-# 7. Review Prometheus alerts
-curl -s http://localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.state=="firing")'
-
-# Expected: [] (no firing alerts)
+# Expected: No firing alerts
 ```
 
-### Evening Checklist (5 PM EST)
+**Checklist:**
+- [ ] All 8 containers healthy
+- [ ] API responding correctly
+- [ ] Error count acceptable (<10/day)
+- [ ] Database connections stable
+- [ ] No critical alerts firing
+
+### Evening Checklist (6 PM EST)
 
 ```bash
-# 1. Check backup completed
-ls -lh /opt/income-platform/backups/database/ | tail -n 1
+# 1. Review daily metrics
+curl http://localhost:8000/metrics | grep -E "(api_requests_total|scoring_duration_seconds)"
 
-# Expected: Today's backup file
+# 2. Check Celery queue lengths
+docker compose exec celery_default celery -A income_platform inspect active_queues
 
-# 2. Review daily metrics
-curl http://localhost:8000/metrics | grep http_requests_total
+# Expected: Queue lengths <100
 
-# 3. Check disk space
+# 3. Verify backups completed
+ls -lh backups/ | tail -5
+
+# Expected: Today's backup present
+
+# 4. Check disk space
 df -h
 
-# Expected: <80% usage
+# Expected: <70% utilization
 
-# 4. Review circuit breaker triggers
-docker-compose exec api python scripts/circuit_breaker_summary.py
-
-# 5. Plan tomorrow's maintenance (if any)
+# 5. Review system logs
+journalctl -u docker --since "4 hours ago" | grep -i error
 ```
+
+**Checklist:**
+- [ ] Request volume normal
+- [ ] Celery queues not backing up
+- [ ] Daily backup completed
+- [ ] Disk space sufficient
+- [ ] No system-level errors
 
 ---
 
 ## Common Tasks
 
-### Start Services
+### 1. Restarting a Service
+
+**When:** Service is unresponsive or needs configuration reload
 
 ```bash
-# Start all services
-cd /opt/income-platform
-docker-compose up -d
+# Restart single service
+docker compose restart api
 
-# Verify startup
-docker-compose ps
-docker-compose logs -f --tail=20
+# Restart with rebuild (if code/config changed)
+docker compose up -d --no-deps --build api
+
+# Verify service is healthy
+docker compose ps api
+curl https://api.incomefortress.com/health
 ```
 
-**Expected Startup Time:** 30-60 seconds
+**Expected Recovery Time:** 30-60 seconds
 
-### Stop Services
+### 2. Scaling Celery Workers
+
+**When:** Task queue growing, scoring taking too long
 
 ```bash
-# Graceful stop (30 second timeout)
-docker-compose stop
+# Check current workers
+docker compose exec celery_default celery -A income_platform inspect active
 
-# Force stop (immediate)
-docker-compose down
+# Scale up workers (edit docker-compose.yml)
+# Change: --concurrency=4 to --concurrency=8
+
+# Apply changes
+docker compose up -d --no-deps celery_default
+
+# Verify new workers
+docker compose logs -f celery_default
 ```
 
-⚠️ **Warning:** Use `down` only for maintenance, not production stops.
+**Impact:** Increased CPU/memory usage, faster task processing
 
-### Restart Specific Service
+### 3. Database Backup
+
+**When:** Before major changes, migrations, or on-demand
 
 ```bash
-# Restart API
-docker-compose restart api
+# Manual backup
+./scripts/backup_database.sh
 
-# Restart worker
-docker-compose restart celery-worker-scoring
+# Verify backup
+ls -lh backups/
+# Expected: New .sql file with current timestamp
 
-# Restart all workers
-docker-compose restart celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
+# Test backup integrity
+pg_restore --list backups/$(ls -t backups/ | head -1)
 ```
 
-### View Logs
+**Frequency:** 
+- Automated: Daily at 2 AM EST
+- Manual: Before migrations, major releases
 
+### 4. Viewing Logs
+
+**Real-time monitoring:**
 ```bash
-# All services (live tail)
-docker-compose logs -f
+# All services
+docker compose logs -f
 
 # Specific service
-docker-compose logs -f api
+docker compose logs -f api
 
 # Last 100 lines
-docker-compose logs --tail=100 api
+docker compose logs --tail=100 api
 
-# Since timestamp
-docker-compose logs --since 2026-02-02T10:00:00 api
+# Filter by error level
+docker compose logs api | grep ERROR
 
-# Follow errors only
-docker-compose logs -f api 2>&1 | grep -i error
+# Search for specific term
+docker compose logs api | grep "scoring_agent"
 ```
 
-### Execute Commands in Container
+**Log Locations:**
+- Container logs: `docker compose logs`
+- System logs: `/var/log/income-platform/`
+- Nginx logs: `/var/log/nginx/`
+
+### 5. Clearing Redis Cache
+
+**When:** Stale data suspected, after configuration changes
 
 ```bash
-# Python shell
-docker-compose exec api python
+# Connect to Redis
+docker compose exec redis redis-cli
 
-# Django/Alembic shell
-docker-compose exec api python manage.py shell
+# Clear all caches
+FLUSHALL
 
-# Run script
-docker-compose exec api python scripts/create_tenant.py --tenant-id 002
+# Clear specific pattern
+KEYS income:*
+DEL income:scores:VYM
 
-# Bash shell
-docker-compose exec api /bin/bash
+# Verify cache cleared
+DBSIZE
 ```
 
-### Check Service Health
+**Impact:** Temporary performance degradation as cache rebuilds
+
+### 6. Running Migrations
+
+**When:** Database schema changes deployed
 
 ```bash
-# API health endpoint
-curl https://api.incomefortress.com/health
+# Show pending migrations
+docker compose exec api python manage.py showmigrations
 
-# Detailed health
-curl https://api.incomefortress.com/health/detailed
+# Run migrations
+docker compose exec api python manage.py migrate
 
-# Individual containers
-docker-compose exec api curl localhost:8000/health
-docker-compose exec n8n wget -qO- localhost:5678/healthz
-docker-compose exec redis redis-cli ping
-
-# Docker health status
-docker inspect income-api | jq '.[0].State.Health.Status'
+# Verify migrations applied
+docker compose exec api python manage.py showmigrations | grep "\[X\]"
 ```
 
-### Database Operations
+**Rollback if needed:**
+```bash
+# Rollback last migration
+docker compose exec api python manage.py migrate <app_name> <previous_migration>
+```
+
+### 7. Adding a New Tenant
+
+**When:** New client onboarding
 
 ```bash
-# Connect to PostgreSQL
-psql "$DATABASE_URL"
+# 1. Create tenant schema
+docker compose exec api python manage.py create_tenant \
+  --schema_name=tenant_new \
+  --domain=tenant-new.incomefortress.com
 
-# Run query
-psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM platform_shared.securities;"
+# 2. Verify tenant created
+docker compose exec api python -c "
+from apps.tenants.models import Tenant
+print(Tenant.objects.filter(schema_name='tenant_new').exists())
+"
 
-# List schemas
-psql "$DATABASE_URL" -c "\dn"
+# 3. Run migrations for new schema
+docker compose exec api python manage.py migrate_schemas --schema=tenant_new
 
-# Check connections
-psql "$DATABASE_URL" -c "SELECT count(*) FROM pg_stat_activity;"
-
-# Backup database
-./scripts/backup_database.sh
-
-# Restore database
-./scripts/restore_database.sh [backup_file]
+# 4. Create superuser for tenant
+docker compose exec api python manage.py tenant_command createsuperuser \
+  --schema=tenant_new
 ```
 
-### Celery Operations
+### 8. Updating Environment Variables
+
+**When:** API keys, secrets, or configuration changes
 
 ```bash
-# Check worker status
-docker-compose exec api celery -A app.celery_app inspect active
+# 1. Edit .env file
+nano .env
 
-# List scheduled tasks
-docker-compose exec api celery -A app.celery_app inspect scheduled
+# 2. Verify changes
+cat .env | grep <variable_name>
 
-# Purge queue (⚠️ CAREFUL)
-docker-compose exec api celery -A app.celery_app purge
+# 3. Restart affected services
+docker compose restart api celery_default celery_scoring
 
-# Worker statistics
-docker-compose exec api celery -A app.celery_app inspect stats
-
-# Registered tasks
-docker-compose exec api celery -A app.celery_app inspect registered
+# 4. Verify new values loaded
+docker compose exec api printenv | grep <variable_name>
 ```
 
-### Update Deployment
+**Important:** Never commit `.env` to Git!
+
+### 9. Certificate Renewal
+
+**When:** SSL certificate expiring (automated, but manual if needed)
 
 ```bash
-# Run update script
-./scripts/deploy_update.sh
+# Check certificate expiration
+sudo certbot certificates
 
-# Manual update process:
-# 1. Backup database
-./scripts/backup_database.sh
+# Manual renewal
+sudo certbot renew
 
-# 2. Pull latest code
-git pull origin main
+# Verify renewal
+sudo nginx -t
+sudo systemctl reload nginx
 
-# 3. Rebuild images
-docker-compose build
-
-# 4. Run migrations
-docker-compose run --rm api alembic upgrade head
-
-# 5. Restart services (zero-downtime)
-docker-compose up -d --no-deps --build api
-sleep 10
-docker-compose up -d --no-deps --build celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
-
-# 6. Verify
-curl https://api.incomefortress.com/health
+# Test SSL grade
+# Visit: https://www.ssllabs.com/ssltest/analyze.html?d=api.incomefortress.com
 ```
+
+**Automated Renewal:** Runs daily via cron at 3 AM EST
 
 ---
 
 ## Troubleshooting
 
-### Issue: API Not Responding
+### Issue 1: API Not Responding (503 Error)
 
 **Symptoms:**
-```bash
-curl https://api.incomefortress.com/health
-# Returns: Connection refused or timeout
-```
+- `curl https://api.incomefortress.com/health` returns 503
+- Users cannot access platform
+- Nginx shows "bad gateway" errors
 
 **Diagnosis:**
 ```bash
-# 1. Check container status
-docker-compose ps api
-# If not "Up (healthy)", proceed
+# 1. Check if API container is running
+docker compose ps api
 
-# 2. Check logs
-docker-compose logs --tail=100 api
+# 2. Check API logs
+docker compose logs --tail=100 api
 
-# 3. Check port binding
-netstat -tulpn | grep 8000
-
-# 4. Check nginx
-docker-compose ps nginx
-docker-compose logs --tail=50 nginx
+# 3. Check resource usage
+docker stats api
 ```
 
-**Solutions:**
+**Common Causes & Solutions:**
 
-**Solution 1: Container crashed**
+**Cause A: Container crashed**
 ```bash
 # Restart API
-docker-compose restart api
+docker compose restart api
 
-# If fails to start, check logs for errors
-docker-compose logs api
+# Check if it stays up
+docker compose ps api
 ```
 
-**Solution 2: Port conflict**
+**Cause B: Out of memory**
 ```bash
-# Check what's using port 8000
-lsof -i :8000
+# Check memory usage
+docker stats api
 
-# Kill conflicting process or change port
+# If >90%, increase memory limit in docker-compose.yml
+# Then restart
+docker compose up -d --no-deps api
 ```
 
-**Solution 3: Out of memory**
+**Cause C: Database connection lost**
+```bash
+# Test DB connection
+docker compose exec api python -c "
+from django.db import connection
+connection.ensure_connection()
+print('Connected')
+"
+
+# If fails, restart database (if managed by DigitalOcean, check their console)
+# Then restart API
+docker compose restart api
+```
+
+### Issue 2: Celery Tasks Not Processing
+
+**Symptoms:**
+- Task queue growing
+- Scores not updating
+- Background jobs stuck
+
+**Diagnosis:**
+```bash
+# 1. Check Celery worker status
+docker compose exec celery_default celery -A income_platform inspect active
+
+# 2. Check queue lengths
+docker compose exec celery_default celery -A income_platform inspect active_queues
+
+# 3. Check worker logs
+docker compose logs --tail=100 celery_default celery_scoring
+```
+
+**Common Causes & Solutions:**
+
+**Cause A: Workers crashed**
+```bash
+# Restart workers
+docker compose restart celery_default celery_scoring
+
+# Verify they're processing
+docker compose logs -f celery_default
+```
+
+**Cause B: Tasks blocking workers**
+```bash
+# Purge queue (WARNING: loses in-flight tasks)
+docker compose exec celery_default celery -A income_platform purge
+
+# Restart workers
+docker compose restart celery_default celery_scoring
+```
+
+**Cause C: Database deadlock**
+```bash
+# Check for locks
+docker compose exec api python manage.py dbshell
+SELECT * FROM pg_locks WHERE NOT GRANTED;
+
+# If deadlocks found, restart workers
+docker compose restart celery_default celery_scoring
+```
+
+### Issue 3: Slow API Response Times
+
+**Symptoms:**
+- API latency >1s (normal <500ms)
+- Users complaining of slowness
+- Timeout errors
+
+**Diagnosis:**
+```bash
+# 1. Check current latency
+time curl https://api.incomefortress.com/health
+
+# 2. Check database query performance
+docker compose logs api | grep "slow query"
+
+# 3. Check resource usage
+docker stats
+```
+
+**Common Causes & Solutions:**
+
+**Cause A: Slow database queries**
+```bash
+# Enable query logging (temporarily)
+# Edit .env: DEBUG=True, DB_LOG_QUERIES=True
+
+# Restart API
+docker compose restart api
+
+# Check logs for slow queries
+docker compose logs api | grep "SLOW QUERY"
+
+# Disable debug mode after investigation
+# Edit .env: DEBUG=False
+docker compose restart api
+```
+
+**Cause B: High CPU usage**
+```bash
+# Check CPU usage
+docker stats
+
+# If API >80%, scale horizontally (add more API containers)
+# Or optimize code/queries
+
+# If database >80%, upgrade database tier (DigitalOcean console)
+```
+
+**Cause C: Memory pressure**
 ```bash
 # Check memory
 free -h
 
-# If low, restart services
-docker-compose restart
+# If <10% available, restart services to free memory
+docker compose restart
 ```
 
-**Solution 4: Configuration error**
-```bash
-# Verify .env file
-grep -i "CHANGE_ME" .env
-# Should return nothing
-
-# Test configuration
-docker-compose config
-```
-
----
-
-### Issue: Database Connection Fails
+### Issue 4: Scoring Agent Failures
 
 **Symptoms:**
-```
-psycopg2.OperationalError: could not connect to server
-```
+- Scores not calculating
+- Errors in Agent 3 logs
+- Missing feature data
 
 **Diagnosis:**
 ```bash
-# 1. Test connection
-psql "$DATABASE_URL"
+# 1. Check scoring worker logs
+docker compose logs celery_scoring | grep "Agent.*Error"
 
-# 2. Check database status (DigitalOcean dashboard)
+# 2. Check feature store
+docker compose exec api python -c "
+from apps.scoring.models import FeatureStore
+print(FeatureStore.objects.filter(symbol='VYM').latest('updated_at'))
+"
 
-# 3. Verify IP whitelist
-# Go to: DigitalOcean > Databases > Trusted Sources
+# 3. Check external API status
+curl https://api.anthropic.com/v1/messages -H "x-api-key: $ANTHROPIC_API_KEY"
+```
 
-# 4. Check SSL mode
-echo $DATABASE_URL | grep sslmode
-# Must include: ?sslmode=require
+**Common Causes & Solutions:**
+
+**Cause A: Missing feature data**
+```bash
+# Trigger manual feature extraction
+docker compose exec api python manage.py extract_features --symbol=VYM
+
+# Verify features stored
+docker compose exec api python manage.py dbshell
+SELECT COUNT(*) FROM feature_store WHERE symbol='VYM';
+```
+
+**Cause B: Anthropic API rate limit**
+```bash
+# Check rate limit headers in logs
+docker compose logs celery_scoring | grep "rate.*limit"
+
+# If rate limited, wait for reset (1 minute)
+# Or reduce scoring frequency in celerybeat-schedule.py
+```
+
+**Cause C: Model version mismatch**
+```bash
+# Check current model version
+docker compose exec api python -c "
+from apps.scoring.income_scorer import IncomeScorerV6
+print(IncomeScorerV6.__version__)
+"
+
+# If outdated, rebuild container
+docker compose build celery_scoring
+docker compose up -d --no-deps celery_scoring
+```
+
+### Issue 5: Disk Space Full
+
+**Symptoms:**
+- Docker commands failing
+- Database writes failing
+- Logs show "no space left"
+
+**Diagnosis:**
+```bash
+# Check disk usage
+df -h
+
+# Check largest directories
+du -sh /* | sort -rh | head -10
+
+# Check Docker volumes
+docker system df
 ```
 
 **Solutions:**
 
-**Solution 1: IP not whitelisted**
-- Go to DigitalOcean dashboard
-- Navigate to database > Settings > Trusted Sources
-- Add droplet IP: `curl -s ifconfig.me`
-
-**Solution 2: Connection pool exhausted**
 ```bash
-# Check active connections
-psql "$DATABASE_URL" -c "SELECT count(*) FROM pg_stat_activity;"
+# 1. Clear old logs
+docker compose logs --tail=0 > /dev/null
 
-# If near max (20), restart API
-docker-compose restart api
+# 2. Remove old Docker images
+docker image prune -a
+
+# 3. Remove old database backups (keep last 7 days)
+find backups/ -name "*.sql" -mtime +7 -delete
+
+# 4. Clear systemd journal
+sudo journalctl --vacuum-size=500M
+
+# 5. If still full, upgrade droplet storage (DigitalOcean console)
 ```
 
-**Solution 3: Database maintenance**
-- Check DigitalOcean dashboard for maintenance windows
-- Wait for completion or contact support
-
----
-
-### Issue: High Memory Usage
+### Issue 6: SSL Certificate Expired
 
 **Symptoms:**
-```bash
-free -h
-# Shows: Mem: >90% used
-docker stats
-# Shows: High memory usage on containers
-```
+- Browser shows "not secure"
+- SSL Labs shows certificate expired
+- Users cannot access platform
 
 **Diagnosis:**
 ```bash
-# 1. Check memory by container
-docker stats --no-stream
-
-# 2. Check for memory leaks
-docker-compose logs api | grep -i "memory"
-
-# 3. Check swap usage
-free -h | grep Swap
+# Check certificate expiration
+sudo certbot certificates
 ```
 
-**Solutions:**
-
-**Solution 1: Restart high-memory containers**
+**Solution:**
 ```bash
-docker-compose restart api celery-worker-scoring
-```
+# Renew certificate
+sudo certbot renew --force-renewal
 
-**Solution 2: Reduce worker concurrency**
-```bash
-# Edit docker-compose.yml
-# Change: --concurrency=2
-# To: --concurrency=1
+# Reload Nginx
+sudo nginx -t
+sudo systemctl reload nginx
 
-# Apply changes
-docker-compose up -d --no-deps celery-worker-scoring
-```
-
-**Solution 3: Increase swap**
-```bash
-# Create 4GB swap (if 2GB exists)
-sudo fallocate -l 4G /swapfile2
-sudo chmod 600 /swapfile2
-sudo mkswap /swapfile2
-sudo swapon /swapfile2
-```
-
-**Solution 4: Clear Redis cache**
-```bash
-docker-compose exec redis redis-cli FLUSHDB
-```
-
----
-
-### Issue: Celery Tasks Not Processing
-
-**Symptoms:**
-```bash
-# Tasks pile up in queue
-docker-compose exec api celery -A app.celery_app inspect reserved
-# Shows many reserved tasks
-```
-
-**Diagnosis:**
-```bash
-# 1. Check worker status
-docker-compose exec api celery -A app.celery_app inspect active
-
-# 2. Check worker logs
-docker-compose logs --tail=100 celery-worker-scoring
-
-# 3. Check Redis
-docker-compose exec redis redis-cli ping
-```
-
-**Solutions:**
-
-**Solution 1: Workers not running**
-```bash
-docker-compose ps | grep worker
-# If not Up, restart
-docker-compose restart celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
-```
-
-**Solution 2: Workers stuck on long task**
-```bash
-# Check active tasks
-docker-compose exec api celery -A app.celery_app inspect active
-
-# Revoke stuck task (get task_id from above)
-docker-compose exec api celery -A app.celery_app revoke [task_id] --terminate
-```
-
-**Solution 3: Redis connection issue**
-```bash
-# Check Redis connectivity
-docker-compose exec api python -c "import redis; r=redis.from_url('$REDIS_URL'); print(r.ping())"
-
-# Restart Redis
-docker-compose restart redis
-```
-
----
-
-### Issue: SSL Certificate Expiring/Expired
-
-**Symptoms:**
-```
-SSL certificate problem: certificate has expired
-```
-
-**Diagnosis:**
-```bash
-# Check certificate expiry
-echo | openssl s_client -connect api.incomefortress.com:443 2>/dev/null | openssl x509 -noout -dates
-
-# Output shows:
-# notBefore=...
-# notAfter=...  (check this date)
-```
-
-**Solutions:**
-
-**Solution 1: Renew certificates**
-```bash
-# Manual renewal
-docker-compose run --rm certbot renew
-
-# Reload nginx
-docker-compose exec nginx nginx -s reload
-```
-
-**Solution 2: Force renewal**
-```bash
-docker-compose run --rm certbot renew --force-renewal
-docker-compose exec nginx nginx -s reload
-```
-
-**Solution 3: Re-run initialization**
-```bash
-./scripts/init_ssl.sh
-```
-
----
-
-### Issue: High CPU Usage
-
-**Symptoms:**
-```bash
-top
-# Shows high CPU usage on Docker processes
-```
-
-**Diagnosis:**
-```bash
-# 1. Check CPU by container
-docker stats --no-stream
-
-# 2. Check for infinite loops in logs
-docker-compose logs api | grep -i "error\|exception"
-
-# 3. Check Celery task count
-docker-compose exec api celery -A app.celery_app inspect active
-```
-
-**Solutions:**
-
-**Solution 1: Restart high-CPU containers**
-```bash
-docker-compose restart [container-name]
-```
-
-**Solution 2: Reduce concurrent tasks**
-```bash
-# Edit docker-compose.yml
-# Reduce --concurrency=2 to --concurrency=1
-docker-compose up -d
-```
-
-**Solution 3: Check for runaway tasks**
-```bash
-# Inspect active tasks
-docker-compose exec api celery -A app.celery_app inspect active
-
-# Revoke problematic tasks
-docker-compose exec api celery -A app.celery_app revoke [task_id] --terminate
+# Verify renewal
+curl https://api.incomefortress.com
+# Should return 200, no SSL warnings
 ```
 
 ---
 
 ## Emergency Procedures
 
-### Complete Service Failure
+### EMERGENCY: Complete System Outage
 
-**Immediate Actions:**
+**Severity:** P0 (Critical)  
+**RTO:** 4 hours  
+**RPO:** 1 hour
+
+**Immediate Actions (First 15 minutes):**
 
 1. **Assess Scope**
-```bash
-# Check all services
-docker-compose ps
+   ```bash
+   # Check all services
+   docker compose ps
+   
+   # Check system resources
+   free -h
+   df -h
+   
+   # Check network
+   ping google.com
+   ```
 
-# Check system resources
-free -h
-df -h
-top
-```
+2. **Notify Team**
+   - Slack #ops channel: "@here CRITICAL: Full outage"
+   - Page on-call engineer
+   - Update status page
 
-2. **Check Recent Changes**
-```bash
-# Recent deployments
-git log --oneline -10
+3. **Attempt Quick Recovery**
+   ```bash
+   # Try restarting all services
+   docker compose restart
+   
+   # Wait 2 minutes, check health
+   curl https://api.incomefortress.com/health
+   ```
 
-# Recent configuration changes
-ls -lt .env docker-compose.yml
-```
+**If Quick Recovery Fails (15-60 minutes):**
 
-3. **Attempt Restart**
-```bash
-# Full restart
-docker-compose down
-docker-compose up -d
+4. **Full System Restart**
+   ```bash
+   # Stop all services
+   docker compose down
+   
+   # Check for stuck processes
+   ps aux | grep docker
+   
+   # Restart Docker daemon
+   sudo systemctl restart docker
+   
+   # Start services
+   docker compose up -d
+   
+   # Monitor startup
+   docker compose logs -f
+   ```
 
-# Monitor startup
-docker-compose logs -f
-```
+5. **Check External Dependencies**
+   ```bash
+   # Test database connectivity
+   psql "$DATABASE_URL" -c "SELECT 1"
+   
+   # Test Redis connectivity
+   redis-cli -u "$REDIS_URL" PING
+   
+   # Test Anthropic API
+   curl https://api.anthropic.com/v1/messages -H "x-api-key: $ANTHROPIC_API_KEY"
+   ```
 
-4. **If Restart Fails → Rollback**
-```bash
-# Restore from backup
-./scripts/restore_database.sh [last_known_good_backup]
+**If System Still Down (60+ minutes):**
 
-# Checkout previous code version
-git checkout [previous_commit]
+6. **Disaster Recovery**
+   - See [Disaster Recovery Plan](disaster-recovery.md)
+   - Initiate failover to backup environment
+   - Restore from last known good backup
 
-# Rebuild and start
-docker-compose build
-docker-compose up -d
-```
+### EMERGENCY: Data Corruption Detected
 
-5. **Communicate**
-- Update status page (if available)
-- Notify users via email/Slack
-- Document incident in incident log
-
----
-
-### Database Corruption
+**Severity:** P0 (Critical)  
+**RTO:** 2 hours  
+**RPO:** 1 hour
 
 **Immediate Actions:**
 
 1. **Stop All Writes**
-```bash
-# Stop API and workers
-docker-compose stop api celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
-```
+   ```bash
+   # Put API in maintenance mode
+   docker compose exec api python manage.py set_maintenance_mode on
+   
+   # Stop Celery workers
+   docker compose stop celery_default celery_scoring
+   ```
 
-2. **Assess Damage**
-```bash
-# Connect to database
-psql "$DATABASE_URL"
+2. **Assess Corruption**
+   ```bash
+   # Check database integrity
+   docker compose exec api python manage.py dbshell
+   VACUUM ANALYZE;
+   
+   # Check for corrupted tables
+   SELECT * FROM pg_stat_database WHERE datname='income_platform';
+   ```
 
-# Check for corruption
-SELECT * FROM pg_stat_database;
+3. **Notify Leadership**
+   - Escalate to CTO immediately
+   - Document corruption scope
+   - Prepare communication for users
 
-# Check table integrity
-\dt
-```
+4. **Restore from Backup**
+   - See [Disaster Recovery: Database Restore](disaster-recovery.md#database-restore)
+   - Use most recent uncorrupted backup
+   - Validate data integrity after restore
 
-3. **Restore from Backup**
-```bash
-# Full restore procedure
-./scripts/restore_database.sh [most_recent_backup]
-```
+### EMERGENCY: Security Breach
 
-4. **Verify Restoration**
-```bash
-# Check critical tables
-psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM platform_shared.securities;"
-psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM tenant_001.users;"
-```
-
-5. **Resume Services**
-```bash
-docker-compose start api celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
-```
-
----
-
-### Security Incident
+**Severity:** P0 (Critical)  
+**RTO:** Immediate  
+**RPO:** N/A
 
 **Immediate Actions:**
 
-1. **Isolate**
-```bash
-# Stop accepting traffic
-docker-compose stop nginx
+1. **Isolate System**
+   ```bash
+   # Block all incoming traffic
+   sudo ufw deny from any to any port 80
+   sudo ufw deny from any to any port 443
+   
+   # Stop all services
+   docker compose down
+   ```
 
-# Or block at firewall
-ufw deny 80
-ufw deny 443
-```
+2. **Notify Security Team**
+   - Email: security@incomefortress.com
+   - Slack: @security-team
+   - Phone: On-call security officer
 
-2. **Assess**
-```bash
-# Check access logs
-tail -n 1000 /var/log/nginx/access.log
+3. **Preserve Evidence**
+   ```bash
+   # Capture logs
+   docker compose logs > /tmp/breach-logs-$(date +%Y%m%d).txt
+   
+   # Capture system state
+   docker compose ps > /tmp/breach-state-$(date +%Y%m%d).txt
+   
+   # Do NOT delete anything
+   ```
 
-# Check for unauthorized access
-docker-compose logs api | grep -i "401\|403\|unauthorized"
+4. **Rotate All Credentials**
+   - Database passwords
+   - API keys (Anthropic, market data)
+   - SSH keys
+   - SSL certificates
+   - Application secrets
 
-# Check running processes
-ps aux | grep -v grep
-```
+5. **Incident Response**
+   - Follow company incident response plan
+   - Document timeline
+   - Coordinate with legal/PR teams
 
-3. **Contain**
-```bash
-# Rotate secrets
-# 1. Generate new secrets
-openssl rand -hex 32
+### EMERGENCY: Database Failure
 
-# 2. Update .env
-nano .env
+**Severity:** P1 (High)  
+**RTO:** 1 hour  
+**RPO:** 1 hour
 
-# 3. Restart services
-docker-compose restart
-```
+**Immediate Actions:**
 
-4. **Investigate**
-- Review all logs
-- Check database for unauthorized changes
-- Document findings
+1. **Verify Database Status**
+   ```bash
+   # Check managed database console (DigitalOcean)
+   # Look for:
+   # - Connection errors
+   # - Disk full
+   # - Memory exhaustion
+   ```
 
-5. **Recover**
-- Restore from clean backup if needed
-- Implement additional security measures
-- Update credentials
+2. **Attempt Failover**
+   - If using managed DB with standby, initiate failover
+   - Update connection string if needed
+   - Restart API to pick up new connection
 
-6. **Report**
-- Document incident
-- Notify affected users
-- Report to appropriate authorities if required
+3. **If Failover Fails, Restore from Backup**
+   ```bash
+   # See Disaster Recovery Plan
+   ./scripts/restore_database.sh backups/latest.sql
+   ```
 
 ---
 
 ## Monitoring & Alerts
 
-### Key Metrics to Monitor
+### Alert Levels
 
-**API Metrics:**
-- Request rate (req/sec)
-- Response time (p50, p95, p99)
-- Error rate (%)
-- Active connections
+**P0 - Critical (Immediate Response Required)**
+- Complete system outage
+- Data corruption
+- Security breach
+- Database failure
 
-**Celery Metrics:**
-- Queue depth
-- Task success/failure rate
-- Task duration
-- Worker availability
+**P1 - High (Response within 1 hour)**
+- Service degradation (>5% error rate)
+- API response time >1s (p95)
+- Celery queue backing up (>500 tasks)
+- Disk space >90%
 
-**System Metrics:**
-- CPU usage (%)
-- Memory usage (%)
-- Disk usage (%)
-- Network I/O
+**P2 - Medium (Response within 4 hours)**
+- Memory usage >80%
+- CPU usage >80% for >10 minutes
+- Certificate expiring <7 days
+- Backup failure
 
-**Application Metrics:**
-- Scoring requests/hour
-- Feature extraction success rate
-- Circuit breaker triggers
-- Database connections
+**P3 - Low (Response within 24 hours)**
+- Minor configuration issues
+- Non-critical warnings
+- Informational alerts
 
-### Alert Thresholds
+### Alert Channels
 
-| Alert | Warning | Critical | Action |
-|-------|---------|----------|--------|
-| API Response Time | >500ms | >1s | Investigate slow queries |
-| Error Rate | >1% | >5% | Check logs immediately |
-| CPU Usage | >80% | >90% | Reduce load or scale |
-| Memory Usage | >85% | >95% | Restart services |
-| Disk Usage | >85% | >95% | Clean up logs/data |
-| Queue Depth | >100 | >500 | Check workers |
-| Database Connections | >15 | >18 | Check connection pool |
+**P0 Alerts:**
+- PagerDuty (immediate page)
+- Slack #ops-critical
+- SMS to on-call engineer
 
-### Alert Response Procedures
+**P1 Alerts:**
+- Slack #ops
+- Email to ops team
 
-**Critical Alert Response (15-minute SLA):**
-1. Acknowledge alert
-2. Assess impact
-3. Follow troubleshooting guide
-4. Implement fix
-5. Monitor for resolution
-6. Document in incident log
+**P2/P3 Alerts:**
+- Slack #ops-notifications
+- Email digest (daily)
 
-**Warning Alert Response (1-hour SLA):**
-1. Review metrics
-2. Identify trend
-3. Plan preventive action
-4. Schedule maintenance if needed
+### Key Prometheus Alerts
+
+See [Monitoring Guide](monitoring-guide.md) for complete alert definitions.
+
+**Critical Alerts:**
+1. `APIDown` - API unreachable for 5+ minutes
+2. `HighErrorRate` - Error rate >5% for 10+ minutes
+3. `DatabaseConnectionFailure` - DB connection pool exhausted
+4. `DiskSpaceCritical` - Disk >90% full
+5. `CeleryWorkersDown` - All workers offline
 
 ---
 
 ## Maintenance Windows
 
-### Weekly Maintenance (Sunday 2 AM - 4 AM EST)
+### Weekly Maintenance (Sundays 2-4 AM EST)
 
-**Standard Tasks:**
+**Purpose:** Apply updates, optimize database, clear caches
+
+**Procedure:**
 ```bash
-# 1. Update system packages
+# 1. Enable maintenance mode
+docker compose exec api python manage.py set_maintenance_mode on
+
+# 2. Backup database
+./scripts/backup_database.sh
+
+# 3. Apply system updates
 sudo apt update && sudo apt upgrade -y
 
-# 2. Docker cleanup
-docker system prune -f
+# 4. Optimize database
+docker compose exec api python manage.py dbshell
+VACUUM ANALYZE;
+REINDEX DATABASE income_platform;
 
-# 3. Log rotation
-find /opt/income-platform/logs -name "*.log" -mtime +7 -delete
+# 5. Clear old logs
+docker compose logs --tail=0 > /dev/null
 
-# 4. Database VACUUM
-psql "$DATABASE_URL" -c "VACUUM ANALYZE;"
+# 6. Restart services (apply updates)
+docker compose restart
 
-# 5. Redis SAVE
-docker-compose exec redis redis-cli SAVE
+# 7. Verify health
+curl https://api.incomefortress.com/health
 
-# 6. Review backup integrity
-ls -lh /opt/income-platform/backups/database/
+# 8. Disable maintenance mode
+docker compose exec api python manage.py set_maintenance_mode off
 ```
 
-### Monthly Maintenance (First Sunday 2 AM - 6 AM EST)
+### Monthly Maintenance (First Sunday, 2-6 AM EST)
 
-**Extended Tasks:**
-```bash
-# 1-5. Standard weekly tasks (above)
+**Additional Tasks:**
+- Full database backup verification (restore test on staging)
+- SSL certificate rotation check
+- Security patches application
+- Dependency updates (Python packages)
+- Docker image updates
+- Log rotation and archival
+- Performance tuning based on last month's metrics
 
-# 6. Full database backup verification
-./scripts/test_restore.sh
+### Quarterly Maintenance (First Sunday of Quarter, 2-8 AM EST)
 
-# 7. Security updates
-sudo unattended-upgrades
-
-# 8. SSL certificate check
-certbot renew --dry-run
-
-# 9. Disk cleanup
-sudo apt autoremove -y
-sudo apt autoclean
-
-# 10. Performance review
-# Review Prometheus metrics from past month
-# Identify trends and optimization opportunities
-```
-
-### Quarterly Maintenance (First Sunday of Quarter, 2 AM - 6 AM EST)
-
-**Deep Maintenance:**
-```bash
-# 1-10. Monthly tasks (above)
-
-# 11. Full system backup
-tar -czf /backup/system_$(date +%Y%m%d).tar.gz /opt/income-platform
-
-# 12. Disaster recovery test
-# Test full restore procedure in staging environment
-
-# 13. Security audit
-# Review access logs, update firewall rules, rotate credentials
-
-# 14. Dependency updates
-pip list --outdated
-# Plan dependency upgrade schedule
-```
+**Additional Tasks:**
+- Disaster recovery drill (full restore test)
+- Security audit
+- Capacity planning review
+- Database schema optimization
+- Infrastructure cost review
+- Documentation updates
 
 ---
 
-## Useful Commands Reference
+## Quick Reference
 
-### Docker
-
-```bash
-# View all containers (including stopped)
-docker ps -a
-
-# Remove stopped containers
-docker container prune
-
-# Remove unused images
-docker image prune -a
-
-# View disk usage
-docker system df
-
-# Full cleanup (⚠️ removes everything unused)
-docker system prune -a --volumes
-```
-
-### PostgreSQL
+### Essential Commands
 
 ```bash
-# Export schema
-pg_dump -s "$DATABASE_URL" > schema.sql
+# Service status
+docker compose ps
 
-# Export data
-pg_dump -a "$DATABASE_URL" > data.sql
+# Service logs
+docker compose logs -f [service]
 
-# Restore
-psql "$DATABASE_URL" < backup.sql
+# Restart service
+docker compose restart [service]
 
-# List tables with size
-psql "$DATABASE_URL" -c "\dt+"
+# Health check
+curl https://api.incomefortress.com/health
+
+# Database backup
+./scripts/backup_database.sh
+
+# Database restore
+./scripts/restore_database.sh [backup-file]
+
+# Celery status
+docker compose exec celery_default celery -A income_platform inspect active
+
+# Clear cache
+docker compose exec redis redis-cli FLUSHALL
+
+# Enable maintenance mode
+docker compose exec api python manage.py set_maintenance_mode on
+
+# Disable maintenance mode
+docker compose exec api python manage.py set_maintenance_mode off
 ```
 
-### Redis
+### Contact Information
 
-```bash
-# Get info
-docker-compose exec redis redis-cli INFO
+**On-Call Engineer:** See PagerDuty rotation  
+**DevOps Lead:** Alberto D. (alberto@incomefortress.com)  
+**Database Admin:** TBD  
+**Security Team:** security@incomefortress.com  
 
-# Monitor commands
-docker-compose exec redis redis-cli MONITOR
-
-# Get key count
-docker-compose exec redis redis-cli DBSIZE
-
-# Flush all (⚠️ CAREFUL)
-docker-compose exec redis redis-cli FLUSHALL
-```
-
-### Nginx
-
-```bash
-# Test configuration
-docker-compose exec nginx nginx -t
-
-# Reload configuration
-docker-compose exec nginx nginx -s reload
-
-# View configuration
-docker-compose exec nginx cat /etc/nginx/nginx.conf
-```
+**Escalation Path:**
+1. On-call engineer (immediate)
+2. DevOps lead (within 30 minutes)
+3. CTO (critical issues only)
 
 ---
 
-## Contact Information
-
-**On-Call Rotation:** [Insert schedule]  
-**Escalation Path:** [Insert hierarchy]  
-**Emergency Contact:** [Insert contact]
-
----
-
-**Document Version:** 1.0.0  
-**Last Updated:** February 2, 2026  
-**Maintained By:** Alberto DBP  
-**Review Frequency:** Monthly
+**Runbook Version:** 1.0.0  
+**Last Updated:** February 3, 2026  
+**Next Review:** May 1, 2026

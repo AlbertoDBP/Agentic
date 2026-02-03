@@ -1,19 +1,20 @@
-# Disaster Recovery Guide - Income Fortress Platform
+# Disaster Recovery Plan - Income Fortress Platform
 
 **Version:** 1.0.0  
-**Last Updated:** February 2, 2026  
-**Classification:** CRITICAL - Operations Team Only
+**Last Updated:** February 3, 2026  
+**Audience:** DevOps, SRE, Engineering Leadership
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [RTO/RPO Targets](#rtorpo-targets)
-3. [Backup Strategy](#backup-strategy)
-4. [Recovery Procedures](#recovery-procedures)
-5. [Failover Scenarios](#failover-scenarios)
+2. [Recovery Objectives](#recovery-objectives)
+3. [Disaster Scenarios](#disaster-scenarios)
+4. [Backup Strategy](#backup-strategy)
+5. [Recovery Procedures](#recovery-procedures)
 6. [Testing & Validation](#testing--validation)
+7. [Post-Recovery](#post-recovery)
 
 ---
 
@@ -21,33 +22,192 @@
 
 ### Purpose
 
-This document provides procedures for recovering the Income Fortress Platform from various disaster scenarios.
-
-**Use this guide when:**
-- Complete infrastructure failure
+This document defines procedures for recovering the Income Fortress Platform from catastrophic failures, including:
+- Complete system outages
 - Data corruption or loss
-- Security breach requiring full rebuild
-- Regional outage (DigitalOcean)
-- Unrecoverable application errors
+- Infrastructure failures
+- Security breaches
+- Natural disasters affecting data centers
 
-### Recovery Time Objectives (RTO)
+### Scope
 
-| Scenario | Target RTO | Maximum Downtime |
-|----------|-----------|------------------|
-| Single container failure | 5 minutes | Automatic restart |
-| Database corruption | 30 minutes | Manual intervention |
-| Complete droplet failure | 1 hour | Full rebuild required |
-| Regional outage | 4 hours | Multi-region failover |
-| Data center disaster | 8 hours | Complete restoration |
+**In Scope:**
+- Application services (API, Celery workers)
+- Database (PostgreSQL)
+- Cache layer (Redis)
+- File storage and configurations
+- Infrastructure (Docker, Nginx)
 
-### Recovery Point Objectives (RPO)
+**Out of Scope:**
+- DigitalOcean platform failures (handled by vendor SLAs)
+- Third-party API outages (Anthropic, market data)
+- Client-side issues
 
-| Data Type | Target RPO | Data Loss Window |
-|-----------|-----------|------------------|
-| User data | 24 hours | Last daily backup |
-| Transactions | 24 hours | Last daily backup |
-| Configuration | 0 hours | Version controlled |
-| System state | 24 hours | Last daily backup |
+### Roles & Responsibilities
+
+**Incident Commander** (DevOps Lead)
+- Declare disaster state
+- Coordinate recovery efforts
+- Communicate with stakeholders
+- Make final decisions on recovery approach
+
+**Technical Lead** (Senior Engineer)
+- Execute technical recovery procedures
+- Validate data integrity
+- Restore services
+- Document technical findings
+
+**Database Administrator** (DBA)
+- Database restoration
+- Data validation
+- Performance tuning post-recovery
+
+**Communications Lead** (Product Manager)
+- User communication
+- Status page updates
+- Stakeholder updates
+- Post-mortem documentation
+
+---
+
+## Recovery Objectives
+
+### Recovery Time Objective (RTO)
+
+**Maximum acceptable downtime for each service:**
+
+| Service | RTO Target | Maximum Acceptable |
+|---------|------------|-------------------|
+| API (Complete Outage) | 4 hours | 8 hours |
+| Database (Primary Failure) | 1 hour | 2 hours |
+| Cache (Redis Failure) | 30 minutes | 1 hour |
+| Celery Workers | 1 hour | 2 hours |
+| Background Jobs | 2 hours | 4 hours |
+
+### Recovery Point Objective (RPO)
+
+**Maximum acceptable data loss:**
+
+| Data Type | RPO Target | Maximum Acceptable |
+|-----------|------------|-------------------|
+| User Data (Portfolios, Proposals) | 1 hour | 4 hours |
+| Transaction History | 1 hour | 4 hours |
+| Market Data (Cache) | 24 hours | 48 hours |
+| System Logs | 24 hours | 72 hours |
+| Configuration Changes | 0 (immediate backup) | 1 hour |
+
+### Service Priority
+
+**P0 - Critical (Restore First)**
+- Database (PostgreSQL)
+- API service
+- Authentication system
+
+**P1 - High (Restore Second)**
+- Celery workers (scoring, execution)
+- Redis cache
+- Background job processing
+
+**P2 - Medium (Restore Third)**
+- Monitoring (Prometheus, Grafana)
+- Logging infrastructure
+- Non-essential background jobs
+
+---
+
+## Disaster Scenarios
+
+### Scenario 1: Complete Infrastructure Failure
+
+**Description:** DigitalOcean droplet completely unrecoverable (hardware failure, data center outage)
+
+**Impact:**
+- Total service outage
+- All containers offline
+- Need complete rebuild
+
+**Recovery Time:** 4-6 hours (within RTO)
+
+**Trigger Conditions:**
+- Droplet status shows "destroyed" or "critical hardware failure"
+- Unable to SSH or ping droplet for >30 minutes
+- DigitalOcean support confirms hardware failure
+
+**Recovery Procedure:** See [Complete Infrastructure Recovery](#complete-infrastructure-recovery)
+
+### Scenario 2: Database Corruption or Failure
+
+**Description:** PostgreSQL database corrupted, unavailable, or data integrity compromised
+
+**Impact:**
+- API returns 5xx errors
+- Cannot read/write user data
+- Transaction history at risk
+
+**Recovery Time:** 1-2 hours (within RTO)
+
+**Trigger Conditions:**
+- Database connection failures
+- Data integrity check failures
+- Corrupted table errors in logs
+- Managed database status shows "critical"
+
+**Recovery Procedure:** See [Database Recovery](#database-recovery)
+
+### Scenario 3: Data Corruption (Application Level)
+
+**Description:** Application bug causes invalid data writes, logical corruption
+
+**Impact:**
+- Portfolio values incorrect
+- Scores miscalculated
+- Proposals invalid
+
+**Recovery Time:** 2-4 hours (within RTO)
+
+**Trigger Conditions:**
+- User reports of incorrect data
+- Data validation alerts firing
+- Anomalous values in database
+
+**Recovery Procedure:** See [Data Corruption Recovery](#data-corruption-recovery)
+
+### Scenario 4: Security Breach
+
+**Description:** Unauthorized access, data exfiltration, or malware infection
+
+**Impact:**
+- All user data potentially compromised
+- System integrity unknown
+- Legal/compliance implications
+
+**Recovery Time:** Immediate isolation, 8-24 hours full recovery
+
+**Trigger Conditions:**
+- Unauthorized access alerts
+- Suspicious database queries
+- Data exfiltration detected
+- Malware detected
+
+**Recovery Procedure:** See [Security Breach Recovery](#security-breach-recovery)
+
+### Scenario 5: Accidental Data Deletion
+
+**Description:** Administrator error causes unintended data deletion
+
+**Impact:**
+- Specific tenant data lost
+- User portfolios deleted
+- Configuration lost
+
+**Recovery Time:** 30 minutes - 2 hours
+
+**Trigger Conditions:**
+- User reports missing data
+- Audit logs show deletion events
+- Database row count significantly decreased
+
+**Recovery Procedure:** See [Data Restoration from Backup](#data-restoration-from-backup)
 
 ---
 
@@ -55,688 +215,824 @@ This document provides procedures for recovering the Income Fortress Platform fr
 
 ### Automated Backups
 
-#### Database Backups (Daily)
+**Database Backups:**
+- **Frequency:** Daily at 2:00 AM EST
+- **Retention:** 7 days (rolling)
+- **Location:** `/backups/postgresql/` on droplet + DigitalOcean Spaces (offsite)
+- **Format:** PostgreSQL dump (`.sql`)
+- **Verification:** Automated restore test on staging weekly
 
-**Schedule:** 2:00 AM EST daily  
-**Retention:** 30 days local + 90 days in Spaces  
-**Location:** `/opt/income-platform/backups/database/` + DigitalOcean Spaces
+**Configuration Backups:**
+- **Frequency:** On every change (automated via Git)
+- **Retention:** Unlimited (Git history)
+- **Location:** GitHub repository
+- **Format:** Text files (`.env.example`, `docker-compose.yml`, etc.)
 
-**Automated via cron:**
+**Code Backups:**
+- **Frequency:** Every commit
+- **Retention:** Unlimited
+- **Location:** GitHub repository
+- **Format:** Git repository
+
+### Manual Backups
+
+**Pre-Deployment Backup:**
 ```bash
-# View cron schedule
-crontab -l
-
-# Expected entry:
-0 2 * * * /opt/income-platform/scripts/backup_database.sh >> /var/log/backup.log 2>&1
-```
-
-**Backup Contents:**
-- Complete PostgreSQL database dump
-- All schemas (platform_shared + all tenant schemas)
-- All tables, indexes, constraints
-- No sensitive environment variables
-
-**Verification:**
-```bash
-# List local backups
-ls -lh /opt/income-platform/backups/database/
-
-# List Spaces backups
-s3cmd ls s3://income-platform-storage/backups/database/
-
-# Test backup integrity
-gzip -t /opt/income-platform/backups/database/income_platform_*.sql.gz
-```
-
-#### Configuration Backups
-
-**What's backed up:**
-- .env file (encrypted copy in secure location)
-- docker-compose.yml
-- nginx configuration
-- SSL certificates (auto-renewed, not backed up)
-
-**Backup method:**
-```bash
-# Manual configuration backup
-tar -czf config-backup-$(date +%Y%m%d).tar.gz \
-    .env \
-    docker-compose.yml \
-    nginx/ \
-    prometheus/
-
-# Upload to Spaces
-s3cmd put config-backup-*.tar.gz s3://income-platform-storage/backups/config/
-```
-
-**Frequency:** Before each deployment or configuration change
-
-#### Application State Backups
-
-**Redis data:**
-- Not backed up (cache only, can be rebuilt)
-- RDB snapshots every 24 hours (local)
-
-**n8n workflows:**
-- Auto-saved to PostgreSQL (included in DB backup)
-- Manual export option in n8n UI
-
-### Manual Backup Procedures
-
-#### On-Demand Database Backup
-
-```bash
-# Execute backup script
-cd /opt/income-platform
-./scripts/backup_database.sh
+# Create tagged backup before deployment
+./scripts/backup_database.sh --tag="pre-v1.1.0-deployment"
 
 # Verify backup created
-ls -lh backups/database/ | tail -1
-
-# Verify upload to Spaces
-s3cmd ls s3://income-platform-storage/backups/database/ | tail -1
+ls -lh backups/ | grep pre-v1.1.0
 ```
 
-**When to perform manual backup:**
-- Before major deployments
-- Before data migrations
-- Before schema changes
-- After significant configuration changes
-- Before disaster recovery testing
-
-#### Full System Backup
-
+**Pre-Migration Backup:**
 ```bash
-# Complete system snapshot (requires downtime)
-# 1. Stop services
-docker-compose down
+# Create backup before database migration
+./scripts/backup_database.sh --tag="pre-migration-$(date +%Y%m%d)"
 
-# 2. Backup database
-./scripts/backup_database.sh
-
-# 3. Backup application files
-tar -czf /backup/system-$(date +%Y%m%d).tar.gz \
-    /opt/income-platform \
-    --exclude='*/node_modules/*' \
-    --exclude='*.log'
-
-# 4. Upload to Spaces
-s3cmd put /backup/system-*.tar.gz s3://income-platform-storage/backups/system/
-
-# 5. Restart services
-docker-compose up -d
+# Test restore on staging
+./scripts/restore_database.sh backups/latest.sql --target=staging
 ```
 
-**Downtime:** ~5-10 minutes  
-**Frequency:** Monthly (first Sunday of month)
+### Backup Verification
+
+**Weekly Restoration Test (Sundays 3:00 AM EST):**
+```bash
+#!/bin/bash
+# scripts/test_backup_restore.sh
+
+# 1. Get latest backup
+LATEST_BACKUP=$(ls -t backups/*.sql | head -1)
+
+# 2. Restore to staging database
+pg_restore -d $STAGING_DATABASE_URL -c $LATEST_BACKUP
+
+# 3. Run validation queries
+psql $STAGING_DATABASE_URL -c "SELECT COUNT(*) FROM users;"
+psql $STAGING_DATABASE_URL -c "SELECT COUNT(*) FROM portfolios;"
+
+# 4. Log results
+echo "Backup test: SUCCESS" >> /var/log/backup-tests.log
+
+# 5. Clean up staging
+psql $STAGING_DATABASE_URL -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+```
+
+### Offsite Backups
+
+**DigitalOcean Spaces Configuration:**
+```bash
+# Install AWS CLI (compatible with DO Spaces)
+pip install awscli
+
+# Configure credentials
+aws configure set aws_access_key_id $DO_SPACES_KEY
+aws configure set aws_secret_access_key $DO_SPACES_SECRET
+aws configure set default.region nyc3
+
+# Upload backup
+aws s3 cp backups/$(date +%Y%m%d).sql \
+  s3://incomefortress-backups/postgresql/ \
+  --endpoint-url=https://nyc3.digitaloceanspaces.com
+
+# Verify upload
+aws s3 ls s3://incomefortress-backups/postgresql/ \
+  --endpoint-url=https://nyc3.digitaloceanspaces.com
+```
+
+**Backup Script (Automated):**
+```bash
+#!/bin/bash
+# scripts/backup_database.sh
+
+DATE=$(date +%Y%m%d-%H%M%S)
+BACKUP_FILE="backups/income-platform-${DATE}.sql"
+
+# Create local backup
+pg_dump $DATABASE_URL > $BACKUP_FILE
+
+# Compress backup
+gzip $BACKUP_FILE
+
+# Upload to Spaces
+aws s3 cp ${BACKUP_FILE}.gz \
+  s3://incomefortress-backups/postgresql/ \
+  --endpoint-url=https://nyc3.digitaloceanspaces.com
+
+# Clean up old local backups (keep 7 days)
+find backups/ -name "*.sql.gz" -mtime +7 -delete
+
+echo "Backup completed: $BACKUP_FILE"
+```
 
 ---
 
 ## Recovery Procedures
 
-### Scenario 1: Single Container Failure
+### Complete Infrastructure Recovery
 
-**Symptoms:**
-- One container shows "Exited" status
-- Health checks failing for specific service
-- Logs show container crash
+**Scenario:** Droplet completely destroyed, need to rebuild from scratch
 
-**Recovery Procedure:**
+**Prerequisites:**
+- Access to GitHub repository
+- Access to DigitalOcean console
+- Latest database backup available
+- Environment variables documented
+
+**Estimated Time:** 4-6 hours
+
+**Procedure:**
+
+#### Phase 1: Infrastructure Provisioning (60 minutes)
 
 ```bash
-# 1. Identify failed container
-docker-compose ps
-# Look for: Exit (1) or Restarting
+# 1. Create new droplet (via DigitalOcean console)
+# - Ubuntu 24.04 LTS
+# - 8GB RAM, 4 vCPUs, 160GB SSD
+# - Enable backups
+# - Add SSH keys
 
-# 2. Check logs for error
-docker-compose logs --tail=100 [container-name]
+# 2. Initial server setup
+ssh root@<new-droplet-ip>
 
-# 3. Attempt restart
-docker-compose restart [container-name]
+# Update system
+apt update && apt upgrade -y
 
-# 4. If restart fails, rebuild
-docker-compose up -d --no-deps --build [container-name]
+# Install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
 
-# 5. Verify recovery
-docker-compose ps [container-name]
-curl https://api.incomefortress.com/health
+# Install Docker Compose
+apt install docker-compose-plugin -y
+
+# Create deployer user
+adduser deployer
+usermod -aG docker deployer
+usermod -aG sudo deployer
+
+# Switch to deployer
+su - deployer
 ```
 
-**RTO:** 5 minutes  
-**Data Loss:** None  
-**Downtime:** Minimal (other services continue)
-
----
-
-### Scenario 2: Database Corruption
-
-**Symptoms:**
-- PostgreSQL errors in logs
-- Connection pool exhausted
-- Data integrity errors
-- Cannot connect to database
-
-**Recovery Procedure:**
+#### Phase 2: Application Deployment (90 minutes)
 
 ```bash
-# 1. Stop all writes immediately
-docker-compose stop api celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
-
-# 2. Assess corruption
-psql "$DATABASE_URL"
-# Try querying critical tables
-SELECT COUNT(*) FROM platform_shared.securities;
-SELECT COUNT(*) FROM tenant_001.users;
-
-# If queries fail, proceed with restore
-
-# 3. Identify last good backup
-ls -lht /opt/income-platform/backups/database/ | head -5
-
-# 4. Restore database
-./scripts/restore_database.sh [backup-filename]
-
-# Script will:
-# - Create pre-restore backup
-# - Drop existing database
-# - Restore from backup
-# - Verify restoration
-
-# 5. Verify data integrity
-psql "$DATABASE_URL"
-SELECT COUNT(*) FROM platform_shared.securities;
-SELECT COUNT(*) FROM tenant_001.users;
-
-# 6. Restart services
-docker-compose start api celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
-
-# 7. Smoke test
-curl https://api.incomefortress.com/health/detailed
-```
-
-**RTO:** 30 minutes  
-**Data Loss:** Up to 24 hours (last backup)  
-**Downtime:** 30 minutes
-
-**Post-Recovery:**
-- Review database logs to identify corruption cause
-- Document incident
-- Consider more frequent backups if needed
-
----
-
-### Scenario 3: Complete Droplet Failure
-
-**Symptoms:**
-- Cannot SSH to droplet
-- All services unreachable
-- Droplet shows "off" in DigitalOcean console
-
-**Recovery Procedure:**
-
-```bash
-# Option A: Restart existing droplet (if possible)
-# 1. Via DigitalOcean console, power on droplet
-# 2. Wait 2-3 minutes
-# 3. SSH and verify services
-ssh root@[DROPLET_IP]
-docker-compose ps
-
-# Option B: Create new droplet (if restart impossible)
-# 1. Provision new 4GB droplet (follow deployment guide)
-# 2. Install Docker and dependencies
-# 3. Clone repository
-cd /opt
+# 1. Clone repository
 git clone https://github.com/AlbertoDBP/Agentic.git
 cd Agentic/income-platform
 
-# 4. Restore configuration
-# Download from Spaces or recreate .env
-s3cmd get s3://income-platform-storage/backups/config/config-backup-*.tar.gz
-tar -xzf config-backup-*.tar.gz
+# 2. Checkout production tag
+git checkout v1.0.0
 
-# 5. Update .env with new droplet IP if needed
+# 3. Create .env file
+cp .env.example .env
+nano .env  # Fill in all values from documentation
 
-# 6. Initialize SSL certificates
-./scripts/init_ssl.sh
+# 4. Set permissions
+chmod 600 .env
 
-# 7. Restore database
-# Database is managed service (not on droplet) - should still be accessible
-# Update DB whitelist with new droplet IP
-# Test connection:
-psql "$DATABASE_URL"
+# 5. Verify managed services (DigitalOcean console)
+# - PostgreSQL: Confirm connection string
+# - Redis: Confirm connection string
+# - Update .env with current connection strings
+```
 
-# 8. Deploy application
-docker-compose build
-docker-compose up -d
+#### Phase 3: Database Restoration (60 minutes)
 
-# 9. Verify services
+```bash
+# 1. Download latest backup from Spaces
+aws s3 cp s3://incomefortress-backups/postgresql/latest.sql.gz . \
+  --endpoint-url=https://nyc3.digitaloceanspaces.com
+
+# 2. Decompress backup
+gunzip latest.sql.gz
+
+# 3. Restore database
+psql $DATABASE_URL < latest.sql
+
+# 4. Verify restoration
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;"
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM portfolios;"
+
+# 5. Run any pending migrations
+docker compose run --rm api python manage.py migrate
+```
+
+#### Phase 4: Service Startup (30 minutes)
+
+```bash
+# 1. Build and start all services
+docker compose up -d --build
+
+# 2. Verify all services running
+docker compose ps
+
+# Expected: All services "Up (healthy)"
+
+# 3. Check health endpoint
+curl http://localhost:8000/health
+
+# 4. Check logs for errors
+docker compose logs --tail=100 | grep ERROR
+```
+
+#### Phase 5: SSL & DNS Configuration (60 minutes)
+
+```bash
+# 1. Install Certbot
+apt install certbot python3-certbot-nginx
+
+# 2. Update DNS (if IP changed)
+# - Update A record: api.incomefortress.com → new-ip
+# - Wait for propagation (5-30 minutes)
+
+# 3. Obtain SSL certificate
+certbot --nginx -d api.incomefortress.com
+
+# 4. Test SSL
+curl https://api.incomefortress.com/health
+
+# 5. Verify auto-renewal
+certbot renew --dry-run
+```
+
+#### Phase 6: Verification & Monitoring (60 minutes)
+
+```bash
+# 1. Run health checks
+curl https://api.incomefortress.com/health/detailed
+
+# 2. Test authentication
+curl -X POST https://api.incomefortress.com/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"test"}'
+
+# 3. Test scoring
+curl -X POST https://api.incomefortress.com/api/v1/scores/VYM
+
+# 4. Verify Celery workers
+docker compose exec celery_default celery -A income_platform inspect active
+
+# 5. Set up monitoring
+# - Configure Prometheus scraping
+# - Import Grafana dashboards
+# - Test alert rules
+
+# 6. Verify backups running
+crontab -l | grep backup_database.sh
+```
+
+#### Phase 7: Go-Live (30 minutes)
+
+```bash
+# 1. Notify team
+# - Post in Slack: "Disaster recovery complete, system online"
+
+# 2. Monitor closely for 2 hours
+# - Watch error rates
+# - Check response times
+# - Verify background jobs processing
+
+# 3. Document recovery
+# - Time to recovery
+# - Issues encountered
+# - Lessons learned
+
+# 4. Update status page
+# - Mark incident resolved
+# - Post post-mortem (within 48 hours)
+```
+
+**Total Time:** 4-6 hours (within 8-hour RTO)
+
+---
+
+### Database Recovery
+
+**Scenario:** Managed PostgreSQL failure or corruption
+
+**Prerequisites:**
+- Latest database backup
+- Managed database status (check DigitalOcean)
+- API stopped (to prevent writes during recovery)
+
+**Estimated Time:** 1-2 hours
+
+**Procedure:**
+
+#### Option A: Managed Database Failover (30 minutes)
+
+```bash
+# 1. Check managed database status (DigitalOcean console)
+# - If standby available, initiate failover
+
+# 2. Update connection string (if IP changed)
+# Edit .env: DATABASE_URL=new-connection-string
+
+# 3. Restart API
+docker compose restart api
+
+# 4. Verify connectivity
+docker compose exec api python -c "from django.db import connection; connection.ensure_connection()"
+```
+
+#### Option B: Restore from Backup (90 minutes)
+
+```bash
+# 1. Stop all services (prevent writes)
+docker compose down
+
+# 2. Download latest backup
+aws s3 cp s3://incomefortress-backups/postgresql/latest.sql.gz . \
+  --endpoint-url=https://nyc3.digitaloceanspaces.com
+
+# 3. Drop existing database (if corrupted)
+psql $DATABASE_URL -c "DROP DATABASE income_platform;"
+psql $DATABASE_URL -c "CREATE DATABASE income_platform;"
+
+# 4. Restore backup
+gunzip latest.sql.gz
+psql $DATABASE_URL < latest.sql
+
+# 5. Verify data integrity
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;"
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM portfolios;"
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM proposals;"
+
+# 6. Run VACUUM ANALYZE
+psql $DATABASE_URL -c "VACUUM ANALYZE;"
+
+# 7. Restart services
+docker compose up -d
+
+# 8. Verify application health
 curl https://api.incomefortress.com/health
 ```
 
-**RTO:** 1 hour  
-**Data Loss:** None (managed database persists)  
-**Downtime:** 1 hour
+#### Option C: Point-in-Time Recovery (if available)
 
-**Important Notes:**
-- Managed PostgreSQL and Redis are separate - they survive droplet failure
-- Only need to rebuild application layer
-- Update DNS if IP changes
-- Update database/Redis IP whitelists
+```bash
+# 1. Check DigitalOcean managed database PITR settings
+# - If enabled, restore to specific timestamp
+
+# 2. Initiate PITR via DigitalOcean console
+# - Select timestamp (before corruption)
+# - Create new database cluster from PITR
+
+# 3. Update connection string
+# Edit .env: DATABASE_URL=pitr-cluster-connection
+
+# 4. Restart services
+docker compose restart
+
+# 5. Verify data
+# - Check critical tables
+# - Verify timestamp of last transaction
+```
 
 ---
 
-### Scenario 4: Complete Data Loss
+### Data Corruption Recovery
 
-**Symptoms:**
-- Database completely lost
-- All backups corrupted
-- Managed database service unrecoverable
+**Scenario:** Logical data corruption (bad application logic, not database corruption)
 
-**Recovery Procedure:**
+**Prerequisites:**
+- Identified scope of corruption
+- Backup from before corruption occurred
+- List of affected tenants/users
+
+**Estimated Time:** 2-4 hours
+
+**Procedure:**
 
 ```bash
-# This is worst-case scenario - requires full rebuild
+# 1. Identify corruption scope
+docker compose exec api python manage.py dbshell
 
-# 1. Provision new managed database
-# Via DigitalOcean console
+# Find affected records
+SELECT * FROM portfolios WHERE updated_at > '2026-02-03 10:00:00' 
+  AND value < 0;  -- Example: negative values impossible
 
-# 2. Update .env with new database credentials
-nano .env
-# Update: DB_HOST, DB_PORT, DB_PASSWORD, DATABASE_URL
+# 2. Enable maintenance mode
+docker compose exec api python manage.py set_maintenance_mode on
 
-# 3. Restore from oldest available backup
-ls -lh /opt/income-platform/backups/database/
-# Or download from Spaces
-s3cmd get s3://income-platform-storage/backups/database/income_platform_*.sql.gz
+# 3. Export current state (for forensics)
+pg_dump $DATABASE_URL > corrupted-state-$(date +%Y%m%d).sql
 
-# 4. Import backup to new database
-gunzip income_platform_*.sql.gz
-psql "$DATABASE_URL" < income_platform_*.sql
+# 4. Identify last good backup
+ls -ltr backups/
+# Find backup from before corruption time
 
-# 5. Run migrations to ensure schema current
-docker-compose run --rm api alembic upgrade head
+# 5. Restore affected tables ONLY (selective restore)
+# Extract specific tables from backup
+pg_restore -t portfolios -t proposals backups/good-backup.sql | \
+  psql $DATABASE_URL
 
-# 6. Verify data
-psql "$DATABASE_URL"
-\dt platform_shared.*
-\dt tenant_001.*
-SELECT COUNT(*) FROM platform_shared.securities;
+# 6. Verify restoration
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM portfolios WHERE value < 0;"
+# Expected: 0 rows
 
-# 7. Restart all services
-docker-compose restart
+# 7. Re-run any jobs that may have been affected
+docker compose exec celery_default celery -A income_platform purge
+docker compose exec api python manage.py trigger_rebalancing_all
 
-# 8. Full smoke test
-# - User login
-# - Asset scoring
-# - Portfolio loading
+# 8. Disable maintenance mode
+docker compose exec api python manage.py set_maintenance_mode off
+
+# 9. Notify affected users
+docker compose exec api python manage.py send_notification \
+  --users=affected_user_ids \
+  --message="Data restored from backup due to system error"
 ```
-
-**RTO:** 2-4 hours  
-**Data Loss:** Up to 24 hours (last backup)  
-**Downtime:** 2-4 hours
-
-**Post-Recovery:**
-- Investigate cause of data loss
-- Implement additional backup measures
-- Consider point-in-time recovery (more expensive)
 
 ---
 
-### Scenario 5: Security Breach
+### Security Breach Recovery
 
-**Symptoms:**
-- Unauthorized access detected
-- Suspicious database queries
-- API keys compromised
-- Unknown processes running
+**Scenario:** Confirmed unauthorized access or data breach
 
-**Immediate Actions:**
+**Impact:** All systems potentially compromised
+
+**Estimated Time:** 8-24 hours (immediate isolation, full recovery longer)
+
+**Immediate Actions (0-15 minutes):**
 
 ```bash
-# 1. ISOLATE - Stop accepting traffic
-docker-compose stop nginx
-# Or at firewall level:
-ufw deny 80
-ufw deny 443
+# 1. ISOLATE SYSTEM IMMEDIATELY
+# Block all traffic
+sudo ufw deny from any to any port 80
+sudo ufw deny from any to any port 443
 
-# 2. PRESERVE - Capture state for investigation
-# Take memory dump (if forensics needed)
-docker-compose logs > /tmp/incident-logs-$(date +%Y%m%d-%H%M%S).log
+# Stop all services
+docker compose down
 
-# Copy logs to secure location
-scp /tmp/incident-logs-* [secure-location]
+# 2. PRESERVE EVIDENCE
+# Capture all logs
+docker compose logs > breach-logs-$(date +%Y%m%d-%H%M%S).txt
 
-# 3. ASSESS - Check for compromise
-# Review database for unauthorized changes
-psql "$DATABASE_URL" -c "\
-  SELECT * FROM platform_shared.audit_log \
-  WHERE created_at > NOW() - INTERVAL '24 hours' \
-  ORDER BY created_at DESC;"
+# Capture system state
+ps aux > breach-processes-$(date +%Y%m%d-%H%M%S).txt
+netstat -tulpn > breach-network-$(date +%Y%m%d-%H%M%S).txt
 
-# Check running processes
-ps aux | grep -v grep
-
-# Check system users
-cat /etc/passwd
-
-# 4. CONTAIN - If compromised
-# Option A: Rebuild from scratch (recommended)
-# Option B: Clean and patch
-
-# Full Rebuild Procedure:
-# a. Backup current state for investigation
-./scripts/backup_database.sh
-
-# b. Provision new droplet
-# c. Deploy fresh installation
-# d. Restore from pre-breach backup
-
-# e. Rotate ALL secrets
-# Generate new:
-openssl rand -hex 32  # SECRET_KEY
-openssl rand -hex 32  # JWT_SECRET_KEY
-openssl rand -hex 32  # N8N_ENCRYPTION_KEY
-
-# Rotate Anthropic API key
-# Rotate database password
-# Rotate Redis password
-# Rotate Spaces keys
-
-# f. Force logout all users (invalidate JWT tokens)
-# Update JWT_SECRET_KEY in .env
-docker-compose restart api
-
-# g. Enable additional monitoring
-
-# 5. VERIFY - Ensure no backdoors
-# Full security scan
-# Check crontabs: crontab -l
-# Check startup scripts: ls /etc/rc*.d/
-# Check Docker images: docker images
-# Scan for rootkits: rkhunter --check
-
-# 6. RECOVER - Restore service
-# Re-enable firewall rules
-ufw allow 80
-ufw allow 443
-
-docker-compose start nginx
-
-# 7. MONITOR - Watch for re-compromise
-# Increase log verbosity
-# Watch for suspicious patterns
+# 3. NOTIFY SECURITY TEAM
+# Email: security@incomefortress.com
+# Escalate to CTO immediately
 ```
 
-**RTO:** 4-8 hours (full rebuild)  
-**Data Loss:** Varies (use pre-breach backup)  
-**Downtime:** 4-8 hours
+**Investigation Phase (15 minutes - 4 hours):**
 
-**Post-Incident:**
-- Full forensic analysis
-- Document attack vector
-- Implement additional security measures
-- Notify affected users (if data exposed)
-- Report to authorities if required
+```bash
+# 1. Analyze breach scope
+# - Review access logs
+# - Identify compromised accounts
+# - Check for data exfiltration
+
+# 2. Identify entry point
+grep -r "unauthorized" /var/log/
+docker compose logs | grep -E "authentication.*failed|suspicious"
+
+# 3. Document findings
+# - Timeline of events
+# - Systems affected
+# - Data potentially compromised
+```
+
+**Recovery Phase (4-24 hours):**
+
+```bash
+# 1. Rotate ALL credentials
+# - Database passwords
+# - API keys (Anthropic, market data)
+# - SSH keys
+# - Application secrets
+# - SSL certificates
+
+# 2. Rebuild system from known-good state
+# - Use infrastructure recovery procedure
+# - Deploy from trusted Git tag (not latest)
+# - Restore database from backup BEFORE breach time
+
+# 3. Apply security patches
+# - Update all dependencies
+# - Apply OS security patches
+# - Review and harden firewall rules
+
+# 4. Enhanced monitoring
+# - Enable detailed audit logging
+# - Set up intrusion detection
+# - Increase alert sensitivity
+
+# 5. Gradual restoration
+# - Start with single tenant (test account)
+# - Verify no suspicious activity
+# - Gradually add tenants back
+
+# 6. User notification
+# - Notify all users of breach
+# - Force password resets
+# - Provide security recommendations
+```
+
+**Post-Breach Actions:**
+
+- [ ] Conduct security audit
+- [ ] Engage third-party security firm (if needed)
+- [ ] Review compliance requirements (GDPR, etc.)
+- [ ] Update incident response plan
+- [ ] Implement additional security controls
+- [ ] Conduct team training on security best practices
 
 ---
 
-### Scenario 6: Regional Outage (DigitalOcean NYC)
+### Data Restoration from Backup
 
-**Symptoms:**
-- All NYC resources unavailable
-- DigitalOcean status page shows outage
-- Cannot access droplet, database, Redis
+**Scenario:** Accidental deletion, need to restore specific data
 
-**Recovery Procedure:**
+**Prerequisites:**
+- Backup containing deleted data
+- Timestamp of deletion
+- List of affected records
 
-**Pre-Requisite:** Multi-region setup (Phase 3 enhancement)
+**Estimated Time:** 30 minutes - 2 hours
+
+**Procedure:**
 
 ```bash
-# Current Setup: Single region (NYC3)
-# No immediate failover capability
+# 1. Identify what was deleted
+# Check audit logs
+docker compose exec api python manage.py dbshell
+SELECT * FROM audit_log WHERE action='DELETE' 
+  AND timestamp > '2026-02-03 00:00:00';
 
-# Mitigation Strategy:
-# 1. Wait for DigitalOcean to restore service
-# 2. If extended (>4 hours), rebuild in different region
+# 2. Find appropriate backup
+# Backup from before deletion time
+ls -ltr backups/ | grep "2026-02-02"
 
-# Emergency Multi-Region Deployment:
-# 1. Provision resources in SFO region
-# - Droplet in SFO1
-# - Managed PostgreSQL in SFO
-# - Managed Redis in SFO
-# - Spaces in SFO
+# 3. Extract deleted data from backup
+# Restore to temporary database
+createdb temp_restore
+psql temp_restore < backups/2026-02-02.sql
 
-# 2. Restore from latest Spaces backup
-# (Spaces NYC3 should be accessible from SFO)
-s3cmd get s3://income-platform-storage/backups/database/income_platform_latest.sql.gz
+# 4. Export deleted records
+psql temp_restore -c "
+COPY (SELECT * FROM portfolios WHERE id IN (1,2,3)) 
+TO '/tmp/deleted-portfolios.csv' CSV HEADER;
+"
 
-# 3. Deploy application in SFO
+# 5. Import to production database
+psql $DATABASE_URL -c "
+COPY portfolios FROM '/tmp/deleted-portfolios.csv' CSV HEADER;
+"
 
-# 4. Update DNS to point to SFO droplet
-# (5 minute TTL allows quick switchover)
+# 6. Verify restoration
+psql $DATABASE_URL -c "SELECT * FROM portfolios WHERE id IN (1,2,3);"
 
-# 5. Verify service restoration
+# 7. Clean up
+dropdb temp_restore
+rm /tmp/deleted-portfolios.csv
 ```
-
-**RTO:** 4 hours (manual rebuild in different region)  
-**Data Loss:** Up to 24 hours  
-**Downtime:** 4 hours
-
-**Future Enhancement:**
-- Phase 3: Implement multi-region active-active
-- Real-time database replication
-- Geographic load balancing
 
 ---
 
 ## Testing & Validation
 
-### Quarterly DR Test Schedule
+### Disaster Recovery Drills
 
-**Q1 (January):** Database restore test  
-**Q2 (April):** Complete droplet rebuild test  
-**Q3 (July):** Security breach simulation  
-**Q4 (October):** Full disaster recovery drill
+**Quarterly DR Drill (Every 3 months):**
 
-### Database Restore Test Procedure
+**Drill Objectives:**
+- Validate backup restoration procedures
+- Test team coordination
+- Identify gaps in documentation
+- Measure actual RTO/RPO
+
+**Drill Procedure:**
 
 ```bash
-# Perform in staging/test environment, not production
-
-# 1. Create test database
-createdb income_test
-
-# 2. Restore latest backup
-# Download from Spaces
-s3cmd get s3://income-platform-storage/backups/database/income_platform_$(date +%Y%m%d)*.sql.gz
-
-# Restore
-gunzip income_platform_*.sql.gz
-psql postgresql://user:pass@host:port/income_test < income_platform_*.sql
-
-# 3. Verify data integrity
-psql postgresql://user:pass@host:port/income_test
-
-# Count records in critical tables
-SELECT 
-  'securities' as table_name, COUNT(*) FROM platform_shared.securities
-UNION ALL
-SELECT 
-  'users', COUNT(*) FROM tenant_001.users
-UNION ALL
-SELECT
-  'portfolios', COUNT(*) FROM tenant_001.portfolios;
-
-# 4. Test application against test database
-# Update test .env to point to income_test
-DATABASE_URL=postgresql://user:pass@host:port/income_test
-
-# Start application
-docker-compose up -d
-
-# Smoke test
-curl http://localhost:8000/health/detailed
-
-# 5. Document results
-# - Restore time: _____ minutes
-# - Data integrity: PASS/FAIL
-# - Application functionality: PASS/FAIL
-
-# 6. Cleanup
-dropdb income_test
+# 1. Schedule drill (communicate to team 2 weeks in advance)
+# 2. Prepare staging environment
+# 3. Simulate disaster scenario (select one scenario)
+# 4. Execute recovery procedure (timed)
+# 5. Validate recovery success
+# 6. Document results and lessons learned
+# 7. Update DR plan based on findings
 ```
 
-### DR Drill Checklist
+**Success Criteria:**
+- [ ] Recovery completed within RTO
+- [ ] No data loss beyond RPO
+- [ ] All services functional after recovery
+- [ ] Team followed procedures without major issues
+- [ ] Documentation accurate and complete
 
-- [ ] DR team assembled
-- [ ] Roles assigned (incident commander, ops, comms)
-- [ ] Scenario briefed
-- [ ] Start time noted
-- [ ] Recovery procedure executed
-- [ ] RTO measured
-- [ ] Data integrity verified
-- [ ] Application functionality verified
-- [ ] End time noted
-- [ ] Lessons learned documented
-- [ ] Runbook updated with findings
+### Monthly Backup Validation
+
+**First Sunday of each month, 3:00 AM EST:**
+
+```bash
+#!/bin/bash
+# scripts/monthly_backup_validation.sh
+
+# 1. Restore latest backup to staging
+LATEST_BACKUP=$(ls -t backups/*.sql.gz | head -1)
+gunzip -c $LATEST_BACKUP | psql $STAGING_DATABASE_URL
+
+# 2. Run data integrity checks
+psql $STAGING_DATABASE_URL -c "
+SELECT 
+  'users' AS table_name, COUNT(*) AS count FROM users
+UNION
+SELECT 'portfolios', COUNT(*) FROM portfolios
+UNION  
+SELECT 'proposals', COUNT(*) FROM proposals;
+"
+
+# 3. Test application functionality
+curl http://staging.incomefortress.com/health
+
+# 4. Log validation results
+echo "$(date): Backup validation SUCCESS" >> /var/log/backup-validation.log
+
+# 5. Clean up staging
+psql $STAGING_DATABASE_URL -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+```
+
+### Annual DR Audit
+
+**Conducted by external auditor or senior leadership:**
+
+**Audit Items:**
+- [ ] DR plan documentation current and accurate
+- [ ] Backup procedures functioning correctly
+- [ ] Recovery procedures tested and validated
+- [ ] RTO/RPO targets achievable
+- [ ] Team trained on procedures
+- [ ] Contacts and escalation paths current
+- [ ] Compliance requirements met (GDPR, etc.)
+
+---
+
+## Post-Recovery
+
+### Post-Recovery Checklist
+
+**Immediate (0-2 hours after recovery):**
+- [ ] Verify all services healthy
+- [ ] Confirm no data loss (within RPO)
+- [ ] Check error rates normal (<1%)
+- [ ] Monitor resource utilization
+- [ ] Notify team of recovery completion
+
+**Short-term (2-24 hours after recovery):**
+- [ ] Monitor for anomalies
+- [ ] Review logs for issues
+- [ ] Validate backup processes resumed
+- [ ] Update status page
+- [ ] Brief leadership on recovery
+
+**Medium-term (24-72 hours after recovery):**
+- [ ] Conduct post-mortem meeting
+- [ ] Document timeline and actions
+- [ ] Identify root cause
+- [ ] Create action items to prevent recurrence
+- [ ] Update DR plan if needed
+
+### Post-Mortem Template
+
+```markdown
+# Incident Post-Mortem: [Incident Title]
+
+**Date:** [Date of incident]  
+**Duration:** [Start time] - [End time]  
+**Severity:** [P0/P1/P2]
+
+## Summary
+[2-3 sentence summary of what happened]
+
+## Timeline
+- [Time]: [Event]
+- [Time]: [Action taken]
+- ...
+
+## Impact
+- Users affected: [Number/percentage]
+- Downtime: [Duration]
+- Data loss: [Amount, if any]
+- Financial impact: [Estimate]
+
+## Root Cause
+[Detailed explanation of what caused the incident]
+
+## Resolution
+[How the incident was resolved]
+
+## Lessons Learned
+**What went well:**
+- [Item]
+
+**What didn't go well:**
+- [Item]
+
+**Where we got lucky:**
+- [Item]
+
+## Action Items
+- [ ] [Action 1] - Owner: [Name] - Due: [Date]
+- [ ] [Action 2] - Owner: [Name] - Due: [Date]
+
+## Prevention
+[How we'll prevent this from happening again]
+```
 
 ---
 
 ## Contact Information
 
-### Emergency Contacts
+**Primary Contacts:**
 
-**On-Call Rotation:**
-- Primary: [Name] - [Phone] - [Email]
-- Secondary: [Name] - [Phone] - [Email]
-- Escalation: [Name] - [Phone] - [Email]
+**Incident Commander (DevOps Lead):**
+- Name: Alberto D.
+- Email: alberto@incomefortress.com
+- Phone: [Redacted]
+- Availability: 24/7 (on-call rotation)
 
-**Vendor Support:**
-- DigitalOcean Support: https://cloud.digitalocean.com/support
-- Anthropic Support: support@anthropic.com
-- DNS Provider: [Contact info]
+**Technical Lead:**
+- Name: [TBD]
+- Email: [TBD]
+- Phone: [TBD]
 
-### Communication Channels
+**Database Administrator:**
+- Name: [TBD]
+- Email: [TBD]
+- Phone: [TBD]
 
-**During DR Event:**
-- Primary: Slack #incidents
-- Secondary: Email distribution list
-- Conference bridge: [Number/Link]
+**Communications Lead:**
+- Name: [TBD]
+- Email: [TBD]
+- Phone: [TBD]
 
-**Status Updates:**
-- Internal: Every 30 minutes
-- External: As appropriate
-- Post-incident: Within 24 hours
+**Escalation:**
+- CTO: [Contact info]
+- CEO: [Contact info]
+
+**External Contacts:**
+
+**DigitalOcean Support:**
+- Support Portal: https://cloud.digitalocean.com/support
+- Phone: 1-888-890-6714
+- Priority Support: Yes (Business tier)
+
+**Anthropic Support:**
+- Email: support@anthropic.com
+- Portal: https://console.anthropic.com/support
+
+**Security Incident Response:**
+- Internal: security@incomefortress.com
+- External (if needed): [Security firm contact]
 
 ---
 
-## Appendix: Recovery Scripts
+## Appendix
 
-### Quick Database Restore
-
-```bash
-#!/bin/bash
-# quick-restore.sh
-
-set -e
-
-BACKUP_FILE=$1
-
-if [ -z "$BACKUP_FILE" ]; then
-    echo "Usage: $0 <backup-file>"
-    exit 1
-fi
-
-echo "⚠️  WARNING: This will replace the production database!"
-read -p "Type 'RESTORE' to confirm: " confirm
-
-if [ "$confirm" != "RESTORE" ]; then
-    echo "Cancelled"
-    exit 0
-fi
-
-# Stop services
-echo "Stopping services..."
-docker-compose stop api celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
-
-# Restore
-echo "Restoring database..."
-./scripts/restore_database.sh "$BACKUP_FILE"
-
-# Restart services
-echo "Restarting services..."
-docker-compose start api celery-worker-scoring celery-worker-portfolio celery-worker-monitoring
-
-# Verify
-echo "Verifying..."
-sleep 5
-curl https://api.incomefortress.com/health/detailed
-
-echo "✅ Restore complete"
-```
-
-### Emergency Rollback
+### Quick Reference Commands
 
 ```bash
-#!/bin/bash
-# emergency-rollback.sh
+# Stop all services
+docker compose down
 
-set -e
-
-echo "🚨 EMERGENCY ROLLBACK"
-echo "This will:"
-echo "  1. Stop all services"
-echo "  2. Restore database from last backup"
-echo "  3. Checkout previous code version"
-echo "  4. Restart services"
-
-read -p "Proceed? (yes/no): " confirm
-
-if [ "$confirm" != "yes" ]; then
-    exit 0
-fi
-
-# Stop services
-docker-compose down
+# Backup database
+./scripts/backup_database.sh
 
 # Restore database
-LATEST_BACKUP=$(ls -t backups/database/*.sql.gz | head -1)
-./scripts/restore_database.sh "$LATEST_BACKUP"
+./scripts/restore_database.sh [backup-file]
 
-# Rollback code
-git log --oneline -10
-read -p "Enter commit hash to rollback to: " commit
-git checkout "$commit"
+# Download backup from Spaces
+aws s3 cp s3://incomefortress-backups/postgresql/latest.sql.gz . \
+  --endpoint-url=https://nyc3.digitaloceanspaces.com
 
-# Rebuild and restart
-docker-compose build
-docker-compose up -d
+# Enable maintenance mode
+docker compose exec api python manage.py set_maintenance_mode on
 
-# Verify
-sleep 10
+# Disable maintenance mode
+docker compose exec api python manage.py set_maintenance_mode off
+
+# Health check
 curl https://api.incomefortress.com/health
-
-echo "✅ Rollback complete"
-echo "Commit: $commit"
-echo "Database: $LATEST_BACKUP"
 ```
 
+### Recovery Cheat Sheet
+
+| Scenario | First Action | RTO | Recovery Procedure |
+|----------|-------------|-----|-------------------|
+| Complete outage | Provision new droplet | 4-6h | [Complete Infrastructure Recovery](#complete-infrastructure-recovery) |
+| Database failure | Check managed DB status | 1-2h | [Database Recovery](#database-recovery) |
+| Data corruption | Enable maintenance mode | 2-4h | [Data Corruption Recovery](#data-corruption-recovery) |
+| Security breach | Isolate system | 8-24h | [Security Breach Recovery](#security-breach-recovery) |
+| Accidental deletion | Identify affected data | 0.5-2h | [Data Restoration](#data-restoration-from-backup) |
+
 ---
 
-## Document History
-
-| Version | Date | Changes | Author |
-|---------|------|---------|--------|
-| 1.0.0 | 2026-02-02 | Initial version | Alberto DBP |
-
----
-
-**Document Classification:** CRITICAL  
-**Distribution:** Operations Team Only  
-**Review Frequency:** Quarterly  
-**Next Review:** May 1, 2026
-
-**Last Tested:** [Date of last DR drill]  
-**Test Result:** [PASS/FAIL]  
-**Test Notes:** [Link to test report]
+**Disaster Recovery Plan Version:** 1.0.0  
+**Last Updated:** February 3, 2026  
+**Next Review:** May 1, 2026  
+**Last DR Drill:** [Scheduled for March 2026]
