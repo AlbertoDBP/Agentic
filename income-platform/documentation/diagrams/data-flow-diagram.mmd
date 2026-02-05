@@ -1,0 +1,174 @@
+```mermaid
+sequenceDiagram
+    participant A3 as Agent 3<br/>Income Scoring
+    participant API as NAV Erosion API<br/>FastAPI Service
+    participant Cache as Cache Layer<br/>(PostgreSQL)
+    participant DC as Data Collector
+    participant A1 as Agent 1<br/>Market Data
+    participant MCE as Monte Carlo<br/>Engine
+    participant SI as Sustainability<br/>Integration
+    participant DB as PostgreSQL<br/>Tables
+    
+    Note over A3,DB: Scenario 1: Cache Hit (95% of requests)
+    
+    A3->>API: POST /analyze<br/>{ticker: "JEPI", type: "quick"}
+    activate API
+    
+    API->>Cache: Check cache<br/>SELECT FROM nav_erosion_analysis_cache
+    activate Cache
+    Cache-->>API: Found (age: 5 days)
+    deactivate Cache
+    
+    API-->>A3: {penalty: 12.5, risk: "moderate"}<br/>(latency: <10ms)
+    deactivate API
+    
+    Note over A3,DB: Scenario 2: Cache Miss (5% of requests)
+    
+    A3->>API: POST /analyze<br/>{ticker: "DIVO", type: "quick"}
+    activate API
+    
+    API->>Cache: Check cache
+    activate Cache
+    Cache-->>API: Not found
+    deactivate Cache
+    
+    Note over API,A1: Data Collection Phase
+    
+    API->>DC: collect_etf_parameters("DIVO")
+    activate DC
+    
+    DC->>DB: Fetch current snapshot<br/>SELECT FROM covered_call_etf_metrics
+    activate DB
+    DB-->>DC: {nav: 50.0, price: 50.5, ...}
+    deactivate DB
+    
+    DC->>DB: Fetch 12-month history<br/>SELECT WHERE data_date >= ...
+    activate DB
+    DB-->>DC: [{month: 1, premium: 0.007}, ...]
+    deactivate DB
+    
+    alt Missing Historical Data
+        DC->>A1: Request missing data
+        activate A1
+        A1-->>DC: Historical metrics
+        deactivate A1
+        
+        DC->>DB: INSERT INTO covered_call_etf_metrics
+        activate DB
+        DB-->>DC: Stored
+        deactivate DB
+    end
+    
+    DC->>DC: Validate data quality<br/>completeness_score = 85
+    
+    DC->>DB: Log collection<br/>INSERT INTO nav_erosion_data_collection_log
+    activate DB
+    DB-->>DC: Logged
+    deactivate DB
+    
+    DC-->>API: CoveredCallETFParams{...}
+    deactivate DC
+    
+    Note over API,MCE: Monte Carlo Simulation Phase
+    
+    API->>MCE: simulate_vectorized(params, n=10000)
+    activate MCE
+    
+    Note right of MCE: Vectorized NumPy:<br/>- 10,000 paths<br/>- Market regimes<br/>- Option payoffs<br/>- ~500ms runtime
+    
+    MCE-->>API: {median_nav_change: -3.5%,<br/>prob_erosion_5%: 55.2%,<br/>prob_erosion_10%: 18.3%}
+    deactivate MCE
+    
+    Note over API,SI: Sustainability Penalty Calculation
+    
+    API->>SI: calculate_sustainability_penalty(results)
+    activate SI
+    
+    SI->>SI: Apply penalty tiers:<br/>Tier 1: 10 pts (prob > 50%)<br/>Tier 2: 0 pts (prob < 15%)<br/>Tier 3: 5 pts (median < -2%)
+    
+    SI->>SI: Classify risk:<br/>"moderate" (40% < prob < 60%)
+    
+    SI-->>API: {penalty: 15.0,<br/>severity: "medium",<br/>risk: "moderate"}
+    deactivate SI
+    
+    Note over API,Cache: Cache Results
+    
+    API->>Cache: Store with 30-day TTL<br/>INSERT INTO nav_erosion_analysis_cache
+    activate Cache
+    Cache-->>API: Cached (expires: 2026-03-06)
+    deactivate Cache
+    
+    API-->>A3: {penalty: 15.0,<br/>risk: "moderate",<br/>cached: false}<br/>(latency: ~500ms)
+    deactivate API
+    
+    Note over A3: Apply to Sustainability Score:<br/>base_score (85) - penalty (15) = 70
+    
+    Note over A3,DB: Scenario 3: Manual Cache Invalidation
+    
+    A1->>API: Data updated for JEPI
+    activate API
+    API->>Cache: DELETE /cache/JEPI
+    activate Cache
+    Cache->>DB: UPDATE valid_until = CURRENT_DATE - 1
+    activate DB
+    DB-->>Cache: Invalidated
+    deactivate DB
+    Cache-->>API: Cache cleared
+    deactivate Cache
+    API-->>A1: OK
+    deactivate API
+    
+    Note over A3,DB: Next request for JEPI will be cache miss
+```
+
+**Diagram: Data Flow Sequence**
+
+This sequence diagram illustrates three scenarios for NAV erosion analysis:
+
+**Scenario 1: Cache Hit (95% of requests)**
+- API checks cache and finds valid result (< 30 days old)
+- Returns immediately (<10ms latency)
+- No simulation needed
+
+**Scenario 2: Cache Miss (5% of requests)**
+
+*Phase 1: Data Collection*
+1. Fetch current snapshot from database
+2. Fetch 12-month historical data
+3. If data missing, request from Agent 1
+4. Validate data completeness (score 0-100)
+5. Log collection for audit trail
+
+*Phase 2: Monte Carlo Simulation*
+1. Run vectorized simulation (10K paths)
+2. Model market regime transitions
+3. Calculate option payoffs with strikes
+4. Generate 20+ statistical metrics
+5. Runtime: ~500ms
+
+*Phase 3: Penalty Calculation*
+1. Apply 3-tier graduated penalty system
+2. Classify risk (5 categories)
+3. Build response with rationale
+
+*Phase 4: Caching*
+1. Store results with 30-day TTL
+2. Set expiration date
+3. Return to Agent 3
+
+**Scenario 3: Manual Cache Invalidation**
+- Agent 1 signals data update
+- API invalidates cache for affected ticker
+- Next request will be cache miss (fresh analysis)
+
+**Key Performance Characteristics:**
+- Cache hit: <10ms
+- Cache miss: ~500ms (quick analysis)
+- Cache miss: ~2.5s (deep analysis)
+- Cache hit rate: >80% expected
+
+**Data Quality:**
+- Completeness score: 0-100
+- Minimum acceptable: 50
+- Warning threshold: 70
+- Excellent: 90+

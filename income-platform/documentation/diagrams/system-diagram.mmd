@@ -1,0 +1,142 @@
+```mermaid
+graph TB
+    subgraph "Income Fortress Platform"
+        A1[Agent 1<br/>Market Data Sync]
+        A3[Agent 3<br/>Income Scoring]
+        A24[Agent 24<br/>Explanation]
+    end
+    
+    subgraph "NAV Erosion Analysis Service"
+        API[FastAPI Service<br/>Port 8003]
+        
+        subgraph "Core Components"
+            DC[Data Collector<br/>350 lines]
+            MCE[Monte Carlo Engine<br/>450 lines]
+            SI[Sustainability Integration<br/>300 lines]
+        end
+        
+        subgraph "Supporting"
+            CACHE[Cache Manager<br/>30-day TTL]
+            VAL[Data Validator<br/>Quality Scoring]
+            REG[ETF Registry<br/>7 known ETFs]
+        end
+    end
+    
+    subgraph "Data Layer"
+        PG[(PostgreSQL<br/>Managed)]
+        
+        subgraph "Tables"
+            T1[(covered_call_etf_metrics)]
+            T2[(nav_erosion_analysis_cache)]
+            T3[(nav_erosion_data_collection_log)]
+        end
+        
+        subgraph "Views"
+            V1[v_latest_nav_erosion_analysis]
+            V2[v_covered_call_etf_risk_summary]
+        end
+    end
+    
+    %% Data flow
+    A1 -->|Historical Data<br/>12 months| DC
+    A3 -->|Analysis Request<br/>ticker, type| API
+    
+    API -->|Check Cache| CACHE
+    CACHE -->|Hit| API
+    CACHE -->|Miss| DC
+    
+    DC -->|Validate| VAL
+    VAL -->|Parameters| MCE
+    MCE -->|Simulation Results<br/>20+ metrics| SI
+    SI -->|Penalty & Risk<br/>0-30 points| API
+    API -->|Store| CACHE
+    
+    API -->|Response| A3
+    A3 -->|Trigger| A24
+    
+    DC <-->|Read/Write| T1
+    CACHE <-->|Read/Write| T2
+    DC -->|Audit| T3
+    
+    T1 & T2 & T3 -->|Data| PG
+    T2 -->|Query| V1
+    T2 & T1 -->|Join| V2
+    
+    DC -.->|Lookup| REG
+    
+    %% Styling
+    style MCE fill:#ff9,stroke:#333,stroke-width:3px
+    style SI fill:#9f9,stroke:#333,stroke-width:2px
+    style CACHE fill:#99f,stroke:#333,stroke-width:2px
+    style API fill:#f99,stroke:#333,stroke-width:2px
+    style PG fill:#9cf,stroke:#333,stroke-width:2px
+    
+    classDef agent fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    class A1,A3,A24 agent
+```
+
+**Diagram: System Architecture**
+
+This diagram shows the high-level architecture of the NAV Erosion Analysis system and its integration with the Income Fortress Platform.
+
+**Key Components:**
+
+1. **FastAPI Service** (Port 8003)
+   - REST API endpoints
+   - Request validation
+   - Background task scheduling
+   - Health checks
+
+2. **Data Collector** (350 lines)
+   - Fetches historical data from Agent 1
+   - Validates data completeness (0-100 score)
+   - Derives simulation parameters
+   - Consults ETF registry for known strategies
+
+3. **Monte Carlo Engine** (450 lines)
+   - Core simulation logic
+   - 10K (quick) or 50K (deep) paths
+   - Market regime transitions
+   - Vectorized NumPy implementation
+
+4. **Sustainability Integration** (300 lines)
+   - Calculates graduated penalties (0-30 points)
+   - Classifies risk (5 tiers)
+   - Manages cache with 30-day TTL
+   - Provides Agent 3 integration hooks
+
+5. **Cache Manager**
+   - 30-day TTL for results
+   - 95% cost reduction
+   - <10ms cache hit latency
+   - Manual invalidation support
+
+**Data Flow:**
+
+1. Agent 3 sends analysis request to API
+2. API checks cache (30-day TTL)
+3. On cache miss:
+   a. Data Collector fetches 12 months history from Agent 1
+   b. Validator checks data quality
+   c. Monte Carlo Engine runs simulation
+   d. Sustainability Integration calculates penalty
+   e. Results cached for 30 days
+4. API returns penalty & risk classification to Agent 3
+5. Agent 3 adjusts Sustainability score
+6. Agent 24 generates explanation
+
+**Database Tables:**
+
+- **covered_call_etf_metrics**: Historical data (monthly)
+- **nav_erosion_analysis_cache**: Cached results (30-day TTL)
+- **nav_erosion_data_collection_log**: Audit trail
+
+**Database Views:**
+
+- **v_latest_nav_erosion_analysis**: Latest analysis per ticker
+- **v_covered_call_etf_risk_summary**: Risk classification summary
+
+**Performance:**
+- Cache hit: <10ms
+- Cache miss (quick): ~500ms
+- Cache miss (deep): ~2.5s
