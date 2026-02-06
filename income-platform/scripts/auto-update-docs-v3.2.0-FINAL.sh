@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Income Fortress Platform - Auto Documentation Updater (COMPREHENSIVE v3.1)
-# Version: 3.1.0
+# Income Fortress Platform - Auto Documentation Updater (FINAL v3.2)
+# Version: 3.2.0 FINAL
 # Purpose: Automatically detect ALL docs in Downloads, update repo, commit to GitHub
-# Supports: MD, PDF, DOCX, PPTX, XLSX, Mermaid, SVG, PNG diagrams, TXT, SH, PY, SQL
+# Supports: MD, PDF, DOCX, PPTX, XLSX, PY, SQL, Mermaid, SVG, PNG, YML, Dockerfile, Templates
 # Usage: ./auto-update-docs.sh
 
 set -e  # Exit on error
@@ -20,14 +20,14 @@ NC='\033[0m' # No Color
 # Configuration
 REPO_ROOT="/Volumes/CH-DataOne/AlbertoDBP/Agentic"
 PROJECT_DIR="$REPO_ROOT/income-platform"
-DOWNLOADS_DIR="/Volumes/CH-DataOne/AlbertoDBP/Downloads"  # Custom location
+DOWNLOADS_DIR="/Volumes/CH-DataOne/AlbertoDBP/Downloads"
 DOCS_DIR="$PROJECT_DIR/documentation"
 BACKUP_BASE="$HOME/Documents/income-fortress-docs-backups"
 BACKUP_DIR="$BACKUP_BASE/backup-$(date +%Y%m%d-%H%M%S)"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Income Fortress Auto Documentation Updater${NC}"
-echo -e "${BLUE}Version 3.1.0 (+ Python & SQL Support)${NC}"
+echo -e "${BLUE}Version 3.2.0 FINAL (Complete Support)${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
@@ -57,6 +57,12 @@ categorize_file() {
     local filename=$(basename "$filepath")
     local extension="${filename##*.}"
     
+    # Special case: Dockerfile (no extension)
+    if [[ "$filename" =~ ^Dockerfile ]]; then
+        echo "deployment"
+        return
+    fi
+    
     # === DIAGRAMS FIRST (Highest Priority) ===
     case "$extension" in
         mmd|mermaid|svg)
@@ -69,6 +75,73 @@ categorize_file() {
                 echo "diagrams"
                 return
             fi
+            ;;
+    esac
+    
+    # === CONFIGURATION FILES ===
+    case "$extension" in
+        yml|yaml)
+            # YAML files - check filename patterns
+            if [[ "$filename" =~ (docker-compose|compose) ]]; then
+                echo "deployment"
+            elif [[ "$filename" =~ (ci|deploy|workflow) ]]; then
+                echo "deployment"
+            elif [[ "$filename" =~ (test) ]]; then
+                echo "testing"
+            elif [[ "$filename" =~ (config) ]]; then
+                echo "implementation"
+            else
+                echo "deployment"  # Default for YAML
+            fi
+            return
+            ;;
+        json)
+            # JSON files
+            if [[ "$filename" =~ (package\.json|tsconfig\.json|pyproject\.json) ]]; then
+                echo "implementation"
+            elif [[ "$filename" =~ (test) ]]; then
+                echo "testing"
+            elif [[ "$filename" =~ (schema|config) ]]; then
+                echo "implementation"
+            else
+                echo "implementation"  # Default for JSON
+            fi
+            return
+            ;;
+        toml)
+            # TOML files
+            if [[ "$filename" =~ (pyproject\.toml) ]]; then
+                echo "implementation"
+            elif [[ "$filename" =~ (config) ]]; then
+                echo "implementation"
+            else
+                echo "implementation"
+            fi
+            return
+            ;;
+        ini|cfg)
+            # Config files
+            if [[ "$filename" =~ (setup\.cfg) ]]; then
+                echo "implementation"
+            elif [[ "$filename" =~ (config) ]]; then
+                echo "implementation"
+            else
+                echo "implementation"
+            fi
+            return
+            ;;
+        template)
+            # Template files - check filename patterns
+            if [[ "$filename" =~ (env|environment) ]]; then
+                echo "deployment"
+            elif [[ "$filename" =~ (sql|query) ]]; then
+                echo "implementation"
+            elif [[ "$filename" =~ (email|notification) ]]; then
+                echo "misc"
+            else
+                echo "misc"
+            fi
+            return
             ;;
     esac
     
@@ -153,6 +226,17 @@ categorize_file() {
                 echo "deployment"
             else
                 echo "root"
+            fi
+            return
+            ;;
+        csv)
+            # CSV files
+            if [[ "$filename" =~ (test|sample) ]]; then
+                echo "testing"
+            elif [[ "$filename" =~ (data) ]]; then
+                echo "misc"
+            else
+                echo "misc"
             fi
             return
             ;;
@@ -334,6 +418,66 @@ while IFS= read -r file; do
     NEW_DOCS+=("$file")
 done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f -name "*.sql" -mtime -1 2>/dev/null)
 
+# === CONFIGURATION FILES ===
+# YAML/YML files
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    NEW_DOCS+=("$file")
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f \( -name "*.yml" -o -name "*.yaml" \) -mtime -1 2>/dev/null)
+
+# JSON files
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    NEW_DOCS+=("$file")
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f -name "*.json" -mtime -1 2>/dev/null)
+
+# TOML files
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    NEW_DOCS+=("$file")
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f -name "*.toml" -mtime -1 2>/dev/null)
+
+# INI/CFG files
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    NEW_DOCS+=("$file")
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f \( -name "*.ini" -o -name "*.cfg" \) -mtime -1 2>/dev/null)
+
+# Template files
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    NEW_DOCS+=("$file")
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f -name "*.template" -mtime -1 2>/dev/null)
+
+# CSV files
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    NEW_DOCS+=("$file")
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f -name "*.csv" -mtime -1 2>/dev/null)
+
+# Dockerfile (no extension)
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    # Only include if filename starts with "Dockerfile"
+    if [[ "$filename" =~ ^Dockerfile ]]; then
+        NEW_DOCS+=("$file")
+    fi
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f -mtime -1 2>/dev/null)
+
 # === DIAGRAM FILES ===
 # Mermaid diagrams
 while IFS= read -r file; do
@@ -388,7 +532,10 @@ if [ "$NUM_FILES" -eq 0 ]; then
     echo "  Markdown:      *.md"
     echo "  Documents:     *.pdf, *.docx, *.pptx, *.xlsx"
     echo "  Code:          *.py, *.sql"
+    echo "  Config:        *.yml, *.yaml, *.json, *.toml, *.ini, *.cfg, *.template"
+    echo "  Container:     Dockerfile"
     echo "  Diagrams:      *.mmd, *.mermaid, *.svg, *diagram*.png"
+    echo "  Data:          *.csv"
     echo "  Scripts:       *.sh"
     echo "  Text:          *.txt"
     echo "  Modified:      Last 24 hours"
@@ -409,7 +556,14 @@ TARGET_DIRS=()
 
 for file in "${NEW_DOCS[@]}"; do
     filename=$(basename "$file")
-    extension="${filename##*.}"
+    
+    # Get extension (handle Dockerfile specially)
+    if [[ "$filename" =~ ^Dockerfile ]]; then
+        extension="Dockerfile"
+    else
+        extension="${filename##*.}"
+    fi
+    
     category=$(categorize_file "$file")
     target_dir=$(get_target_dir "$category")
     
@@ -463,6 +617,27 @@ for file in "${NEW_DOCS[@]}"; do
             ;;
         sql)
             badge="[SQL]"
+            ;;
+        yml|yaml)
+            badge="[YML]"
+            ;;
+        json)
+            badge="[JSON]"
+            ;;
+        toml)
+            badge="[TOML]"
+            ;;
+        ini|cfg)
+            badge="[CFG]"
+            ;;
+        template)
+            badge="[TMPL]"
+            ;;
+        csv)
+            badge="[CSV]"
+            ;;
+        Dockerfile)
+            badge="[DOCKER]"
             ;;
         mmd|mermaid)
             badge="[MMD]"
@@ -572,13 +747,22 @@ XLSX_COUNT=0
 MD_COUNT=0
 PY_COUNT=0
 SQL_COUNT=0
+YML_COUNT=0
+JSON_COUNT=0
+CONFIG_COUNT=0
 DIAGRAM_FILE_COUNT=0
 
 for ((i=0; i<${#NEW_DOCS[@]}; i++)); do
     category="${CATEGORIES[$i]}"
     file="${NEW_DOCS[$i]}"
     filename=$(basename "$file")
-    extension="${filename##*.}"
+    
+    # Get extension
+    if [[ "$filename" =~ ^Dockerfile ]]; then
+        extension="Dockerfile"
+    else
+        extension="${filename##*.}"
+    fi
     
     # Count by category
     case "$category" in
@@ -600,6 +784,8 @@ for ((i=0; i<${#NEW_DOCS[@]}; i++)); do
         md) ((MD_COUNT++)) ;;
         py) ((PY_COUNT++)) ;;
         sql) ((SQL_COUNT++)) ;;
+        yml|yaml) ((YML_COUNT++)) ;;
+        json|toml|ini|cfg|template|csv|Dockerfile) ((CONFIG_COUNT++)) ;;
         mmd|mermaid|svg|png|jpg|jpeg) ((DIAGRAM_FILE_COUNT++)) ;;
     esac
 done
@@ -636,6 +822,14 @@ if [ $PY_COUNT -gt 0 ]; then
 fi
 if [ $SQL_COUNT -gt 0 ]; then
     COMMIT_MSG+="- SQL: $SQL_COUNT
+"
+fi
+if [ $YML_COUNT -gt 0 ]; then
+    COMMIT_MSG+="- YAML: $YML_COUNT
+"
+fi
+if [ $CONFIG_COUNT -gt 0 ]; then
+    COMMIT_MSG+="- Config: $CONFIG_COUNT
 "
 fi
 if [ $DIAGRAM_FILE_COUNT -gt 0 ]; then
@@ -754,7 +948,7 @@ if [ $OTHER_COUNT -gt 0 ]; then
 "
 fi
 
-COMMIT_MSG+="Auto-generated via auto-update-docs.sh v3.1.0"
+COMMIT_MSG+="Auto-generated via auto-update-docs.sh v3.2.0 FINAL"
 
 # Show commit message
 echo ""
@@ -879,7 +1073,7 @@ echo "  Files backed up: $MOVED_COUNT"
 echo "  Commit: ✓"
 echo "  Push: ✓"
 echo ""
-echo "Documentation structure:"
+echo "Documentation types:"
 echo "  - Markdown: $MD_COUNT"
 echo "  - PDF: $PDF_COUNT"
 echo "  - Word: $DOCX_COUNT"
@@ -887,9 +1081,9 @@ echo "  - PowerPoint: $PPTX_COUNT"
 echo "  - Excel: $XLSX_COUNT"
 echo "  - Python: $PY_COUNT"
 echo "  - SQL: $SQL_COUNT"
+echo "  - YAML: $YML_COUNT"
+echo "  - Config/Template: $CONFIG_COUNT"
 echo "  - Diagrams: $DIAGRAM_FILE_COUNT"
 echo ""
-echo "Next steps:"
-echo "  1. Verify on GitHub"
-echo "  2. Review documentation structure"
+echo "🎉 All file types supported!"
 echo ""

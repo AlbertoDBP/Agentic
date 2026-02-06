@@ -1,0 +1,51 @@
+# Docker Compose Configuration for NAV Erosion Service
+# Add this to your existing docker-compose.yml
+
+version: '3.8'
+
+services:
+  nav-erosion-service:
+    build:
+      context: ./nav-erosion-service
+      dockerfile: Dockerfile
+    container_name: nav-erosion-service
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - income-fortress-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    volumes:
+      - ./nav-erosion-service/logs:/app/logs
+
+networks:
+  income-fortress-network:
+    external: true
+
+# Notes on resource allocation:
+# - 2 CPU cores: Sufficient for NumPy vectorized operations
+# - 4GB memory: Handles 50K simulations comfortably
+# - Can scale horizontally if needed for multiple simultaneous requests
