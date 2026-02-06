@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Income Fortress Platform - Auto Documentation Updater (COMPREHENSIVE)
-# Version: 3.0.0
+# Income Fortress Platform - Auto Documentation Updater (COMPREHENSIVE v3.1)
+# Version: 3.1.0
 # Purpose: Automatically detect ALL docs in Downloads, update repo, commit to GitHub
-# Supports: MD, PDF, DOCX, PPTX, XLSX, Mermaid, SVG, PNG diagrams, TXT, SH
+# Supports: MD, PDF, DOCX, PPTX, XLSX, Mermaid, SVG, PNG diagrams, TXT, SH, PY, SQL
 # Usage: ./auto-update-docs.sh
 
 set -e  # Exit on error
@@ -21,13 +21,13 @@ NC='\033[0m' # No Color
 REPO_ROOT="/Volumes/CH-DataOne/AlbertoDBP/Agentic"
 PROJECT_DIR="$REPO_ROOT/income-platform"
 DOWNLOADS_DIR="/Volumes/CH-DataOne/AlbertoDBP/Downloads"  # Custom location
-DOCS_DIR="$PROJECT_DIR/documentation"  # FIXED: Was "docs", now "documentation"
+DOCS_DIR="$PROJECT_DIR/documentation"
 BACKUP_BASE="$HOME/Documents/income-fortress-docs-backups"
 BACKUP_DIR="$BACKUP_BASE/backup-$(date +%Y%m%d-%H%M%S)"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Income Fortress Auto Documentation Updater${NC}"
-echo -e "${BLUE}Version 3.0.0 (COMPREHENSIVE)${NC}"
+echo -e "${BLUE}Version 3.1.0 (+ Python & SQL Support)${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
@@ -69,6 +69,36 @@ categorize_file() {
                 echo "diagrams"
                 return
             fi
+            ;;
+    esac
+    
+    # === CODE FILES (Python, SQL) ===
+    case "$extension" in
+        py)
+            # Python files - check filename patterns
+            if [[ "$filename" =~ (test_|_test\.py|test\.py) ]]; then
+                echo "testing"
+            elif [[ "$filename" =~ (deploy|migration|setup) ]]; then
+                echo "deployment"
+            elif [[ "$filename" =~ (agent|scorer|analyzer) ]]; then
+                echo "implementation"
+            else
+                echo "implementation"  # Default for Python
+            fi
+            return
+            ;;
+        sql)
+            # SQL files - check filename patterns
+            if [[ "$filename" =~ (test|sample) ]]; then
+                echo "testing"
+            elif [[ "$filename" =~ (migration|schema|ddl|setup|init) ]]; then
+                echo "deployment"
+            elif [[ "$filename" =~ (query|view|procedure|function) ]]; then
+                echo "implementation"
+            else
+                echo "implementation"  # Default for SQL
+            fi
+            return
             ;;
     esac
     
@@ -287,6 +317,23 @@ while IFS= read -r file; do
     NEW_DOCS+=("$file")
 done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f \( -name "*.xlsx" -o -name "*.xls" \) -mtime -1 2>/dev/null)
 
+# === CODE FILES ===
+# Python files
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    NEW_DOCS+=("$file")
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f -name "*.py" -mtime -1 2>/dev/null)
+
+# SQL files
+while IFS= read -r file; do
+    [ ! -s "$file" ] && continue
+    filename=$(basename "$file")
+    [[ "$filename" == .* ]] && continue
+    NEW_DOCS+=("$file")
+done < <(find "$DOWNLOADS_DIR" -maxdepth 1 -type f -name "*.sql" -mtime -1 2>/dev/null)
+
 # === DIAGRAM FILES ===
 # Mermaid diagrams
 while IFS= read -r file; do
@@ -340,6 +387,7 @@ if [ "$NUM_FILES" -eq 0 ]; then
     echo "Looking for:"
     echo "  Markdown:      *.md"
     echo "  Documents:     *.pdf, *.docx, *.pptx, *.xlsx"
+    echo "  Code:          *.py, *.sql"
     echo "  Diagrams:      *.mmd, *.mermaid, *.svg, *diagram*.png"
     echo "  Scripts:       *.sh"
     echo "  Text:          *.txt"
@@ -410,6 +458,12 @@ for file in "${NEW_DOCS[@]}"; do
         xlsx|xls)
             badge="[XLS]"
             ;;
+        py)
+            badge="[PY]"
+            ;;
+        sql)
+            badge="[SQL]"
+            ;;
         mmd|mermaid)
             badge="[MMD]"
             ;;
@@ -474,6 +528,14 @@ for file in "${NEW_DOCS[@]}"; do
             chmod +x "$target_dir/$filename"
             print_info "    Made executable: $filename"
         fi
+        
+        # Make Python files executable if they have shebang
+        if [[ "$filename" =~ \.py$ ]]; then
+            if head -n 1 "$file" | grep -q "^#!"; then
+                chmod +x "$target_dir/$filename"
+                print_info "    Made executable: $filename"
+            fi
+        fi
     else
         print_error "  ✗ Failed to copy: $filename"
     fi
@@ -508,6 +570,8 @@ DOCX_COUNT=0
 PPTX_COUNT=0
 XLSX_COUNT=0
 MD_COUNT=0
+PY_COUNT=0
+SQL_COUNT=0
 DIAGRAM_FILE_COUNT=0
 
 for ((i=0; i<${#NEW_DOCS[@]}; i++)); do
@@ -534,6 +598,8 @@ for ((i=0; i<${#NEW_DOCS[@]}; i++)); do
         pptx|ppt) ((PPTX_COUNT++)) ;;
         xlsx|xls) ((XLSX_COUNT++)) ;;
         md) ((MD_COUNT++)) ;;
+        py) ((PY_COUNT++)) ;;
+        sql) ((SQL_COUNT++)) ;;
         mmd|mermaid|svg|png|jpg|jpeg) ((DIAGRAM_FILE_COUNT++)) ;;
     esac
 done
@@ -562,6 +628,14 @@ if [ $PPTX_COUNT -gt 0 ]; then
 fi
 if [ $XLSX_COUNT -gt 0 ]; then
     COMMIT_MSG+="- Excel: $XLSX_COUNT
+"
+fi
+if [ $PY_COUNT -gt 0 ]; then
+    COMMIT_MSG+="- Python: $PY_COUNT
+"
+fi
+if [ $SQL_COUNT -gt 0 ]; then
+    COMMIT_MSG+="- SQL: $SQL_COUNT
 "
 fi
 if [ $DIAGRAM_FILE_COUNT -gt 0 ]; then
@@ -680,7 +754,7 @@ if [ $OTHER_COUNT -gt 0 ]; then
 "
 fi
 
-COMMIT_MSG+="Auto-generated via auto-update-docs.sh v3.0.0"
+COMMIT_MSG+="Auto-generated via auto-update-docs.sh v3.1.0"
 
 # Show commit message
 echo ""
@@ -811,6 +885,8 @@ echo "  - PDF: $PDF_COUNT"
 echo "  - Word: $DOCX_COUNT"
 echo "  - PowerPoint: $PPTX_COUNT"
 echo "  - Excel: $XLSX_COUNT"
+echo "  - Python: $PY_COUNT"
+echo "  - SQL: $SQL_COUNT"
 echo "  - Diagrams: $DIAGRAM_FILE_COUNT"
 echo ""
 echo "Next steps:"
