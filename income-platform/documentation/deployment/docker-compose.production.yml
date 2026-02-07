@@ -1,0 +1,312 @@
+version: '3.8'
+
+# Income Fortress Platform - Complete Stack
+# Optimized for DigitalOcean Deployment
+# Services: PostgreSQL, Redis, NAV Erosion Analysis, Market Data Sync, Income Scoring
+
+services:
+  # ============================================
+  # DATABASE - PostgreSQL
+  # ============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: income-fortress-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-income_fortress}
+      POSTGRES_USER: ${POSTGRES_USER:-income_fortress_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./documentation/implementation:/docker-entrypoint-initdb.d:ro
+    networks:
+      - income-fortress-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-income_fortress_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "work_mem=2621kB"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+
+  # ============================================
+  # CACHE - Redis/Valkey
+  # ============================================
+  # Note: DigitalOcean now offers Valkey (Redis fork, 100% compatible)
+  # This container uses Redis image, but connects to Valkey managed service
+  redis:
+    image: redis:7-alpine
+    container_name: income-fortress-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - income-fortress-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+
+  # ============================================
+  # NAV EROSION ANALYSIS SERVICE
+  # ============================================
+  nav-erosion-service:
+    build:
+      context: .
+      dockerfile: documentation/deployment/Dockerfile
+      args:
+        SERVICE_NAME: nav-erosion
+    container_name: nav-erosion-service
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-income_fortress_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-income_fortress}
+      - REDIS_URL=redis://redis:6379/0
+      - SERVICE_PORT=8003
+      - SERVICE_NAME=nav-erosion
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+      - MONTE_CARLO_SIMULATIONS=${MONTE_CARLO_SIMULATIONS:-10000}
+      - MAX_WORKERS=${NAV_MAX_WORKERS:-4}
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - income-fortress-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    volumes:
+      - ./logs/nav-erosion:/app/logs
+      - ./documentation/implementation:/app/implementation:ro
+
+  # ============================================
+  # MARKET DATA SYNC SERVICE (Agent 01)
+  # ============================================
+  market-data-service:
+    build:
+      context: .
+      dockerfile: documentation/deployment/Dockerfile
+      args:
+        SERVICE_NAME: market-data
+    container_name: market-data-service
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-income_fortress_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-income_fortress}
+      - REDIS_URL=redis://redis:6379/1
+      - SERVICE_PORT=8001
+      - SERVICE_NAME=market-data
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+      - MARKET_DATA_API_KEY=${MARKET_DATA_API_KEY}
+      - SYNC_INTERVAL=${MARKET_DATA_SYNC_INTERVAL:-300}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - income-fortress-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    volumes:
+      - ./logs/market-data:/app/logs
+
+  # ============================================
+  # INCOME SCORING SERVICE (Agent 03)
+  # ============================================
+  income-scoring-service:
+    build:
+      context: .
+      dockerfile: documentation/deployment/Dockerfile
+      args:
+        SERVICE_NAME: income-scoring
+    container_name: income-scoring-service
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-income_fortress_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-income_fortress}
+      - REDIS_URL=redis://redis:6379/2
+      - SERVICE_PORT=8002
+      - SERVICE_NAME=income-scoring
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+      - ML_MODEL_PATH=${ML_MODEL_PATH:-/app/models}
+      - SCORE_CACHE_TTL=${SCORE_CACHE_TTL:-3600}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      market-data-service:
+        condition: service_started
+    networks:
+      - income-fortress-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+        reservations:
+          cpus: '0.75'
+          memory: 1G
+    volumes:
+      - ./logs/income-scoring:/app/logs
+      - ./models:/app/models
+
+  # ============================================
+  # NGINX REVERSE PROXY
+  # ============================================
+  nginx:
+    image: nginx:alpine
+    container_name: income-fortress-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - nav-erosion-service
+      - market-data-service
+      - income-scoring-service
+    networks:
+      - income-fortress-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+# ============================================
+# NETWORKS
+# ============================================
+networks:
+  income-fortress-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ============================================
+# VOLUMES
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ============================================
+# RESOURCE ALLOCATION SUMMARY
+# ============================================
+# Total CPU: ~6.5 cores
+# Total RAM: ~10GB
+#
+# Recommended DigitalOcean Droplet:
+# - General Purpose: 8 vCPUs, 16GB RAM ($96/month)
+# - OR use Managed Database for PostgreSQL/Redis
+#
+# Cost-Optimized Alternative:
+# - Droplet: 4 vCPUs, 8GB RAM ($48/month)
+# - Managed PostgreSQL: Basic ($15/month)
+# - Managed Redis: Basic ($15/month)
+# - Total: ~$78/month
