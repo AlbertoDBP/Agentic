@@ -1,0 +1,53 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "NAV Erosion Service",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/nav-erosion-service/main.py",
+      "console": "integratedTerminal",
+      "env": {
+        "DATABASE_URL": "postgresql://localhost:5432/income_fortress_dev",
+        "REDIS_URL": "redis://localhost:6379",
+        "SERVICE_PORT": "8003"
+      }
+    },
+    {
+      "name": "Market Data Service",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/market-data-service/main.py",
+      "console": "integratedTerminal",
+      "env": {
+        "DATABASE_URL": "postgresql://localhost:5432/income_fortress_dev",
+        "REDIS_URL": "redis://localhost:6379",
+        "SERVICE_PORT": "8001"
+      }
+    },
+    {
+      "name": "Income Scoring Service",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/income-scoring-service/main.py",
+      "console": "integratedTerminal",
+      "env": {
+        "DATABASE_URL": "postgresql://localhost:5432/income_fortress_dev",
+        "REDIS_URL": "redis://localhost:6379",
+        "SERVICE_PORT": "8002"
+      }
+    },
+    {
+      "name": "Run Tests",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "-v",
+        "--cov=src",
+        "--cov-report=html"
+      ],
+      "console": "integratedTerminal"
+    }
+  ]
+}

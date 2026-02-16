@@ -1,0 +1,85 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Update Documentation",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/auto-update-docs.sh",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "Deploy to Production",
+      "type": "shell",
+      "command": "ssh root@138.197.78.238 'cd /opt/Agentic/income-platform && git pull origin main && docker compose down && docker compose up -d'",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Test All Services Locally",
+      "type": "shell",
+      "command": "docker-compose up --build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Run Database Migration",
+      "type": "shell",
+      "command": "docker compose exec nav-erosion-service psql $DATABASE_URL -f /app/implementation/${input:migrationFile}",
+      "problemMatcher": []
+    },
+    {
+      "label": "SSH to Production",
+      "type": "shell",
+      "command": "ssh root@138.197.78.238",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Sync to GitHub",
+      "type": "shell",
+      "command": "git add . && git commit -m '${input:commitMessage}' && git push origin main",
+      "problemMatcher": []
+    },
+    {
+      "label": "Full Deployment Pipeline",
+      "dependsOn": [
+        "Update Documentation",
+        "Sync to GitHub",
+        "Deploy to Production"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "commitMessage",
+      "type": "promptString",
+      "description": "Commit message",
+      "default": "feat: update implementation"
+    },
+    {
+      "id": "migrationFile",
+      "type": "promptString",
+      "description": "Migration filename",
+      "default": "V3.0__complete_platform_schema.sql"
+    }
+  ]
+}
