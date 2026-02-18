@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+
+# IDE
+.vscode/*.code-workspace.user
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Documentation backups
+documentation/backups/
+
+# Temporary files
+tmp/
+temp/
+.tmp/

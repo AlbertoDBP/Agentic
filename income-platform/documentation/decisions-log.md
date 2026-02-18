@@ -463,3 +463,163 @@ KNOWN_TAX_BREAKDOWNS = {
 **Document Maintained By:** Alberto DBP  
 **Last Updated:** February 2, 2026  
 **Review Frequency:** Quarterly or with major decisions
+
+# ADR-002: Multi-Provider Market Data Architecture
+
+**Status:** Deferred  
+**Date:** 2026-02-18  
+**Component:** Agent 01 — Market Data Service  
+**Monorepo Path:** `/Agentic/income-platform/src/market-data-service/`  
+**Decided In:** Claude Chat — Market Data Provider Brainstorm Session  
+**Authors:** Alberto De Bernardi Pérez + Claude (Anthropic)
+
+---
+
+## Context
+
+Agent 01 (Market Data Service) is currently deployed to production at `https://legatoinvest.com/api/market-data/` using Alpha Vantage FREE tier as its sole data provider. The service is stable and operational with:
+
+- `TIME_SERIES_DAILY` as the primary endpoint
+- 5 calls/minute, 500 calls/day rate limit
+- Redis caching (5-minute TTL) absorbing most repeated requests
+- No dividend safety scores, ETF holdings, or fundamentals coverage
+
+As platform development progresses toward Agent 3 (Income Scorer), the data gaps in Alpha Vantage will become blockers. The Income Scorer requires dividend history, safety grades, fundamentals, and ETF holdings data that Alpha Vantage FREE tier cannot provide reliably or at all.
+
+A brainstorming session evaluated the following provider candidates:
+
+| Provider | Role Considered | Outcome |
+|---|---|---|
+| Alpha Vantage | Current primary | Retained short-term; replaced long-term |
+| Polygon.io | Price data, corporate actions | Selected — Stocks Starter $29/mo |
+| Financial Modeling Prep (FMP) | Dividends, fundamentals, ETF holdings | Selected — Starter $22/mo (annual) |
+| yfinance | Free fallback / dev testing | Selected — free, non-production primary |
+| SEC EDGAR | Authoritative filing data | Selected — free, tertiary source |
+| Seeking Alpha | Sentiment / dividend safety grades | Deferred — pending partnership negotiation |
+| Intrinio | Income-specific instruments | Rejected — cost vs. benefit at current scale |
+| Nasdaq Data Link | Alternative/macro datasets | Rejected — not needed at current scale |
+
+---
+
+## Decision
+
+**Migrate Agent 01 from single-provider (Alpha Vantage) to a dual-primary + fallback architecture before Agent 3 development begins.**
+
+### Chosen Provider Stack
+
+| Provider | Plan | Monthly Cost | Primary Responsibility |
+|---|---|---|---|
+| **Polygon.io** | Stocks Starter | $29/mo | OHLCV price history, splits, corporate actions, technical indicators |
+| **Financial Modeling Prep** | Starter (annual billing) | $22/mo | Dividend history, fundamentals, annual ratios, financial news |
+| **yfinance** | Free | $0 | Development/testing, production fallback, options snapshots |
+| **SEC EDGAR** | Free | $0 | Authoritative filing data, tertiary fundamental source |
+| **Total** | | **$51/mo** | Full income-focused data stack |
+
+### Architecture Pattern
+
+Introduce a `BaseDataProvider` abstract interface in the fetcher layer, with concrete implementations per provider. The service layer routes data requests to the appropriate provider based on data type:
+
+```
+src/market-data-service/
+├── fetchers/
+│   ├── base_provider.py          # Abstract interface (NEW)
+│   ├── alpha_vantage.py          # Current — retained during transition
+│   ├── polygon_client.py         # NEW — price, OHLCV, corporate actions
+│   ├── fmp_client.py             # NEW — dividends, fundamentals, ETF holdings
+│   └── yfinance_client.py        # NEW — fallback/dev only
+├── services/
+│   └── market_data_service.py    # Updated — provider routing logic
+└── config.py                     # Updated — multi-provider API keys
+```
+
+**Unchanged components:** FastAPI endpoints, Pydantic models, Redis cache manager, Docker configuration, Nginx, PostgreSQL schema.
+
+---
+
+## Rationale
+
+### Why Polygon.io (Stocks Starter)?
+
+- Unlimited API calls removes the 500/day Alpha Vantage ceiling that will constrain multi-agent data fetching
+- 5 years of historical data sufficient for backtesting engine (Agent 8+) at current stage
+- 15-minute delayed data is acceptable for an income-focused platform (not a trading system)
+- Clean upgrade path: Stocks Developer ($79/mo) adds 10-year history and real-time when needed
+- Dividends V3 and Stock Splits V3 endpoints directly support NAV erosion analysis
+
+### Why FMP (Starter)?
+
+- Dividend history with proper split/dividend adjustment — critical for Income Scorer accuracy
+- Annual fundamentals and ratios at Starter tier cover safety scoring inputs (P/E, debt ratios, payout ratios)
+- 300 API calls/minute is a significant improvement over Alpha Vantage's 5/minute
+- Upgrade to Premium ($59/mo) unlocks 30-year history for Monte Carlo simulation confidence when Agent 3 matures
+- Ultimate tier ($149/mo) adds ETF & Mutual Fund Holdings — relevant for covered call ETF NAV analysis
+
+### Why Not Replace Alpha Vantage Now?
+
+- Agent 01 is stable, deployed, and unblocking other development
+- The data gaps don't hurt until Agent 3 (Income Scorer) requires dividend safety and fundamentals
+- Migration is additive (fetcher layer swap), not a rewrite — one focused day of work when triggered
+- Premature migration introduces risk with no immediate benefit
+
+---
+
+## Consequences
+
+### Positive
+- Agent 3 (Income Scorer) will have access to dividend safety data, fundamentals, and ETF holdings at launch
+- Provider abstraction layer future-proofs Agent 01 for additional sources (Seeking Alpha structured data, if partnership is established)
+- $51/mo budget is sustainable for development phase; upgrade triggers are clearly defined
+- Redis caching layer requires no changes — provider-agnostic by design
+
+### Negative / Risks
+- Two API keys to manage in production `.env` (mitigated by DigitalOcean secrets management)
+- FMP data quality on obscure securities has mixed reviews — yfinance fallback mitigates this
+- FMP subscription cancellation UX has known friction — document billing contact as mitigation
+- Polygon Stocks Starter data is 15-minute delayed — confirm this is acceptable for all downstream agents before migration
+
+### Neutral
+- Seeking Alpha structured data (dividend safety grades, Quant ratings) remains a future enhancement pending partnership outcome; the `BaseDataProvider` interface will accommodate it cleanly when ready
+
+---
+
+## Upgrade Triggers
+
+| Condition | Upgrade Action |
+|---|---|
+| Backtesting engine (Agent 8+) needs 10+ year intraday history | Polygon → Stocks Developer ($79/mo) |
+| Real-time portfolio monitoring agent is scoped | Polygon → Stocks Developer or Advanced |
+| Monte Carlo simulation needs 30-year dividend history | FMP → Premium ($59/mo) |
+| Covered call ETF NAV analysis needs holdings data | FMP → Ultimate ($149/mo) |
+| Seeking Alpha partnership confirmed | Add SA structured data client as fourth provider |
+
+---
+
+## Implementation Notes
+
+When triggering this migration, follow these steps in order:
+
+1. Create `base_provider.py` abstract interface first — defines the contract all clients must satisfy
+2. Implement `polygon_client.py` — OHLCV, dividends, splits endpoints
+3. Implement `fmp_client.py` — fundamentals, dividend history, ratios
+4. Implement `yfinance_client.py` — thin wrapper, fallback only
+5. Update `market_data_service.py` routing — map data type to provider
+6. Update `config.py` — add `POLYGON_API_KEY`, `FMP_API_KEY` to environment config
+7. Update `.env.production` on DigitalOcean droplet
+8. Run full test suite before deploying (maintain 85%+ coverage)
+9. Keep `alpha_vantage.py` intact until new providers are validated in production
+10. Execute `Document` phase to update Agent 01 functional and implementation specs
+
+---
+
+## Related Documents
+
+- `documentation/functional/agent-01-market-data-functional-spec.md` — Current spec (Alpha Vantage)
+- `documentation/implementation/implementation-01-market-data.md` — Current implementation spec
+- `ADR-001` — Initial Market Data Service architecture (if exists)
+- Agent 03 Income Scorer design (future) — primary trigger for this migration
+
+---
+
+## Review Schedule
+
+Revisit this ADR when **Agent 02 development is complete**. At that point, initiate the DESIGN phase for the multi-provider architecture before beginning Agent 03 work.

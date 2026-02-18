@@ -11,6 +11,7 @@ from datetime import datetime
 from .config import settings
 from .models import PriceData, HealthResponse
 from .cache import CacheManager
+from .database import DatabaseManager
 from .fetchers.alpha_vantage import AlphaVantageClient
 
 # Configure logging
@@ -22,28 +23,35 @@ logger = logging.getLogger(__name__)
 
 # Global instances
 cache_manager: CacheManager = None
+db_manager: DatabaseManager = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     # Startup
-    global cache_manager
-    
+    global cache_manager, db_manager
+
     logger.info(f"🚀 Starting {settings.service_name}...")
-    
+
     # Initialize cache
     cache_manager = CacheManager(settings.redis_url)
     await cache_manager.connect()
-    
+
+    # Initialize database
+    db_manager = DatabaseManager(settings.database_url)
+    await db_manager.connect()
+
     logger.info(f"✅ {settings.service_name} started on port {settings.service_port}")
-    
+
     yield
-    
+
     # Shutdown
     logger.info(f"🛑 Shutting down {settings.service_name}...")
     if cache_manager:
         await cache_manager.disconnect()
+    if db_manager:
+        await db_manager.disconnect()
     
     logger.info("✅ Shutdown complete")
 
