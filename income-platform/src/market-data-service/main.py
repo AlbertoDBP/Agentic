@@ -1,36 +1,81 @@
 """
 Market Data Service - FastAPI Application
-Main entry point for the service
+Main entry point for the service.
+
+Imports are loaded by file path via importlib so this file can be run directly:
+    python3 src/market-data-service/main.py
+or via uvicorn:
+    uvicorn main:app --host 0.0.0.0 --port 8001
 """
+import importlib.util
 import logging
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from pathlib import Path
 
-from .config import settings
-from .models import PriceData, HealthResponse
-from .cache import CacheManager
-from .database import DatabaseManager
-from .fetchers.alpha_vantage import AlphaVantageClient
+from fastapi import FastAPI, HTTPException
 
-# Configure logging
+# ---------------------------------------------------------------------------
+# Load service modules by file path (no relative imports needed)
+# ---------------------------------------------------------------------------
+
+_DIR = Path(__file__).resolve().parent
+
+
+def _load(module_name: str, file_path: Path):
+    """Load a module from an absolute file path and register it in sys.modules."""
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Load order: dependencies first so downstream modules find them in sys.modules
+_config   = _load("config",    _DIR / "config.py")
+_models   = _load("models",    _DIR / "models.py")
+_cache    = _load("cache",     _DIR / "cache.py")
+_orms     = _load("orm_models", _DIR / "orm_models.py")
+_database = _load("database",  _DIR / "database.py")
+_av       = _load("fetchers.alpha_vantage", _DIR / "fetchers" / "alpha_vantage.py")
+_repo     = _load("repositories.price_repository", _DIR / "repositories" / "price_repository.py")
+_svc      = _load("services.price_service", _DIR / "services" / "price_service.py")
+
+settings       = _config.settings
+PriceData      = _models.PriceData
+HealthResponse = _models.HealthResponse
+CacheManager   = _cache.CacheManager
+DatabaseManager = _database.DatabaseManager
+PriceRepository = _repo.PriceRepository
+PriceService    = _svc.PriceService
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
 # Global instances
+# ---------------------------------------------------------------------------
+
 cache_manager: CacheManager = None
 db_manager: DatabaseManager = None
+price_service: PriceService = None
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
-    # Startup
-    global cache_manager, db_manager
+    global cache_manager, db_manager, price_service
 
     logger.info(f"🚀 Starting {settings.service_name}...")
 
@@ -42,6 +87,19 @@ async def lifespan(app: FastAPI):
     db_manager = DatabaseManager(settings.database_url)
     await db_manager.connect()
 
+    # Wire the price service (gracefully handles None session_factory if DB is down)
+    price_repo = (
+        PriceRepository(db_manager.session_factory)
+        if db_manager.session_factory
+        else None
+    )
+    price_service = PriceService(
+        price_repo=price_repo,
+        cache_manager=cache_manager,
+        av_api_key=settings.market_data_api_key,
+        cache_ttl=settings.cache_ttl_current_price,
+    )
+
     logger.info(f"✅ {settings.service_name} started on port {settings.service_port}")
 
     yield
@@ -52,120 +110,61 @@ async def lifespan(app: FastAPI):
         await cache_manager.disconnect()
     if db_manager:
         await db_manager.disconnect()
-    
+
     logger.info("✅ Shutdown complete")
 
 
-# Create FastAPI app
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
 app = FastAPI(
     title="Market Data Service",
     description="Real-time and historical market data API for Income Fortress Platform",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
     return {
         "service": settings.service_name,
         "version": "1.0.0",
         "status": "operational",
-        "documentation": "/docs"
+        "documentation": "/docs",
     }
 
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Health check endpoint"""
-    
-    # Check cache
     cache_connected = await cache_manager.is_connected() if cache_manager else False
-    
-    # TODO: Check database
-    db_status = "not_implemented"
-    
+    db_connected = await db_manager.is_connected() if db_manager else False
+    healthy = cache_connected and db_connected
     return HealthResponse(
-        status="healthy" if cache_connected else "degraded",
-        database=db_status,
-        cache="connected" if cache_connected else "disconnected"
+        status="healthy" if healthy else "degraded",
+        database="connected" if db_connected else "disconnected",
+        cache="connected" if cache_connected else "disconnected",
     )
 
 
 @app.get("/api/v1/price/{ticker}", response_model=PriceData)
 async def get_current_price(ticker: str):
     """
-    Get current price for a ticker
-    
-    - Checks cache first
-    - Falls back to Alpha Vantage API
-    - Caches result for 5 minutes
+    Get current price for a ticker.
+
+    Strategy (in order):
+    1. Redis cache (5-minute TTL)
+    2. Database (market_data_daily table)
+    3. Alpha Vantage API → persists to DB + cache
     """
     ticker = ticker.upper()
-    cache_key = f"price:current:{ticker}"
-    
-    # Try cache first
-    if cache_manager:
-        cached_data = await cache_manager.get(cache_key)
-        if cached_data:
-            logger.info(f"✅ Cache hit for {ticker}")
-            return PriceData(**cached_data, cached=True)
-    
-    # Fetch from API
-    logger.info(f"📡 Fetching {ticker} from Alpha Vantage...")
-    
     try:
-        async with AlphaVantageClient(
-            api_key=settings.market_data_api_key,
-            calls_per_minute=5
-        ) as client:
-            prices = await client.get_daily_prices(ticker, outputsize="compact")
-            
-            if not prices:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No data found for ticker {ticker}"
-                )
-            
-            # Get most recent price
-            latest = prices[0]
-            
-            # Calculate change from previous day
-            change = 0.0
-            change_percent = 0.0
-            if len(prices) > 1:
-                prev_close = prices[1]["close"]
-                change = latest["close"] - prev_close
-                change_percent = (change / prev_close) * 100
-            
-            # Create response
-            price_data = PriceData(
-                ticker=ticker,
-                price=latest["close"],
-                change=round(change, 2),
-                change_percent=round(change_percent, 2),
-                volume=latest["volume"],
-                timestamp=datetime.now(),
-                source="alpha_vantage",
-                cached=False
-            )
-            
-            # Cache for 5 minutes
-            if cache_manager:
-                await cache_manager.set(
-                    cache_key,
-                    price_data.dict(),
-                    ttl=settings.cache_ttl_current_price
-                )
-            
-            logger.info(f"✅ Fetched {ticker}: ${price_data.price}")
-            return price_data
-    
+        data = await price_service.get_current_price(ticker)
+        return PriceData(**data)
     except ValueError as e:
-        logger.error(f"❌ API error for {ticker}: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    
+        logger.error(f"❌ Not found for {ticker}: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"❌ Unexpected error for {ticker}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -173,19 +172,21 @@ async def get_current_price(ticker: str):
 
 @app.get("/api/v1/cache/stats")
 async def get_cache_stats():
-    """Get cache statistics"""
     if not cache_manager:
         return {"error": "Cache not initialized"}
-    
     return await cache_manager.get_stats()
 
 
+# ---------------------------------------------------------------------------
+# Direct execution
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
         port=settings.service_port,
-        reload=True,
-        log_level=settings.log_level.lower()
+        log_level=settings.log_level.lower(),
     )
