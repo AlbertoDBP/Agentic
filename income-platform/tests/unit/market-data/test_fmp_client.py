@@ -1,14 +1,19 @@
 """
-Unit tests for FMPClient.
+Unit tests for FMPClient (stable API — https://financialmodelingprep.com/stable).
 
 Covers:
-  - get_dividend_history: correct field mapping from FMP response shapes
+  - get_dividend_history: correct field mapping from FMP stable /dividends response
     (date → ex_date, paymentDate → payment_date, dividend → amount).
   - get_dividend_history: yield_pct calculation when current price is available.
-  - get_dividend_history: frequency is always None (FMP endpoint omits it).
+  - get_dividend_history: frequency is lowercased ("Quarterly" → "quarterly").
   - get_etf_holdings: covered_call detection from description text (positive case).
   - get_etf_holdings: covered_call is False for a plain equity ETF (negative case).
   - get_etf_holdings: weight decimal-to-percent conversion (0.0741 → 7.41).
+
+Stable API structural differences from legacy v3:
+  - /dividends returns a flat list (no {"historical": [...]} wrapper).
+  - frequency is now populated ("Quarterly", "Monthly", etc.) — was always None.
+  - Profile field: marketCap (was mktCap).
 
 All HTTP I/O is mocked at the _get level — no network calls are made.
 
@@ -46,22 +51,24 @@ def _client() -> FMPClient:
 # Fixtures: fake FMP API responses
 # ---------------------------------------------------------------------------
 
-_DIV_HISTORY_RESPONSE = {
-    "historical": [
-        {
-            "date":        "2024-09-19",
-            "paymentDate": "2024-10-01",
-            "dividend":    0.52,
-            "adjDividend": 0.52,
-        },
-        {
-            "date":        "2024-06-20",
-            "paymentDate": "2024-07-01",
-            "dividend":    0.50,
-            "adjDividend": 0.50,
-        },
-    ]
-}
+# Stable /dividends endpoint returns a flat list (no "historical" wrapper).
+# "frequency" is now populated as a capitalized string ("Quarterly", etc.).
+_DIV_HISTORY_RESPONSE = [
+    {
+        "date":        "2024-09-19",
+        "paymentDate": "2024-10-01",
+        "dividend":    0.52,
+        "adjDividend": 0.52,
+        "frequency":   "Quarterly",
+    },
+    {
+        "date":        "2024-06-20",
+        "paymentDate": "2024-07-01",
+        "dividend":    0.50,
+        "adjDividend": 0.50,
+        "frequency":   "Quarterly",
+    },
+]
 
 _QUOTE_RESPONSE = [{"symbol": "AAPL", "price": 200.0, "volume": 60_000_000}]
 
@@ -73,6 +80,7 @@ _ETF_HOLDINGS = [
 ]
 
 # Profile for a covered-call ETF (JEPI-like) — description contains "covered call"
+# Stable API field: "marketCap" (was "mktCap" in legacy v3).
 _JEPI_PROFILE = [
     {
         "symbol":      "JEPI",
@@ -82,7 +90,7 @@ _JEPI_PROFILE = [
             "strategy consisting of out-of-the-money S&P 500 Index "
             "covered call options to generate income."
         ),
-        "mktCap": 35_000_000_000.0,
+        "marketCap": 35_000_000_000.0,
         "sector": None,
     }
 ]
@@ -96,7 +104,7 @@ _SCHD_PROFILE = [
             "The fund seeks to track as closely as possible, before fees and "
             "expenses, the total return of the Dow Jones U.S. Dividend 100 Index."
         ),
-        "mktCap": 60_000_000_000.0,
+        "marketCap": 60_000_000_000.0,
         "sector": None,
     }
 ]
@@ -106,7 +114,7 @@ _SCHD_PROFILE = [
 # "buy-write", "equity linked note", "premium income", "equity premium").
 _NEUTRAL_PROFILE_TEMPLATE = {
     "description": "Tracks a broad equity index through full replication.",
-    "mktCap": 1_000_000_000.0,
+    "marketCap": 1_000_000_000.0,
     "sector": None,
 }
 
@@ -122,7 +130,8 @@ async def test_get_dividend_history_field_mapping():
     client = _client()
 
     async def _mock_get(path, **kwargs):
-        if "stock_dividend" in path:
+        # Stable path: /dividends  (vs legacy /historical-price-full/stock_dividend/{symbol})
+        if "dividends" in path:
             return _DIV_HISTORY_RESPONSE
         return _QUOTE_RESPONSE
 
@@ -138,21 +147,21 @@ async def test_get_dividend_history_field_mapping():
 
 
 @pytest.mark.asyncio
-async def test_get_dividend_history_frequency_is_none():
-    """FMP historical dividends endpoint omits frequency — it must always be None."""
+async def test_get_dividend_history_frequency_lowercased():
+    """Stable /dividends endpoint returns 'Quarterly' — client must lowercase it."""
     client = _client()
 
     async def _mock_get(path, **kwargs):
-        if "stock_dividend" in path:
-            return _DIV_HISTORY_RESPONSE
+        if "dividends" in path:
+            return _DIV_HISTORY_RESPONSE  # frequency = "Quarterly"
         return _QUOTE_RESPONSE
 
     with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
         result = await client.get_dividend_history("AAPL")
 
     for record in result:
-        assert record["frequency"] is None, (
-            f"Expected frequency=None, got {record['frequency']!r}"
+        assert record["frequency"] == "quarterly", (
+            f"Expected 'quarterly' (lowercased), got {record['frequency']!r}"
         )
 
 
@@ -162,7 +171,7 @@ async def test_get_dividend_history_yield_pct_computed_from_current_price():
     client = _client()
 
     async def _mock_get(path, **kwargs):
-        if "stock_dividend" in path:
+        if "dividends" in path:
             return _DIV_HISTORY_RESPONSE
         return _QUOTE_RESPONSE  # price = 200.0
 
@@ -181,7 +190,7 @@ async def test_get_dividend_history_yield_pct_none_when_price_unavailable():
     client = _client()
 
     async def _mock_get(path, **kwargs):
-        if "stock_dividend" in path:
+        if "dividends" in path:
             return _DIV_HISTORY_RESPONSE
         return []  # empty quote → no current price
 
@@ -194,12 +203,12 @@ async def test_get_dividend_history_yield_pct_none_when_price_unavailable():
 
 @pytest.mark.asyncio
 async def test_get_dividend_history_empty_returns_empty_list():
-    """When the FMP response has no historical records, an empty list is returned."""
+    """When the stable /dividends endpoint returns an empty list, [] is returned."""
     client = _client()
 
     async def _mock_get(path, **kwargs):
-        if "stock_dividend" in path:
-            return {"historical": []}
+        if "dividends" in path:
+            return []   # stable API: empty flat list
         return _QUOTE_RESPONSE
 
     with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
@@ -269,14 +278,14 @@ async def test_get_etf_holdings_weight_decimal_to_percent():
 
 
 @pytest.mark.asyncio
-async def test_get_etf_holdings_aum_from_profile_mkt_cap():
-    """'aum' is populated from the profile's 'mktCap' field."""
+async def test_get_etf_holdings_aum_from_profile_market_cap():
+    """'aum' is populated from the stable profile's 'marketCap' field."""
     client = _client()
 
     async def _mock_get(path, **kwargs):
         if "etf-holder" in path:
             return _ETF_HOLDINGS
-        return _SCHD_PROFILE  # mktCap = 60_000_000_000
+        return _SCHD_PROFILE  # marketCap = 60_000_000_000
 
     with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
         result = await client.get_etf_holdings("SCHD")
@@ -309,7 +318,7 @@ async def test_get_etf_holdings_buy_write_description_also_sets_covered_call():
         {
             "symbol":      "XYLD",
             "description": "Employs a buy-write strategy to generate high current income.",
-            "mktCap": 1_000_000_000.0,
+            "marketCap": 1_000_000_000.0,
         }
     ]
 
@@ -376,7 +385,7 @@ async def test_get_etf_holdings_option_in_description_sets_covered_call():
         "symbol":      "TEST",
         "companyName": "Test Option Income ETF",
         "description": "Uses an option overlay to generate income.",
-        "mktCap": 500_000_000.0,
+        "marketCap": 500_000_000.0,
     }]
 
     async def _mock_get(path, **kwargs):
@@ -396,7 +405,7 @@ async def test_get_etf_holdings_eln_in_description_sets_covered_call():
         "symbol":      "JEPI",
         "companyName": "Some Income ETF",
         "description": "Generates income through equity linked notes (ELN).",
-        "mktCap": 35_000_000_000.0,
+        "marketCap": 35_000_000_000.0,
     }]
 
     async def _mock_get(path, **kwargs):
@@ -416,7 +425,7 @@ async def test_get_etf_holdings_equity_linked_note_in_description_sets_covered_c
         "symbol":      "JEPI",
         "companyName": "Some Income ETF",
         "description": "Invests in equity linked note instruments to provide income.",
-        "mktCap": 35_000_000_000.0,
+        "marketCap": 35_000_000_000.0,
     }]
 
     async def _mock_get(path, **kwargs):

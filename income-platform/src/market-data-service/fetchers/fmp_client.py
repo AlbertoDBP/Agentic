@@ -1,4 +1,4 @@
-"""Financial Modeling Prep (FMP) REST API client — v3.
+"""Financial Modeling Prep (FMP) REST API client — stable API.
 
 Usage (mirrors AlphaVantageClient / PolygonClient pattern):
 
@@ -8,6 +8,14 @@ Usage (mirrors AlphaVantageClient / PolygonClient pattern):
 
 Authentication: apikey query parameter (not a header).
 Rate limit: 300 requests/minute (0.2 s minimum interval).
+
+Stable API (https://financialmodelingprep.com/stable) replaces the legacy
+v3 API (https://financialmodelingprep.com/api/v3).  All endpoints now use
+query parameters for the symbol instead of path segments, and several field
+names changed (mktCap → marketCap, priceEarningsRatio → priceToEarningsRatio,
+debtEquityRatio → debtToEquityRatio, payoutRatio → dividendPayoutRatio).
+Historical prices are now a flat list rather than {"historical": [...]}.
+Dividends now include a "frequency" string ("Quarterly", "Monthly", etc.).
 """
 import asyncio
 import logging
@@ -33,7 +41,7 @@ _COVERED_CALL_SYMBOLS = frozenset(
 
 
 class FMPClient(BaseDataProvider):
-    """Financial Modeling Prep REST API v3 client.
+    """Financial Modeling Prep stable API client.
 
     Rate limit: 300 requests/minute (0.2 s minimum interval).
     The class-level ``_last_request_time`` is shared across all instances so
@@ -42,7 +50,7 @@ class FMPClient(BaseDataProvider):
     PolygonClient.
     """
 
-    BASE_URL = "https://financialmodelingprep.com/api/v3"
+    BASE_URL = "https://financialmodelingprep.com/stable"
 
     # Class-level rate-limit timestamp, shared across all instances
     _last_request_time: Optional[datetime] = None
@@ -81,10 +89,9 @@ class FMPClient(BaseDataProvider):
     # ------------------------------------------------------------------
 
     async def get_current_price(self, symbol: str) -> dict:
-        """Return the latest quote from /quote-short/{symbol}.
+        """Return the latest quote from /quote?symbol={symbol}.
 
-        FMP's quote-short endpoint returns price and volume but no timestamp;
-        the response timestamp is set to the current UTC time at call time.
+        Stable /quote returns price, volume, and a Unix-seconds timestamp.
 
         Returns:
             { symbol, price, volume, timestamp, source }
@@ -101,20 +108,26 @@ class FMPClient(BaseDataProvider):
             except Exception as e:
                 logger.warning(f"Cache read error for {cache_key}: {e}")
 
-        data = await self._get(f"/quote-short/{symbol}")
+        data = await self._get("/quote", params={"symbol": symbol})
 
-        # FMP returns a list for quote-short
+        # Stable /quote returns a list
         if not isinstance(data, list) or not data:
             raise DataUnavailableError(f"No quote data returned for {symbol}")
         q = data[0]
         if not q.get("price"):
             raise DataUnavailableError(f"Empty price in quote response for {symbol}")
 
+        ts = q.get("timestamp")
+        timestamp = (
+            datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+            if ts
+            else datetime.now(tz=timezone.utc).isoformat()
+        )
         out = {
             "symbol":    symbol,
             "price":     float(q["price"]),
             "volume":    int(q.get("volume") or 0),
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "timestamp": timestamp,
             "source":    "fmp",
         }
         await self._cache_set(cache_key, out, _TTL_PRICE)
@@ -125,19 +138,19 @@ class FMPClient(BaseDataProvider):
         symbol: str,
         outputsize: str = "compact",
     ) -> list[dict]:
-        """Return daily OHLCV bars from /historical-price-full/{symbol}.
+        """Return daily OHLCV bars from /historical-price-eod/full?symbol={symbol}.
 
         Args:
             symbol:     Ticker symbol.
             outputsize: "compact" → last 100 calendar days (timeseries=100).
                         "full"   → full available history.
 
-        FMP field mapping:
+        Stable API field mapping:
             date → date, open → open, high → high, low → low,
-            close → close, adjClose → adjusted_close, volume → volume.
+            close → close, vwap → adjusted_close, volume → volume.
 
-        Note: When serietype=line is active FMP may omit open/high/low/volume;
-              those fields are returned as None in that case.
+        Note: The stable endpoint returns a flat list (no "historical" wrapper).
+              "vwap" replaces "adjClose" from the legacy v3 endpoint.
 
         Returns:
             List of dicts sorted by date descending (most recent first).
@@ -156,13 +169,14 @@ class FMPClient(BaseDataProvider):
             except Exception as e:
                 logger.warning(f"Cache read error for {cache_key}: {e}")
 
-        params: dict[str, Any] = {"serietype": "line"}
+        params: dict[str, Any] = {"symbol": symbol}
         if outputsize == "compact":
             params["timeseries"] = 100
 
-        data = await self._get(f"/historical-price-full/{symbol}", params=params)
+        data = await self._get("/historical-price-eod/full", params=params)
 
-        historical = data.get("historical") if isinstance(data, dict) else None
+        # Stable endpoint returns a flat list
+        historical = data if isinstance(data, list) else []
         if not historical:
             logger.warning(f"No daily price data returned for {symbol}")
             return []
@@ -176,31 +190,36 @@ class FMPClient(BaseDataProvider):
                     "high":           _safe_float(bar.get("high")),
                     "low":            _safe_float(bar.get("low")),
                     "close":          float(bar["close"]),
-                    "adjusted_close": _safe_float(bar.get("adjClose")),
+                    # vwap in stable; adjClose in legacy v3; fallback to close
+                    "adjusted_close": _safe_float(
+                        bar.get("vwap") or bar.get("adjClose") or bar.get("close")
+                    ),
                     "volume":         int(bar["volume"]) if bar.get("volume") is not None else 0,
                 })
             except (KeyError, ValueError, TypeError) as e:
                 logger.warning(f"Skipping malformed bar for {symbol}: {e}")
                 continue
 
-        # FMP returns newest-first — consistent with PolygonClient
+        # Stable returns newest-first — consistent with PolygonClient
         logger.info(f"✅ Fetched {len(results)} daily bars for {symbol} (fmp/{outputsize})")
         await self._cache_set(cache_key, results, _TTL_PRICE)
         return results
 
     async def get_dividend_history(self, symbol: str) -> list[dict]:
-        """Return dividend payment history from /historical-price-full/stock_dividend/{symbol}.
+        """Return dividend payment history from /dividends?symbol={symbol}.
 
-        FMP field mapping:
-            date          → ex_date
-            paymentDate   → payment_date
-            dividend      → amount
-            (adjDividend is parsed but not exposed; outside the base contract)
+        Stable API field mapping:
+            date        → ex_date
+            paymentDate → payment_date
+            dividend    → amount
+            frequency   → frequency (lowercased: "quarterly", "monthly", etc.)
 
-        yield_pct: computed as (dividend / current_price) * 100 when the
-        current quote is successfully fetched alongside the dividend data.
-        This is a point-in-time approximation using today's price, not the
-        price at each historical ex-date.
+        yield_pct: computed as (dividend / current_price) * 100 using the
+        current quote fetched concurrently.  This is a per-payment approximation
+        using today's price, not the price at each historical ex-date.
+
+        Note: The stable endpoint returns a flat list (no "historical" wrapper).
+              "frequency" is now populated (was always None in the legacy v3 endpoint).
 
         Returns:
             List of dicts sorted by ex_date descending (newest first, per FMP default).
@@ -219,8 +238,8 @@ class FMPClient(BaseDataProvider):
 
         # Fetch dividends and current price concurrently; price used for yield_pct
         divs_result, quote_result = await asyncio.gather(
-            self._get(f"/historical-price-full/stock_dividend/{symbol}"),
-            self._get(f"/quote-short/{symbol}"),
+            self._get("/dividends", params={"symbol": symbol}),
+            self._get("/quote",     params={"symbol": symbol}),
             return_exceptions=True,
         )
 
@@ -229,11 +248,8 @@ class FMPClient(BaseDataProvider):
                 f"Failed to fetch dividends for {symbol}: {divs_result}"
             ) from divs_result
 
-        historical = (
-            divs_result.get("historical")
-            if isinstance(divs_result, dict)
-            else None
-        ) or []
+        # Stable endpoint returns a flat list directly
+        historical = divs_result if isinstance(divs_result, list) else []
 
         if not historical:
             logger.warning(f"No dividend history returned for {symbol}")
@@ -260,11 +276,14 @@ class FMPClient(BaseDataProvider):
                     if current_price and current_price > 0 and amount > 0
                     else None
                 )
+                # Normalize frequency to lowercase ("Quarterly" → "quarterly")
+                raw_freq = item.get("frequency")
+                frequency = raw_freq.lower() if isinstance(raw_freq, str) and raw_freq else None
                 results.append({
                     "ex_date":      item.get("date"),
                     "payment_date": item.get("paymentDate"),
                     "amount":       amount,
-                    "frequency":    None,   # FMP historical dividends endpoint omits frequency
+                    "frequency":    frequency,
                     "yield_pct":    yield_pct,
                 })
             except (KeyError, ValueError, TypeError) as e:
@@ -278,17 +297,17 @@ class FMPClient(BaseDataProvider):
     async def get_fundamentals(self, symbol: str) -> dict:
         """Return key fundamental metrics from three FMP endpoints (concurrent fetch):
 
-        1. /ratios/{symbol}?limit=1
-           — pe_ratio (priceEarningsRatio), debt_to_equity (debtEquityRatio),
-             payout_ratio (payoutRatio).
-        2. /cash-flow-statement/{symbol}?limit=4&period=annual
+        1. /ratios?symbol={symbol}&limit=1
+           — pe_ratio (priceToEarningsRatio), debt_to_equity (debtToEquityRatio),
+             payout_ratio (dividendPayoutRatio).
+        2. /cash-flow-statement?symbol={symbol}&limit=4&period=annual
            — free_cash_flow (3-4 year average of annual freeCashFlow).
-        3. /profile/{symbol}
-           — market_cap (mktCap), sector.
+        3. /profile?symbol={symbol}
+           — market_cap (marketCap), sector.
 
         Fields not available from FMP basic endpoints (always None):
-            earnings_growth — use /financial-growth/{symbol} for this metric.
-            credit_rating   — use /rating/{symbol} or a dedicated credit API.
+            earnings_growth — use /financial-growth endpoint for this metric.
+            credit_rating   — use /rating endpoint or a dedicated credit API.
         """
         symbol = symbol.upper()
         cache_key = f"fmp:fundamentals:{symbol}"
@@ -304,16 +323,17 @@ class FMPClient(BaseDataProvider):
 
         # Three endpoints concurrently
         ratios_result, cf_result, profile_result = await asyncio.gather(
-            self._get(f"/ratios/{symbol}", params={"limit": 1}),
-            self._get(
-                f"/cash-flow-statement/{symbol}",
-                params={"limit": 4, "period": "annual"},
-            ),
-            self._get(f"/profile/{symbol}"),
+            self._get("/ratios",               params={"symbol": symbol, "limit": 1}),
+            self._get("/cash-flow-statement",  params={"symbol": symbol, "limit": 4, "period": "annual"}),
+            self._get("/profile",              params={"symbol": symbol}),
             return_exceptions=True,
         )
 
         # --- pe_ratio, debt_to_equity, payout_ratio ---
+        # Stable ratios field names differ from legacy v3:
+        #   priceEarningsRatio → priceToEarningsRatio
+        #   debtEquityRatio    → debtToEquityRatio
+        #   payoutRatio        → dividendPayoutRatio
         pe_ratio       = None
         debt_to_equity = None
         payout_ratio   = None
@@ -323,13 +343,14 @@ class FMPClient(BaseDataProvider):
             and ratios_result
         ):
             r = ratios_result[0]
-            pe_ratio       = _safe_float(r.get("priceEarningsRatio"))
-            debt_to_equity = _safe_float(r.get("debtEquityRatio"))
-            payout_ratio   = _safe_float(r.get("payoutRatio"))
+            pe_ratio       = _safe_float(r.get("priceToEarningsRatio"))
+            debt_to_equity = _safe_float(r.get("debtToEquityRatio"))
+            payout_ratio   = _safe_float(r.get("dividendPayoutRatio"))
         else:
             logger.warning(f"Ratios unavailable for {symbol}: {ratios_result}")
 
         # --- free_cash_flow: average over up to 4 annual periods ---
+        # "freeCashFlow" field name is unchanged in the stable API.
         free_cash_flow = None
         if (
             not isinstance(cf_result, Exception)
@@ -347,6 +368,7 @@ class FMPClient(BaseDataProvider):
             logger.warning(f"Cash flow statement unavailable for {symbol}: {cf_result}")
 
         # --- market_cap and sector ---
+        # Stable profile field: "marketCap" (was "mktCap" in legacy v3).
         market_cap = None
         sector     = None
         if (
@@ -355,7 +377,7 @@ class FMPClient(BaseDataProvider):
             and profile_result
         ):
             p = profile_result[0]
-            market_cap = _safe_float(p.get("mktCap"))
+            market_cap = _safe_float(p.get("marketCap") or p.get("mktCap"))
             sector     = p.get("sector")
         else:
             logger.warning(f"Profile unavailable for {symbol}: {profile_result}")
@@ -364,9 +386,9 @@ class FMPClient(BaseDataProvider):
             "pe_ratio":        pe_ratio,
             "debt_to_equity":  debt_to_equity,
             "payout_ratio":    payout_ratio,
-            "earnings_growth": None,   # available via /financial-growth/{symbol}, not fetched here
+            "earnings_growth": None,   # available via /financial-growth, not fetched here
             "free_cash_flow":  free_cash_flow,
-            "credit_rating":   None,   # available via /rating/{symbol}, not fetched here
+            "credit_rating":   None,   # available via /rating, not fetched here
             "market_cap":      market_cap,
             "sector":          sector,
         }
@@ -374,15 +396,15 @@ class FMPClient(BaseDataProvider):
         return out
 
     async def get_etf_holdings(self, symbol: str) -> dict:
-        """Return ETF metadata from /etf-holder/{symbol} and /profile/{symbol}.
+        """Return ETF metadata from /etf-holder?symbol={symbol} and /profile?symbol={symbol}.
 
-        Holdings source:  /etf-holder/{symbol}
+        Holdings source:  /etf-holder?symbol={symbol}
             Maps: asset → ticker, name → name,
                   weight (decimal ratio, e.g. 0.0741) → weight_pct (7.41).
             Capped at the top 20 holdings by position in the response.
 
-        Profile source:   /profile/{symbol}
-            mktCap      → aum
+        Profile source:   /profile?symbol={symbol}
+            marketCap   → aum  (also tries legacy "mktCap" as fallback)
             covered_call detection uses OR logic — any match returns True:
                 description contains "covered call" or "buy-write"
                 description contains "option" or "ELN" or "equity linked note"
@@ -408,8 +430,8 @@ class FMPClient(BaseDataProvider):
 
         # Fetch holdings and profile concurrently
         holdings_result, profile_result = await asyncio.gather(
-            self._get(f"/etf-holder/{symbol}"),
-            self._get(f"/profile/{symbol}"),
+            self._get("/etf-holder", params={"symbol": symbol}),
+            self._get("/profile",    params={"symbol": symbol}),
             return_exceptions=True,
         )
 
@@ -435,6 +457,7 @@ class FMPClient(BaseDataProvider):
                 continue
 
         # --- profile: aum and covered_call detection ---
+        # Stable profile uses "marketCap"; legacy v3 used "mktCap" — try both.
         expense_ratio = None   # FMP profile does not expose expense_ratio
         aum           = None
         covered_call  = False
@@ -444,18 +467,18 @@ class FMPClient(BaseDataProvider):
             and profile_result
         ):
             p = profile_result[0]
-            aum         = _safe_float(p.get("mktCap"))
+            aum         = _safe_float(p.get("marketCap") or p.get("mktCap"))
             description = (p.get("description") or "").lower()
             fund_name   = (p.get("companyName") or "").lower()
             covered_call = (
-                "covered call"        in description
-                or "buy-write"        in description
-                or "option"           in description
-                or "eln"              in description
+                "covered call"          in description
+                or "buy-write"          in description
+                or "option"             in description
+                or "eln"                in description
                 or "equity linked note" in description
-                or "premium income"   in fund_name
-                or "equity premium"   in fund_name
-                or symbol             in _COVERED_CALL_SYMBOLS
+                or "premium income"     in fund_name
+                or "equity premium"     in fund_name
+                or symbol               in _COVERED_CALL_SYMBOLS
             )
         else:
             logger.warning(f"Profile unavailable for ETF {symbol}: {profile_result}")
