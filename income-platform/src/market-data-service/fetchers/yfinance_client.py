@@ -24,6 +24,12 @@ from fetchers.base_provider import BaseDataProvider, DataUnavailableError, Provi
 
 logger = logging.getLogger(__name__)
 
+# Known covered-call / buy-write ETF symbols — mirrors fmp_client._COVERED_CALL_SYMBOLS.
+# Used as a last-resort signal when description and fund name lack clear keywords.
+_YF_COVERED_CALL_SYMBOLS = frozenset(
+    ["JEPI", "JEPQ", "XYLD", "QYLD", "RYLD", "DIVO", "PBP", "BXMX"]
+)
+
 
 class YFinanceClient(BaseDataProvider):
     """Yahoo Finance fallback provider via the yfinance library.
@@ -262,13 +268,19 @@ class YFinanceClient(BaseDataProvider):
 
         Holdings source:
             ``ticker.funds_data.top_holdings`` (yfinance >= 0.2.18).
-            Falls back to an empty list if ``funds_data`` is unavailable
-            (e.g. the ticker is not a fund, or the yfinance version is older).
+            The DataFrame has index=Symbol (ticker) and columns=[Name, Holding Percent].
+            Falls back to an empty list if ``funds_data`` is unavailable.
 
         Profile source (``ticker.info``):
-            annualReportExpenseRatio → expense_ratio (e.g. 0.0009 for 0.09%)
-            totalNetAssets           → aum (USD)
-            longBusinessSummary      → scanned for "covered call" / "buy-write"
+            netExpenseRatio → expense_ratio (e.g. 0.0035 for 0.35%)
+            totalAssets     → aum (USD, e.g. 43_150_049_280 for JEPI)
+            longBusinessSummary + longName → covered_call detection (see below)
+
+        covered_call detection uses OR logic — any match returns True:
+            description contains "covered call", "buy-write",
+              "selling call option", "equity-linked note", or "option"
+            longName contains "Premium Income", "Equity Premium", or "Buy-Write"
+            symbol is in the known covered-call ETF list
 
         Returns:
             { expense_ratio, aum, top_holdings, covered_call }
@@ -298,40 +310,45 @@ class YFinanceClient(BaseDataProvider):
             ) from e
 
         # --- top holdings ---
+        # funds_data.top_holdings: index = Symbol (ticker), columns = [Name, Holding Percent]
         top_holdings = []
         if holdings_df is not None and not holdings_df.empty:
-            for holding_name, row in holdings_df.iterrows():
+            for sym_idx, row in holdings_df.iterrows():
                 try:
-                    # top_holdings columns: "Symbol", "Holding Percent", etc.
-                    ticker_sym = row.get("Symbol") if hasattr(row, "get") else None
-                    weight_raw = (
-                        row.get("Holding Percent")
-                        if hasattr(row, "get")
-                        else row["Holding Percent"]
-                    )
+                    weight_raw = row.get("Holding Percent")
                     top_holdings.append({
-                        "ticker":     ticker_sym,
-                        "name":       str(holding_name),
+                        "ticker":     str(sym_idx),           # index IS the ticker symbol
+                        "name":       row.get("Name") or str(sym_idx),
                         "weight_pct": round(float(weight_raw) * 100, 4)
-                        if weight_raw is not None
-                        else None,
+                                      if weight_raw is not None else None,
                     })
                 except (KeyError, ValueError, TypeError) as e:
                     logger.warning(f"Skipping malformed ETF holding for {symbol}: {e}")
                     continue
 
         # --- expense_ratio and aum from info ---
-        expense_ratio = _safe_float(info.get("annualReportExpenseRatio"))
-        aum           = _safe_float(info.get("totalNetAssets"))
+        # netExpenseRatio: reported net expense ratio (0.0035 = 0.35%)
+        # totalAssets: total fund AUM in USD (annualReportExpenseRatio / totalNetAssets
+        #              are legacy yfinance fields that now return None)
+        expense_ratio = _safe_float(info.get("netExpenseRatio"))
+        aum           = _safe_float(info.get("totalAssets"))
 
-        # --- covered_call detection from description and fund name ---
+        # --- covered_call detection ---
+        # Check description (longBusinessSummary) and fund name (longName).
+        # JEPI's summary contains "equity-linked notes (ELNs)" and
+        # "selling call options" even though it avoids the phrase "covered call".
         description = (info.get("longBusinessSummary") or "").lower()
         fund_name   = (info.get("longName") or info.get("shortName") or "").lower()
         covered_call = (
-            "covered call" in description
-            or "buy-write"  in description
-            or "covered call" in fund_name
-            or "buy-write"  in fund_name
+            "covered call"          in description
+            or "buy-write"          in description
+            or "selling call option" in description
+            or "equity-linked note" in description
+            or "option"             in description
+            or "premium income"     in fund_name
+            or "equity premium"     in fund_name
+            or "buy-write"          in fund_name
+            or symbol               in _YF_COVERED_CALL_SYMBOLS
         )
 
         logger.info(
