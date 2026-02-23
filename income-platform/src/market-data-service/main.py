@@ -171,89 +171,25 @@ async def health_check():
     )
 
 
-@app.get("/api/v1/price/{ticker}", response_model=PriceData)
-async def get_current_price(ticker: str):
+@app.get("/stocks/{symbol}/price", response_model=PriceData)
+async def get_stock_price(symbol: str):
     """
-    Get current price for a ticker.
+    Get the current price for a stock symbol.
 
     Strategy (in order):
     1. Redis cache (5-minute TTL)
     2. Database (market_data_daily table)
     3. Alpha Vantage API → persists to DB + cache
     """
-    ticker = ticker.upper()
+    symbol = symbol.upper()
     try:
-        data = await price_service.get_current_price(ticker)
+        data = await price_service.get_current_price(symbol)
         return PriceData(**data)
     except ValueError as e:
-        logger.error(f"❌ Not found for {ticker}: {e}")
+        logger.error(f"❌ Not found for {symbol}: {e}")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"❌ Unexpected error for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@app.get("/api/v1/price/{ticker}/history")
-async def get_historical_prices(
-    ticker: str,
-    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
-    end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
-):
-    """
-    Get historical OHLCV prices for a ticker in a date range.
-
-    Strategy (in order):
-    1. Redis cache (6-hour TTL, keyed by ticker + date range)
-    2. Database (price_history table)
-    3. Alpha Vantage API → persists to DB + cache
-    """
-    ticker = ticker.upper()
-    if start_date > end_date:
-        raise HTTPException(status_code=400, detail="start_date must be before end_date")
-    try:
-        data = await market_data_service.get_historical_prices(ticker, start_date, end_date)
-        return {"ticker": ticker, "start_date": str(start_date), "end_date": str(end_date), "count": len(data), "prices": data}
-    except Exception as e:
-        logger.error(f"❌ History error for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@app.post("/api/v1/price/{ticker}/refresh")
-async def refresh_historical_prices(
-    ticker: str,
-    full_history: bool = Query(False, description="Fetch full 20-year history (slow)"),
-):
-    """
-    Force-refresh historical prices from Alpha Vantage and upsert to the database.
-    Bypasses cache — always fetches from the API.
-    """
-    ticker = ticker.upper()
-    try:
-        count = await market_data_service.refresh_historical_prices(ticker, full_history=full_history)
-        return {"ticker": ticker, "rows_upserted": count, "full_history": full_history}
-    except Exception as e:
-        logger.error(f"❌ Refresh error for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@app.get("/api/v1/price/{ticker}/statistics")
-async def get_price_statistics(
-    ticker: str,
-    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
-    end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
-):
-    """
-    Calculate price statistics (min, max, avg, volatility) from stored historical data.
-    Reads from the database only — call /refresh first if no data is present.
-    """
-    ticker = ticker.upper()
-    if start_date > end_date:
-        raise HTTPException(status_code=400, detail="start_date must be before end_date")
-    try:
-        stats = await market_data_service.get_price_statistics(ticker, start_date, end_date)
-        return stats
-    except Exception as e:
-        logger.error(f"❌ Statistics error for {ticker}: {e}")
+        logger.error(f"❌ Unexpected error for {symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
