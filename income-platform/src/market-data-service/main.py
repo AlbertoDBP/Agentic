@@ -39,10 +39,15 @@ _models   = _load("models",    _DIR / "models.py")
 _cache    = _load("cache",     _DIR / "cache.py")
 _orms     = _load("orm_models", _DIR / "orm_models.py")
 _database = _load("database",  _DIR / "database.py")
-_av       = _load("fetchers.alpha_vantage", _DIR / "fetchers" / "alpha_vantage.py")
-_repo     = _load("repositories.price_repository", _DIR / "repositories" / "price_repository.py")
+_av       = _load("fetchers.alpha_vantage",  _DIR / "fetchers" / "alpha_vantage.py")   # kept as reference / deprecated
+_bp       = _load("fetchers.base_provider",  _DIR / "fetchers" / "base_provider.py")
+_poly     = _load("fetchers.polygon_client", _DIR / "fetchers" / "polygon_client.py")
+_fmp      = _load("fetchers.fmp_client",     _DIR / "fetchers" / "fmp_client.py")
+_yf       = _load("fetchers.yfinance_client",_DIR / "fetchers" / "yfinance_client.py")
+_router   = _load("fetchers.provider_router",_DIR / "fetchers" / "provider_router.py")
+_repo     = _load("repositories.price_repository",         _DIR / "repositories" / "price_repository.py")
 _ph_repo  = _load("repositories.price_history_repository", _DIR / "repositories" / "price_history_repository.py")
-_svc      = _load("services.price_service", _DIR / "services" / "price_service.py")
+_svc      = _load("services.price_service",       _DIR / "services" / "price_service.py")
 _mds      = _load("services.market_data_service", _DIR / "services" / "market_data_service.py")
 
 settings                  = _config.settings
@@ -111,7 +116,7 @@ async def lifespan(app: FastAPI):
         cache_ttl=settings.cache_ttl_current_price,
     )
 
-    # Wire the market data service (historical prices via price_history table)
+    # Wire the market data service (multi-provider: Polygon → FMP → yfinance)
     price_history_repo = (
         PriceHistoryRepository(db_manager.session_factory)
         if db_manager.session_factory
@@ -120,8 +125,10 @@ async def lifespan(app: FastAPI):
     market_data_service = MarketDataService(
         price_history_repo=price_history_repo,
         cache_manager=cache_manager,
-        av_api_key=settings.market_data_api_key,
+        polygon_api_key=settings.polygon_api_key,
+        fmp_api_key=settings.fmp_api_key,
     )
+    await market_data_service.connect()
 
     logger.info(f"✅ {settings.service_name} started on port {settings.service_port}")
 
@@ -129,6 +136,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info(f"🛑 Shutting down {settings.service_name}...")
+    if market_data_service:
+        await market_data_service.disconnect()
     if cache_manager:
         await cache_manager.disconnect()
     if db_manager:

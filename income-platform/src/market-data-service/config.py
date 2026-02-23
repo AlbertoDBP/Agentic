@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     cache_ttl_current_price: int = 300
     
     # API Keys
-    market_data_api_key: str
+    market_data_api_key: str          # Alpha Vantage (legacy / reference)
+    polygon_api_key: str = ""         # Polygon.io Stocks Starter
+    fmp_api_key: str = ""             # Financial Modeling Prep
     
     # Sync
     sync_interval: int = 300

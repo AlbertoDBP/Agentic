@@ -1,36 +1,94 @@
-"""Market Data Service — historical price orchestration (cache → DB → Alpha Vantage)."""
+"""Market Data Service — orchestrates price, dividend, fundamental, and ETF data.
+
+Data is served via a ProviderRouter that fans out to Polygon → FMP → yfinance
+depending on the request type.  Historical prices are additionally persisted
+to and read from the price_history DB table for range queries.
+
+Lifecycle
+---------
+This service owns the ProviderRouter, which manages aiohttp sessions for
+Polygon and FMP.  Call ``await service.connect()`` during application startup
+and ``await service.disconnect()`` during shutdown — mirroring the pattern
+used by DatabaseManager.
+
+    service = MarketDataService(repo, cache, polygon_api_key="...", fmp_api_key="...")
+    await service.connect()
+    ...
+    await service.disconnect()
+"""
 import logging
 import statistics as _stats
 from datetime import date
 from typing import List, Optional
 
 from cache import CacheManager
-from fetchers.alpha_vantage import AlphaVantageClient
+from fetchers.fmp_client import FMPClient
+from fetchers.polygon_client import PolygonClient
+from fetchers.provider_router import ProviderRouter
+from fetchers.yfinance_client import YFinanceClient
 from repositories.price_history_repository import PriceHistoryRepository
 
 logger = logging.getLogger(__name__)
 
-# 6-hour TTL for historical data — changes rarely compared to current quotes
-_TTL_HISTORY = 6 * 60 * 60
+# Service-level TTL for date-range history cache entries.
+# Individual provider responses are cached separately inside each provider.
+_TTL_HISTORY = 6 * 60 * 60   # 6 hours
 
 
 class MarketDataService:
-    """Orchestrates historical price retrieval: cache → price_history DB → Alpha Vantage."""
+    """Orchestrates all market data requests through ProviderRouter with DB persistence.
+
+    Args:
+        price_history_repo: Repository for the price_history table (may be None
+                            when the DB is unavailable).
+        cache_manager:      Redis cache (may be None).
+        polygon_api_key:    Polygon.io API key.  Empty string disables Polygon.
+        fmp_api_key:        Financial Modeling Prep API key.  Empty string
+                            disables FMP.
+    """
 
     def __init__(
         self,
-        price_history_repo: PriceHistoryRepository,
-        cache_manager: CacheManager,
-        av_api_key: str,
-        av_calls_per_minute: int = 5,
+        price_history_repo: Optional[PriceHistoryRepository],
+        cache_manager: Optional[CacheManager],
+        polygon_api_key: str = "",
+        fmp_api_key: str = "",
     ):
-        self.repo = price_history_repo
+        self.repo  = price_history_repo
         self.cache = cache_manager
-        self.av_api_key = av_api_key
-        self.av_calls_per_minute = av_calls_per_minute
+
+        # Build provider instances (sessions opened in connect())
+        polygon  = PolygonClient(api_key=polygon_api_key,  cache=cache_manager) if polygon_api_key  else None
+        fmp      = FMPClient(api_key=fmp_api_key,          cache=cache_manager) if fmp_api_key      else None
+        yfinance = YFinanceClient()
+
+        self._router: ProviderRouter = ProviderRouter(
+            polygon=polygon,
+            fmp=fmp,
+            yfinance=yfinance,
+            cache=cache_manager,
+        )
+        self._connected = False
 
     # ------------------------------------------------------------------
-    # Public API
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def connect(self) -> None:
+        """Open HTTP sessions for all configured providers."""
+        await self._router.__aenter__()
+        self._connected = True
+        logger.info("✅ MarketDataService providers connected")
+
+    async def disconnect(self) -> None:
+        """Close HTTP sessions for all configured providers."""
+        if self._connected:
+            await self._router.__aexit__(None, None, None)
+            self._connected = False
+            logger.info("MarketDataService providers disconnected")
+
+    # ------------------------------------------------------------------
+    # Historical prices (cache → DB → router)
     # ------------------------------------------------------------------
 
     async def get_historical_prices(
@@ -39,21 +97,22 @@ class MarketDataService:
         start_date: date,
         end_date: date,
     ) -> List[dict]:
-        """Return OHLCV records for symbol in [start_date, end_date].
+        """Return OHLCV records for *symbol* in [start_date, end_date].
 
         Strategy (in order):
-        1. Cache — key ``price:history:{symbol}:{start_date}:{end_date}``
-        2. DB    — price_history table via PriceHistoryRepository
-        3. Alpha Vantage — fetches adjusted daily data, persists to DB + cache
+        1. Service-level Redis cache — key ``price:history:{symbol}:{start}:{end}``
+        2. price_history DB table via PriceHistoryRepository
+        3. ProviderRouter.get_daily_prices → persists ALL returned rows to DB,
+           then filters to the requested date range
 
-        Returns list of dicts with keys: date, open, high, low, close,
-        volume, adjusted_close — matching the HistoricalPrice Pydantic model.
+        Returns list of dicts: date, open, high, low, close, volume,
+        adjusted_close — matching the HistoricalPrice Pydantic model.
         All 'date' values are ISO-format strings for JSON serialisability.
         """
         symbol = symbol.upper()
         cache_key = f"price:history:{symbol}:{start_date}:{end_date}"
 
-        # 1. Cache check
+        # 1. Service-level cache
         if self.cache:
             try:
                 cached = await self.cache.get(cache_key)
@@ -63,7 +122,7 @@ class MarketDataService:
             except Exception as e:
                 logger.warning(f"Cache read error for {cache_key}: {e}")
 
-        # 2. DB check
+        # 2. DB
         if self.repo:
             try:
                 rows = await self.repo.get_price_range(symbol, start_date, end_date)
@@ -77,30 +136,31 @@ class MarketDataService:
             except Exception as e:
                 logger.warning(f"DB read error for {symbol} history: {e}")
 
-        # 3. Alpha Vantage fetch (TIME_SERIES_DAILY compact — only FREE tier option)
-        # compact covers ~100 trading days (~140 calendar days).
-        # Requests for ranges older than that return empty here; the DB is the
-        # only source for data beyond the compact window.
+        # 3. Provider fetch — use compact (recent 100 days) for most requests;
+        #    for ranges that fall entirely within the last 2 years the router
+        #    will serve them from Polygon or FMP if compact misses.
         days_since_end = (date.today() - end_date).days
-        if days_since_end > 140:
+        if days_since_end > 730:
             logger.info(
-                f"📅 {symbol} range ends {days_since_end}d ago — outside compact window, "
-                "DB-only lookup (no AV fetch)"
+                f"📅 {symbol} range ends {days_since_end}d ago — beyond 2-year provider "
+                "window; returning empty (use refresh_historical_prices to backfill DB)"
             )
             return []
 
-        logger.info(f"📡 Fetching {symbol} history from Alpha Vantage (compact)...")
-        async with AlphaVantageClient(
-            api_key=self.av_api_key,
-            calls_per_minute=self.av_calls_per_minute,
-        ) as client:
-            prices = await client.get_daily_prices(symbol, outputsize="compact")
+        outputsize = "compact" if days_since_end <= 140 else "full"
+        logger.info(f"📡 Fetching {symbol} history via router ({outputsize})...")
+
+        try:
+            prices = await self._router.get_daily_prices(symbol, outputsize=outputsize)
+        except Exception as e:
+            logger.error(f"❌ Router failed to fetch history for {symbol}: {e}")
+            return []
 
         if not prices:
             logger.warning(f"No historical data returned for {symbol}")
             return []
 
-        # Persist ALL fetched records to DB (best-effort, normalise dates first)
+        # Persist ALL fetched records to DB (best-effort)
         if self.repo:
             try:
                 normalised = _normalise_dates(prices)
@@ -109,7 +169,6 @@ class MarketDataService:
             except Exception as e:
                 logger.error(f"❌ DB write error for {symbol} history: {e}")
 
-        # Filter to the requested range and cache
         result = _filter_by_range(prices, start_date, end_date)
         await self._cache_history(cache_key, result)
         return result
@@ -119,28 +178,27 @@ class MarketDataService:
         symbol: str,
         full_history: bool = False,
     ) -> int:
-        """Force-fetch from Alpha Vantage and upsert to the price_history table.
+        """Force-fetch from the provider chain and upsert to the price_history table.
 
-        Always bypasses cache and DB read — goes directly to the API.
+        Always bypasses cache and DB read — goes directly to the router.
 
         Args:
             symbol:       Ticker symbol.
-            full_history: True  → request up to 20 years (outputsize='full').
-                          False → last ~100 trading days (outputsize='compact').
+            full_history: True  → outputsize='full' (up to 2 years via Polygon/FMP).
+                          False → outputsize='compact' (last ~100 trading days).
 
         Returns:
             Number of rows upserted into price_history.
         """
-        symbol = symbol.upper()
-        # TIME_SERIES_DAILY full outputsize is a premium feature; free tier is compact only.
-        outputsize = "compact"
-        logger.info(f"🔄 Refreshing {symbol} history from Alpha Vantage (compact)...")
+        symbol     = symbol.upper()
+        outputsize = "full" if full_history else "compact"
+        logger.info(f"🔄 Refreshing {symbol} history via router ({outputsize})...")
 
-        async with AlphaVantageClient(
-            api_key=self.av_api_key,
-            calls_per_minute=self.av_calls_per_minute,
-        ) as client:
-            prices = await client.get_daily_prices(symbol, outputsize=outputsize)
+        try:
+            prices = await self._router.get_daily_prices(symbol, outputsize=outputsize)
+        except Exception as e:
+            logger.error(f"❌ Router failed to refresh {symbol}: {e}")
+            raise ValueError(str(e)) from e
 
         if not prices:
             logger.warning(f"No data returned for {symbol} refresh")
@@ -155,16 +213,50 @@ class MarketDataService:
         logger.info(f"✅ Refreshed {symbol}: {count} rows upserted ({outputsize})")
         return count
 
+    # ------------------------------------------------------------------
+    # Pass-through methods (router handles caching internally)
+    # ------------------------------------------------------------------
+
+    async def get_dividend_history(self, symbol: str) -> list[dict]:
+        """Return dividend payment history for *symbol* via FMP → yfinance.
+
+        Delegates directly to ProviderRouter.get_dividend_history.
+        Caching is handled inside FMPClient (4-hour Redis TTL).
+        """
+        symbol = symbol.upper()
+        logger.info(f"📡 Fetching dividend history for {symbol} via router...")
+        return await self._router.get_dividend_history(symbol)
+
+    async def get_fundamentals(self, symbol: str) -> dict:
+        """Return key fundamental metrics for *symbol* via FMP → yfinance.
+
+        Delegates directly to ProviderRouter.get_fundamentals.
+        Caching is handled inside FMPClient (24-hour Redis TTL).
+        """
+        symbol = symbol.upper()
+        logger.info(f"📡 Fetching fundamentals for {symbol} via router...")
+        return await self._router.get_fundamentals(symbol)
+
+    async def get_etf_holdings(self, symbol: str) -> dict:
+        """Return ETF metadata and top holdings for *symbol* via FMP → yfinance.
+
+        Delegates directly to ProviderRouter.get_etf_holdings.
+        Caching is handled inside FMPClient (24-hour Redis TTL).
+        """
+        symbol = symbol.upper()
+        logger.info(f"📡 Fetching ETF holdings for {symbol} via router...")
+        return await self._router.get_etf_holdings(symbol)
+
     async def get_price_statistics(
         self,
         symbol: str,
         start_date: date,
         end_date: date,
     ) -> dict:
-        """Calculate price statistics from stored price_history data.
+        """Calculate price statistics from the price_history DB table.
 
-        Reads from the DB only — no API fallback. If no data is present,
-        call refresh_historical_prices() first.
+        Reads from the DB only — no API fallback. Call
+        refresh_historical_prices() first if the DB is empty for this symbol.
 
         Returns dict with:
             symbol, start_date, end_date, count,
@@ -172,9 +264,9 @@ class MarketDataService:
         """
         symbol = symbol.upper()
         base = {
-            "symbol": symbol,
+            "symbol":     symbol,
             "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
+            "end_date":   end_date.isoformat(),
         }
 
         if not self.repo:
@@ -189,31 +281,30 @@ class MarketDataService:
         if not rows:
             return {
                 **base,
-                "count": 0,
-                "min_close": None,
-                "max_close": None,
-                "avg_close": None,
+                "count":      0,
+                "min_close":  None,
+                "max_close":  None,
+                "avg_close":  None,
                 "volatility": None,
             }
 
         closes = [float(r.close_price) for r in rows if r.close_price is not None]
-        count = len(closes)
-
+        count  = len(closes)
         return {
             **base,
-            "count": count,
-            "min_close": round(min(closes), 4),
-            "max_close": round(max(closes), 4),
-            "avg_close": round(sum(closes) / count, 4),
+            "count":      count,
+            "min_close":  round(min(closes), 4),
+            "max_close":  round(max(closes), 4),
+            "avg_close":  round(sum(closes) / count, 4),
             "volatility": round(_stats.stdev(closes), 4) if count > 1 else 0.0,
         }
 
     # ------------------------------------------------------------------
-    # Helpers
+    # Private helpers
     # ------------------------------------------------------------------
 
     async def _cache_history(self, cache_key: str, data: list) -> None:
-        """Write history list to Redis cache (best-effort)."""
+        """Write a date-range result list to the service-level Redis cache."""
         if not self.cache or not data:
             return
         try:
@@ -223,27 +314,27 @@ class MarketDataService:
 
 
 # ------------------------------------------------------------------
-# Module-level helpers
+# Module-level helpers (unchanged from original)
 # ------------------------------------------------------------------
 
 def _row_to_dict(row) -> dict:
     """Convert a PriceHistory ORM row to a HistoricalPrice-compatible dict."""
     return {
-        "date": row.date.isoformat() if hasattr(row.date, "isoformat") else str(row.date),
-        "open": float(row.open_price) if row.open_price is not None else None,
-        "high": float(row.high_price) if row.high_price is not None else None,
-        "low": float(row.low_price) if row.low_price is not None else None,
-        "close": float(row.close_price) if row.close_price is not None else None,
-        "volume": int(row.volume) if row.volume is not None else 0,
+        "date":           row.date.isoformat() if hasattr(row.date, "isoformat") else str(row.date),
+        "open":           float(row.open_price)     if row.open_price     is not None else None,
+        "high":           float(row.high_price)     if row.high_price     is not None else None,
+        "low":            float(row.low_price)      if row.low_price      is not None else None,
+        "close":          float(row.close_price)    if row.close_price    is not None else None,
+        "volume":         int(row.volume)           if row.volume         is not None else 0,
         "adjusted_close": float(row.adjusted_close) if row.adjusted_close is not None else None,
     }
 
 
 def _normalise_dates(prices: List[dict]) -> List[dict]:
-    """Ensure every record's 'date' field is a date object (not a string).
+    """Ensure every record's 'date' field is a ``date`` object (not a string).
 
-    fetch_daily_adjusted returns date objects on a fresh API call but ISO strings
-    when the result comes from the Redis cache. The DB repository requires date objects.
+    Provider clients may return ISO strings (from Redis cache hits) or date
+    objects (from live API calls).  The DB repository requires date objects.
     """
     result = []
     for p in prices:
@@ -257,7 +348,7 @@ def _normalise_dates(prices: List[dict]) -> List[dict]:
 def _filter_by_range(prices: List[dict], start_date: date, end_date: date) -> List[dict]:
     """Return records whose date falls in [start_date, end_date], sorted ascending.
 
-    Handles 'date' field as either a date object or an ISO-format string.
+    Handles 'date' as either a ``date`` object or an ISO-format string.
     Output 'date' values are ISO strings for JSON serialisability.
     """
     result = []
