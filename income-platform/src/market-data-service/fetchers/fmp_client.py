@@ -36,7 +36,7 @@ _TTL_FUNDAMENTALS = 24 * 60 * 60   # 24 hours
 # Known covered-call / buy-write ETF symbols.  Checked as a last resort when
 # description and fund name do not contain sufficient keywords.
 _COVERED_CALL_SYMBOLS = frozenset(
-    ["JEPI", "JEPQ", "XYLD", "QYLD", "RYLD", "DIVO", "PBP"]
+    ["JEPI", "JEPQ", "XYLD", "QYLD", "RYLD", "DIVO", "PBP", "BXMX"]
 )
 
 
@@ -321,13 +321,23 @@ class FMPClient(BaseDataProvider):
             except Exception as e:
                 logger.warning(f"Cache read error for {cache_key}: {e}")
 
-        # Three endpoints concurrently
+        # Three endpoints concurrently.
+        # return_exceptions=True so secondary failures (cash-flow, profile) are
+        # tolerated, but a ratios failure is re-raised as ProviderError so that
+        # _try_chain can fall back to yfinance rather than returning all-None.
         ratios_result, cf_result, profile_result = await asyncio.gather(
             self._get("/ratios",               params={"symbol": symbol, "limit": 1}),
             self._get("/cash-flow-statement",  params={"symbol": symbol, "limit": 4, "period": "annual"}),
             self._get("/profile",              params={"symbol": symbol}),
             return_exceptions=True,
         )
+
+        # Ratios is the primary source; if it failed, surface the error so the
+        # router's fallback chain can try yfinance instead.
+        if isinstance(ratios_result, Exception):
+            raise ProviderError(
+                f"FMP /ratios failed for {symbol}: {ratios_result}"
+            ) from ratios_result
 
         # --- pe_ratio, debt_to_equity, payout_ratio ---
         # Stable ratios field names differ from legacy v3:
@@ -337,26 +347,19 @@ class FMPClient(BaseDataProvider):
         pe_ratio       = None
         debt_to_equity = None
         payout_ratio   = None
-        if (
-            not isinstance(ratios_result, Exception)
-            and isinstance(ratios_result, list)
-            and ratios_result
-        ):
+        if isinstance(ratios_result, list) and ratios_result:
             r = ratios_result[0]
             pe_ratio       = _safe_float(r.get("priceToEarningsRatio"))
             debt_to_equity = _safe_float(r.get("debtToEquityRatio"))
             payout_ratio   = _safe_float(r.get("dividendPayoutRatio"))
-        else:
-            logger.warning(f"Ratios unavailable for {symbol}: {ratios_result}")
 
         # --- free_cash_flow: average over up to 4 annual periods ---
         # "freeCashFlow" field name is unchanged in the stable API.
+        # Cash-flow failure is non-fatal; log and continue.
         free_cash_flow = None
-        if (
-            not isinstance(cf_result, Exception)
-            and isinstance(cf_result, list)
-            and cf_result
-        ):
+        if isinstance(cf_result, Exception):
+            logger.warning(f"FMP /cash-flow-statement unavailable for {symbol}: {cf_result}")
+        elif isinstance(cf_result, list) and cf_result:
             fcf_values = [
                 float(p["freeCashFlow"])
                 for p in cf_result
@@ -364,23 +367,18 @@ class FMPClient(BaseDataProvider):
             ]
             if fcf_values:
                 free_cash_flow = sum(fcf_values) / len(fcf_values)
-        else:
-            logger.warning(f"Cash flow statement unavailable for {symbol}: {cf_result}")
 
         # --- market_cap and sector ---
         # Stable profile field: "marketCap" (was "mktCap" in legacy v3).
+        # Profile failure is non-fatal; log and continue.
         market_cap = None
         sector     = None
-        if (
-            not isinstance(profile_result, Exception)
-            and isinstance(profile_result, list)
-            and profile_result
-        ):
+        if isinstance(profile_result, Exception):
+            logger.warning(f"FMP /profile unavailable for {symbol}: {profile_result}")
+        elif isinstance(profile_result, list) and profile_result:
             p = profile_result[0]
             market_cap = _safe_float(p.get("marketCap") or p.get("mktCap"))
             sector     = p.get("sector")
-        else:
-            logger.warning(f"Profile unavailable for {symbol}: {profile_result}")
 
         out = {
             "pe_ratio":        pe_ratio,
@@ -406,9 +404,10 @@ class FMPClient(BaseDataProvider):
         Profile source:   /profile?symbol={symbol}
             marketCap   → aum  (also tries legacy "mktCap" as fallback)
             covered_call detection uses OR logic — any match returns True:
-                description contains "covered call" or "buy-write"
-                description contains "option" or "ELN" or "equity linked note"
-                companyName contains "Premium Income" or "Equity Premium"
+                description contains "covered call", "buy-write", "option",
+                  "eln", or "equity linked note"
+                companyName contains "Premium Income", "Equity Premium",
+                  or "buy-write"
                 symbol is in _COVERED_CALL_SYMBOLS
 
         Note: FMP profile does not expose expense_ratio; that field is always None.
@@ -478,6 +477,7 @@ class FMPClient(BaseDataProvider):
                 or "equity linked note" in description
                 or "premium income"     in fund_name
                 or "equity premium"     in fund_name
+                or "buy-write"          in fund_name
                 or symbol               in _COVERED_CALL_SYMBOLS
             )
         else:
@@ -512,10 +512,20 @@ class FMPClient(BaseDataProvider):
         if not self.session:
             raise RuntimeError("FMPClient must be used as an async context manager")
 
+        if not self.api_key:
+            raise ProviderError(
+                "FMP API key is not configured — set FMP_API_KEY in the environment"
+            )
+
         await self._rate_limit()
 
         url = f"{self.BASE_URL}{path}"
         all_params = {"apikey": self.api_key, **(params or {})}
+        logger.debug(
+            "FMP _get %s (params: %s)",
+            url,
+            {k: ("***" if k == "apikey" else v) for k, v in all_params.items()},
+        )
         try:
             async with self.session.get(
                 url,
