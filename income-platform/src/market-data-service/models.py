@@ -65,3 +65,72 @@ class StockHistoryRefreshResponse(BaseModel):
     records_saved: int
     source: str
     message: str
+
+
+# ---------------------------------------------------------------------------
+# Dividend endpoint — /stocks/{symbol}/dividends
+# ---------------------------------------------------------------------------
+
+class DividendRecord(BaseModel):
+    ex_date: str                       # ISO-8601 date "YYYY-MM-DD"
+    payment_date: Optional[str] = None
+    amount: float
+    frequency: Optional[str] = None   # "quarterly", "monthly", etc.
+    yield_pct: Optional[float] = None
+
+
+class StockDividendResponse(BaseModel):
+    symbol: str
+    count: int
+    dividends: List[DividendRecord]
+    source: str
+
+
+# ---------------------------------------------------------------------------
+# Fundamentals endpoint — /stocks/{symbol}/fundamentals
+# ---------------------------------------------------------------------------
+
+class StockFundamentalsResponse(BaseModel):
+    symbol: str
+    pe_ratio: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+    payout_ratio: Optional[float] = None
+    free_cash_flow: Optional[float] = None
+    market_cap: Optional[float] = None
+    sector: Optional[str] = None
+    source: str
+
+
+# ---------------------------------------------------------------------------
+# ETF endpoint — /stocks/{symbol}/etf
+# ---------------------------------------------------------------------------
+
+class ETFHolding(BaseModel):
+    ticker: Optional[str] = None
+    name: Optional[str] = None
+    weight_pct: Optional[float] = None
+
+
+class StockETFResponse(BaseModel):
+    symbol: str
+    expense_ratio: Optional[float] = None
+    aum: Optional[float] = None
+    covered_call: bool = False
+    top_holdings: List[ETFHolding] = []
+    source: str
+
+
+# ---------------------------------------------------------------------------
+# Provider status endpoint — /api/v1/providers/status
+# ---------------------------------------------------------------------------
+
+class ProviderInfo(BaseModel):
+    healthy: bool
+    last_used: Optional[str] = None    # ISO-8601 datetime of last API call, or null
+    requests_today: Optional[int] = None  # not currently tracked; reserved for future
+
+
+class ProvidersStatusResponse(BaseModel):
+    polygon: ProviderInfo
+    fmp: ProviderInfo
+    yfinance: ProviderInfo

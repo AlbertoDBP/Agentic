@@ -57,6 +57,13 @@ StockHistoryResponse      = _models.StockHistoryResponse
 StockHistoryStatsResponse = _models.StockHistoryStatsResponse
 RefreshRequest            = _models.RefreshRequest
 StockHistoryRefreshResponse = _models.StockHistoryRefreshResponse
+DividendRecord            = _models.DividendRecord
+StockDividendResponse     = _models.StockDividendResponse
+StockFundamentalsResponse = _models.StockFundamentalsResponse
+ETFHolding                = _models.ETFHolding
+StockETFResponse          = _models.StockETFResponse
+ProviderInfo              = _models.ProviderInfo
+ProvidersStatusResponse   = _models.ProvidersStatusResponse
 CacheManager   = _cache.CacheManager
 DatabaseManager = _database.DatabaseManager
 PriceRepository        = _repo.PriceRepository
@@ -323,6 +330,140 @@ async def refresh_stock_history(
     except Exception as e:
         logger.error(f"❌ Stock history refresh error for {symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/stocks/{symbol}/dividends",
+    response_model=StockDividendResponse,
+)
+async def get_stock_dividends(symbol: str):
+    """
+    Get dividend payment history for a stock symbol.
+
+    Strategy: FMP (primary) → yfinance (fallback).
+    FMP provides the most complete dividend records including payment dates.
+    """
+    symbol = symbol.upper()
+    try:
+        records = await market_data_service.get_dividend_history(symbol)
+        dividends = [DividendRecord(**r) for r in records]
+        return StockDividendResponse(
+            symbol=symbol,
+            count=len(dividends),
+            dividends=dividends,
+            source="fmp",
+        )
+    except ValueError as e:
+        logger.error(f"❌ Dividends not found for {symbol}: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"❌ Dividends error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/stocks/{symbol}/fundamentals",
+    response_model=StockFundamentalsResponse,
+)
+async def get_stock_fundamentals(symbol: str):
+    """
+    Get key fundamental metrics for a stock symbol.
+
+    Strategy: FMP (primary) → yfinance (fallback).
+    Returns pe_ratio, debt_to_equity, payout_ratio, free_cash_flow,
+    market_cap, and sector. Any unavailable field is returned as null.
+    """
+    symbol = symbol.upper()
+    try:
+        data = await market_data_service.get_fundamentals(symbol)
+        return StockFundamentalsResponse(
+            symbol=symbol,
+            pe_ratio=data.get("pe_ratio"),
+            debt_to_equity=data.get("debt_to_equity"),
+            payout_ratio=data.get("payout_ratio"),
+            free_cash_flow=data.get("free_cash_flow"),
+            market_cap=data.get("market_cap"),
+            sector=data.get("sector"),
+            source="fmp",
+        )
+    except ValueError as e:
+        logger.error(f"❌ Fundamentals not found for {symbol}: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"❌ Fundamentals error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/stocks/{symbol}/etf",
+    response_model=StockETFResponse,
+)
+async def get_etf_data(symbol: str):
+    """
+    Get ETF metadata and top holdings for a fund symbol.
+
+    Strategy: FMP (primary, etf-holder endpoint) → yfinance (funds_data fallback).
+    Returns expense_ratio, AUM, covered_call flag, and up to 20 top holdings.
+    Returns 404 if the symbol is not a recognised ETF or has no holdings data.
+    """
+    symbol = symbol.upper()
+    try:
+        data = await market_data_service.get_etf_holdings(symbol)
+        holdings = [ETFHolding(**h) for h in data.get("top_holdings", [])]
+        return StockETFResponse(
+            symbol=symbol,
+            expense_ratio=data.get("expense_ratio"),
+            aum=data.get("aum"),
+            covered_call=bool(data.get("covered_call", False)),
+            top_holdings=holdings,
+            source="fmp",
+        )
+    except ValueError as e:
+        logger.error(f"❌ ETF data not found for {symbol}: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"❌ ETF data error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/api/v1/providers/status",
+    response_model=ProvidersStatusResponse,
+)
+async def get_providers_status():
+    """
+    Return health and last-activity status for each configured market data provider.
+
+    healthy:        True when the provider was successfully initialised at startup
+                    (API key present and HTTP session opened without error).
+    last_used:      ISO-8601 UTC timestamp of the most recent API call made by
+                    this provider, or null if no call has been made yet.
+    requests_today: Reserved for future rate-limit tracking; currently null.
+    """
+    router = market_data_service._router if market_data_service else None
+
+    def _last_used(provider_class) -> str | None:
+        ts = getattr(provider_class, "_last_request_time", None)
+        return ts.isoformat() if ts else None
+
+    polygon_healthy = bool(router and router.polygon)
+    fmp_healthy     = bool(router and router.fmp)
+    yf_healthy      = bool(router and router.yfinance)
+
+    return ProvidersStatusResponse(
+        polygon=ProviderInfo(
+            healthy=polygon_healthy,
+            last_used=_last_used(_poly.PolygonClient) if polygon_healthy else None,
+        ),
+        fmp=ProviderInfo(
+            healthy=fmp_healthy,
+            last_used=_last_used(_fmp.FMPClient) if fmp_healthy else None,
+        ),
+        yfinance=ProviderInfo(
+            healthy=yf_healthy,
+            last_used=None,  # YFinanceClient has no rate-limit timestamp
+        ),
+    )
 
 
 @app.get("/api/v1/cache/stats")
