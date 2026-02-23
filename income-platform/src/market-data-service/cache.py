@@ -20,7 +20,9 @@ class CacheManager:
             self.client = await redis.from_url(
                 self.redis_url,
                 encoding="utf-8",
-                decode_responses=True
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
             )
             # Test connection
             await self.client.ping()

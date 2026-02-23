@@ -12,7 +12,7 @@ class PriceData(BaseModel):
     timestamp: datetime
     source: str
     cached: bool = False
-    
+
     @validator('ticker')
     def uppercase_ticker(cls, v):
         return v.upper().strip()
@@ -31,3 +31,37 @@ class HealthResponse(BaseModel):
     service: str = "market-data-service"
     database: str
     cache: str
+
+
+# ---------------------------------------------------------------------------
+# Stock history endpoints — /api/market-data/stocks/{symbol}/history/...
+# ---------------------------------------------------------------------------
+
+class StockHistoryResponse(BaseModel):
+    symbol: str
+    start_date: date
+    end_date: date
+    count: int
+    prices: List[HistoricalPrice]
+    source: str
+
+
+class StockHistoryStatsResponse(BaseModel):
+    symbol: str
+    period_days: int
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    avg_price: Optional[float] = None
+    volatility: Optional[float] = None
+    price_change_pct: Optional[float] = None
+
+
+class RefreshRequest(BaseModel):
+    full_history: bool = False
+
+
+class StockHistoryRefreshResponse(BaseModel):
+    symbol: str
+    records_saved: int
+    source: str
+    message: str
