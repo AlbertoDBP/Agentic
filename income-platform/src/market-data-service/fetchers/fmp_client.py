@@ -25,6 +25,12 @@ _TTL_PRICE        =  5 * 60        # 5 minutes
 _TTL_DIVIDENDS    =  4 * 60 * 60   # 4 hours
 _TTL_FUNDAMENTALS = 24 * 60 * 60   # 24 hours
 
+# Known covered-call / buy-write ETF symbols.  Checked as a last resort when
+# description and fund name do not contain sufficient keywords.
+_COVERED_CALL_SYMBOLS = frozenset(
+    ["JEPI", "JEPQ", "XYLD", "QYLD", "RYLD", "DIVO", "PBP"]
+)
+
 
 class FMPClient(BaseDataProvider):
     """Financial Modeling Prep REST API v3 client.
@@ -377,7 +383,11 @@ class FMPClient(BaseDataProvider):
 
         Profile source:   /profile/{symbol}
             mktCap      → aum
-            description → covered_call (True if "covered call" or "buy-write" detected)
+            covered_call detection uses OR logic — any match returns True:
+                description contains "covered call" or "buy-write"
+                description contains "option" or "ELN" or "equity linked note"
+                companyName contains "Premium Income" or "Equity Premium"
+                symbol is in _COVERED_CALL_SYMBOLS
 
         Note: FMP profile does not expose expense_ratio; that field is always None.
 
@@ -434,9 +444,19 @@ class FMPClient(BaseDataProvider):
             and profile_result
         ):
             p = profile_result[0]
-            aum = _safe_float(p.get("mktCap"))
+            aum         = _safe_float(p.get("mktCap"))
             description = (p.get("description") or "").lower()
-            covered_call = "covered call" in description or "buy-write" in description
+            fund_name   = (p.get("companyName") or "").lower()
+            covered_call = (
+                "covered call"        in description
+                or "buy-write"        in description
+                or "option"           in description
+                or "eln"              in description
+                or "equity linked note" in description
+                or "premium income"   in fund_name
+                or "equity premium"   in fund_name
+                or symbol             in _COVERED_CALL_SYMBOLS
+            )
         else:
             logger.warning(f"Profile unavailable for ETF {symbol}: {profile_result}")
 

@@ -72,11 +72,11 @@ _ETF_HOLDINGS = [
     {"asset": "NVDA", "name": "NVIDIA Corp",     "weight": 0.0410},
 ]
 
-# Profile for a covered-call ETF (JEPI-like)
+# Profile for a covered-call ETF (JEPI-like) — description contains "covered call"
 _JEPI_PROFILE = [
     {
         "symbol":      "JEPI",
-        "longName":    "JPMorgan Equity Premium Income ETF",
+        "companyName": "JPMorgan Equity Premium Income ETF",   # FMP field name
         "description": (
             "The fund invests in equities and employs an options overlay "
             "strategy consisting of out-of-the-money S&P 500 Index "
@@ -91,7 +91,7 @@ _JEPI_PROFILE = [
 _SCHD_PROFILE = [
     {
         "symbol":      "SCHD",
-        "longName":    "Schwab US Dividend Equity ETF",
+        "companyName": "Schwab US Dividend Equity ETF",        # FMP field name
         "description": (
             "The fund seeks to track as closely as possible, before fees and "
             "expenses, the total return of the Dow Jones U.S. Dividend 100 Index."
@@ -100,6 +100,15 @@ _SCHD_PROFILE = [
         "sector": None,
     }
 ]
+
+# Neutral profile used when testing symbol-list or name-keyword detection in isolation.
+# Deliberately free of any covered-call trigger words ("option", "eln", "covered call",
+# "buy-write", "equity linked note", "premium income", "equity premium").
+_NEUTRAL_PROFILE_TEMPLATE = {
+    "description": "Tracks a broad equity index through full replication.",
+    "mktCap": 1_000_000_000.0,
+    "sector": None,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -313,3 +322,141 @@ async def test_get_etf_holdings_buy_write_description_also_sets_covered_call():
         result = await client.get_etf_holdings("XYLD")
 
     assert result["covered_call"] is True
+
+
+# ---------------------------------------------------------------------------
+# Tests — get_etf_holdings (expanded covered_call detection paths)
+# ---------------------------------------------------------------------------
+
+
+def _neutral_profile(symbol: str, company_name: str = "Generic Index ETF") -> list:
+    """Return a profile list with no inherent covered-call keywords."""
+    return [{
+        **_NEUTRAL_PROFILE_TEMPLATE,
+        "symbol":      symbol,
+        "companyName": company_name,
+    }]
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_premium_income_in_name_sets_covered_call():
+    """companyName containing 'Premium Income' sets covered_call=True."""
+    client = _client()
+    profile = _neutral_profile("JEPI", company_name="JPMorgan Equity Premium Income ETF")
+
+    async def _mock_get(path, **kwargs):
+        return _ETF_HOLDINGS if "etf-holder" in path else profile
+
+    with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
+        result = await client.get_etf_holdings("JEPI")
+
+    assert result["covered_call"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_equity_premium_in_name_sets_covered_call():
+    """companyName containing 'Equity Premium' sets covered_call=True."""
+    client = _client()
+    profile = _neutral_profile("JEPQ", company_name="JPMorgan Nasdaq Equity Premium Income ETF")
+
+    async def _mock_get(path, **kwargs):
+        return _ETF_HOLDINGS if "etf-holder" in path else profile
+
+    with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
+        result = await client.get_etf_holdings("JEPQ")
+
+    assert result["covered_call"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_option_in_description_sets_covered_call():
+    """description containing 'option' sets covered_call=True."""
+    client = _client()
+    profile = [{
+        "symbol":      "TEST",
+        "companyName": "Test Option Income ETF",
+        "description": "Uses an option overlay to generate income.",
+        "mktCap": 500_000_000.0,
+    }]
+
+    async def _mock_get(path, **kwargs):
+        return _ETF_HOLDINGS if "etf-holder" in path else profile
+
+    with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
+        result = await client.get_etf_holdings("TEST")
+
+    assert result["covered_call"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_eln_in_description_sets_covered_call():
+    """description containing 'ELN' (equity-linked note) sets covered_call=True."""
+    client = _client()
+    profile = [{
+        "symbol":      "JEPI",
+        "companyName": "Some Income ETF",
+        "description": "Generates income through equity linked notes (ELN).",
+        "mktCap": 35_000_000_000.0,
+    }]
+
+    async def _mock_get(path, **kwargs):
+        return _ETF_HOLDINGS if "etf-holder" in path else profile
+
+    with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
+        result = await client.get_etf_holdings("JEPI")
+
+    assert result["covered_call"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_equity_linked_note_in_description_sets_covered_call():
+    """description containing 'equity linked note' (spelled out) sets covered_call=True."""
+    client = _client()
+    profile = [{
+        "symbol":      "JEPI",
+        "companyName": "Some Income ETF",
+        "description": "Invests in equity linked note instruments to provide income.",
+        "mktCap": 35_000_000_000.0,
+    }]
+
+    async def _mock_get(path, **kwargs):
+        return _ETF_HOLDINGS if "etf-holder" in path else profile
+
+    with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
+        result = await client.get_etf_holdings("JEPI")
+
+    assert result["covered_call"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_known_symbol_sets_covered_call_regardless_of_description():
+    """A symbol in _COVERED_CALL_SYMBOLS sets covered_call=True even with a neutral profile."""
+    client = _client()
+
+    for symbol in ["JEPI", "JEPQ", "XYLD", "QYLD", "RYLD", "DIVO", "PBP"]:
+        profile = _neutral_profile(symbol)
+
+        async def _mock_get(path, **kwargs):
+            return _ETF_HOLDINGS if "etf-holder" in path else profile
+
+        with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
+            result = await client.get_etf_holdings(symbol)
+
+        assert result["covered_call"] is True, (
+            f"Expected covered_call=True for known symbol {symbol}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_unknown_symbol_plain_description_is_false():
+    """A symbol not in the known list with no matching keywords returns covered_call=False."""
+    client = _client()
+    profile = _neutral_profile("VTI", company_name="Vanguard Total Stock Market ETF")
+
+    async def _mock_get(path, **kwargs):
+        return _ETF_HOLDINGS if "etf-holder" in path else profile
+
+    with patch.object(client, "_get", new=AsyncMock(side_effect=_mock_get)):
+        result = await client.get_etf_holdings("VTI")
+
+    assert result["covered_call"] is False
