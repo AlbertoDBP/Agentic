@@ -1,5 +1,5 @@
 # Market Data Service — Reference Architecture
-**Version:** 1.2.0
+**Version:** 2.0.0
 **Updated:** 2026-02-23
 **Status:** Production ✅
 
@@ -7,7 +7,7 @@
 
 ## Overview
 
-The Market Data Service (Agent 01) is the foundational data layer of the Income Fortress Platform. It provides real-time and historical price data to all other agents via a REST API, with Redis caching and PostgreSQL persistence.
+The Market Data Service (Agent 01) provides real-time prices, historical OHLCV, dividend history, fundamentals, and ETF metadata to all Income Fortress agents via a REST API. Version 2.0.0 replaces the single Alpha Vantage provider with a dual-primary + fallback architecture: Polygon.io for price data, Financial Modeling Prep for income data, and yfinance as a fallback.
 
 ---
 
@@ -16,108 +16,113 @@ The Market Data Service (Agent 01) is the foundational data layer of the Income 
 ```mermaid
 graph TB
     Client["External Clients\n(legatoinvest.com)"]
-    Nginx["Nginx Reverse Proxy\n(SSL Termination)\nPort 443"]
-    MDS["Market Data Service\nFastAPI\nPort 8001"]
-    AV["Alpha Vantage API\n(Free Tier)\n5 req/min"]
-    Valkey["Managed Valkey\n(DigitalOcean)\nVPC Only"]
-    PG["Managed PostgreSQL\n(DigitalOcean)\nVPC Only"]
+    Nginx["Nginx Reverse Proxy\n(SSL / Port 443)"]
+    MDS["Market Data Service\nFastAPI / Port 8001"]
+    Router["ProviderRouter"]
+    Polygon["Polygon.io\nStocks Starter\n$29/mo"]
+    FMP["Financial Modeling Prep\nStarter Annual\n$22/mo"]
+    YF["yfinance\nFallback / Free"]
+    Valkey["Managed Valkey\n(DigitalOcean VPC)"]
+    PG["Managed PostgreSQL\n(DigitalOcean VPC)"]
 
     Client -->|"HTTPS /api/market-data/*"| Nginx
     Nginx -->|"HTTP /stocks/* (prefix stripped)"| MDS
-    MDS -->|"Cache read/write\nTTL: 5min (price)\n4hr (history)"| Valkey
-    MDS -->|"Persist + query\nOHLCV data"| PG
-    MDS -->|"Fetch on cache miss\n1.1s rate limit"| AV
+    MDS --> Router
+    Router -->|"Price, OHLCV"| Polygon
+    Router -->|"Dividends, Fundamentals, ETF"| FMP
+    Router -->|"Fallback (all methods)"| YF
+    MDS <-->|"Cache TTL: 5min–24hr"| Valkey
+    MDS <-->|"Persist OHLCV"| PG
 
     style MDS fill:#2196F3,color:#fff
+    style Router fill:#9C27B0,color:#fff
+    style Polygon fill:#FF9800,color:#fff
+    style FMP fill:#FF9800,color:#fff
+    style YF fill:#9E9E9E,color:#fff
     style Valkey fill:#FF6B6B,color:#fff
     style PG fill:#4CAF50,color:#fff
-    style AV fill:#FF9800,color:#fff
 ```
+
+---
+
+## Provider Routing
+
+```mermaid
+graph LR
+    P["get_current_price"] --> P1["Polygon"] --> P2["FMP"] --> P3["yfinance"]
+    D["get_daily_prices"] --> D1["Polygon"] --> D2["yfinance"]
+    DH["get_dividend_history"] --> DH1["FMP"] --> DH2["yfinance"]
+    F["get_fundamentals"] --> F1["FMP"] --> F2["yfinance"]
+    E["get_etf_holdings"] --> E1["FMP ❌ 404*"] --> E2["yfinance ✅"]
+```
+
+*FMP ETF holdings require higher tier — yfinance handles permanently on Starter plan.
 
 ---
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Service health with DB and cache status |
-| GET | `/stocks/{symbol}/price` | Current price (DB → Cache → Alpha Vantage) |
-| GET | `/stocks/{symbol}/history` | OHLCV range query. Params: `start_date`, `end_date`, `limit` (max 365) |
-| GET | `/stocks/{symbol}/history/stats` | Min, max, avg, volatility, price change % for period |
-| POST | `/stocks/{symbol}/history/refresh` | Force fetch from Alpha Vantage and persist |
-| GET | `/api/v1/cache/stats` | Cache hit/miss statistics |
+| Method | Path | Provider | Description |
+|--------|------|----------|-------------|
+| GET | `/health` | — | Service health with DB and cache status |
+| GET | `/stocks/{symbol}/price` | Polygon → FMP → yfinance | Current price |
+| GET | `/stocks/{symbol}/history` | Polygon → yfinance (DB cache) | OHLCV range. Params: `start_date`, `end_date`, `limit` |
+| GET | `/stocks/{symbol}/history/stats` | DB only | Min, max, avg, volatility, price change % |
+| POST | `/stocks/{symbol}/history/refresh` | Polygon → yfinance | Force fetch and persist |
+| GET | `/stocks/{symbol}/dividends` | FMP → yfinance | Dividend history with ex_date, payment_date, amount |
+| GET | `/stocks/{symbol}/fundamentals` | FMP → yfinance | pe_ratio, payout_ratio, debt_to_equity, FCF, sector |
+| GET | `/stocks/{symbol}/etf` | yfinance (FMP fallback) | expense_ratio, aum, covered_call, top_holdings |
+| GET | `/api/v1/providers/status` | — | Provider health and last_used timestamps |
+| GET | `/api/v1/cache/stats` | — | Cache hit/miss statistics |
 
-**Public URL pattern:** `https://legatoinvest.com/api/market-data/stocks/{symbol}/price`
-**Internal pattern:** `http://localhost:8001/stocks/{symbol}/price`
+**Public URL:** `https://legatoinvest.com/api/market-data/stocks/{symbol}/dividends`
+**Internal URL:** `http://localhost:8001/stocks/{symbol}/dividends`
 
 ---
 
-## Data Flow
+## Data Flow — Dividend History
 
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant N as Nginx
-    participant S as Market Data Service
-    participant V as Valkey Cache
-    participant D as PostgreSQL
-    participant A as Alpha Vantage
+    participant R as ProviderRouter
+    participant F as FMPClient
+    participant Y as YFinanceClient
+    participant V as Valkey
 
-    C->>N: GET /api/market-data/stocks/AAPL/history
-    N->>S: GET /stocks/AAPL/history (prefix stripped)
-    S->>V: Check cache key
-    alt Cache hit
-        V-->>S: Return cached data
+    C->>R: get_dividend_history(AAPL)
+    R->>F: get_dividend_history(AAPL)
+    F->>V: Check fmp:dividends:AAPL
+    alt Cache hit (4hr TTL)
+        V-->>F: Cached records
+        F-->>R: Return records
     else Cache miss
-        S->>D: Query price_history table
-        alt DB has data
-            D-->>S: Return OHLCV records
-            S->>V: Cache result (4hr TTL)
-        else DB miss (within 140-day window)
-            S->>A: TIME_SERIES_DAILY compact
-            A-->>S: OHLCV JSON
-            S->>D: Upsert records
-            S->>V: Cache result (4hr TTL)
-        end
+        F->>F: GET /stable/dividends?symbol=AAPL
+        F->>V: Cache result
+        F-->>R: Return records
     end
-    S-->>N: JSON response
-    N-->>C: HTTPS response
+    R-->>C: 90 dividend records
+
+    Note over R,Y: On FMP failure
+    R->>Y: get_dividend_history(AAPL)
+    Y->>Y: yf.Ticker(AAPL).dividends (thread pool)
+    Y-->>R: Return records
+    R-->>C: Records from yfinance
 ```
 
 ---
 
-## Data Model
+## Provider Capabilities Matrix
 
-```mermaid
-erDiagram
-    STOCK_PRICES {
-        uuid id PK
-        varchar symbol
-        numeric price
-        numeric volume
-        timestamp timestamp
-        varchar source
-        timestamp created_at
-    }
-
-    PRICE_HISTORY {
-        uuid id PK
-        varchar symbol
-        date date
-        numeric open_price
-        numeric high_price
-        numeric low_price
-        numeric close_price
-        numeric adjusted_close
-        bigint volume
-        varchar data_source
-        timestamp created_at
-    }
-
-    STOCK_PRICES ||--o{ PRICE_HISTORY : "symbol"
-```
-
-**Unique constraint:** `price_history(symbol, date)` — prevents duplicate records, enables safe upserts.
+| Capability | Polygon | FMP | yfinance |
+|---|---|---|---|
+| Current price | ✅ Primary | ✅ Fallback | ✅ Last resort |
+| OHLCV history | ✅ Primary (730d) | ❌ | ✅ Fallback |
+| Dividend history | ✅ Limited | ✅ Primary (90+ records) | ✅ Fallback |
+| Fundamentals | ⚠️ Limited (Starter) | ✅ Primary | ✅ Fallback |
+| ETF holdings | ❌ Not available | ❌ Requires higher tier | ✅ Primary |
+| Credit ratings | ❌ | ❌ Starter tier | ❌ |
+| Adjusted close | ✅ VWAP | ✅ | ✅ auto_adjust |
 
 ---
 
@@ -125,20 +130,21 @@ erDiagram
 
 | Component | Provider | Notes |
 |-----------|----------|-------|
-| Droplet | DigitalOcean NYC3 | 2vCPU, 4GB RAM, Ubuntu LTS |
-| PostgreSQL | DigitalOcean Managed | VPC-only, no public exposure |
-| Valkey | DigitalOcean Managed | VPC-only, replaces local Redis |
-| Firewall | DigitalOcean Cloud Firewall | Allows 22, 80, 443 only |
-| SSL | Let's Encrypt via Nginx | Auto-renew |
-| Container | Docker (Compose V2) | `income-platform-market-data-service` |
+| Droplet | DigitalOcean NYC3 | 2vCPU, 4GB RAM |
+| PostgreSQL | Managed DO | VPC-only |
+| Valkey | Managed DO | VPC-only |
+| Firewall | DO Cloud Firewall | Ports 22, 80, 443 only |
+| Polygon.io | Stocks Starter | $29/mo, 100 req/min, 730d history |
+| FMP | Starter Annual | $22/mo, 300 req/min, stable API |
 
 ---
 
-## Constraints & Limitations
+## Known Limitations
 
-- **Alpha Vantage free tier:** 5 requests/minute, compact window (~100 days), no adjusted close data
-- **140-day history cutoff:** Requests for data older than 140 days return DB-only results
-- **`change` and `change_percent` fields:** Return 0.0 — free tier doesn't provide intraday change data
-- **Planned migration:** Polygon.io + Financial Modeling Prep after Agent 02, unlocking full history and dividend data
+- **FMP ETF holdings** — requires tier above Starter; yfinance serves permanently
+- **Credit ratings** — not available on any current provider tier; Income Scorer Junk Filter will need manual data or higher FMP tier
+- **`change`/`change_percent`** on price endpoint — returns 0.0 (free tier limitation)
+- **`requests_today`** on providers/status — not yet implemented
+- **Alpha Vantage** — deprecated, DB contains historical cache from Sessions 1–2
 
 ---

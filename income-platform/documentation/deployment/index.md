@@ -1,6 +1,6 @@
 # Income Fortress Platform — Documentation Index
 **Last Updated:** 2026-02-23
-**Version:** 1.2.0
+**Version:** 2.0.0
 
 ---
 
@@ -17,28 +17,40 @@ The Income Fortress Platform is a tax-efficient income investment system built a
 
 | Agent | Name | Version | Status |
 |-------|------|---------|--------|
-| 01 | Market Data Service | 1.2.0 | ✅ Production |
-| 02 | TBD | — | 🔲 Planned |
-| 03 | Income Scorer | — | 🔲 Planned (after data provider migration) |
-| 04-24 | TBD | — | 🔲 Planned |
+| 01 | Market Data Service | 2.0.0 | ✅ Production |
+| 02 | Newsletter Ingestion | — | 🔲 Planned |
+| 03 | Income Scorer | — | 🔲 Planned (data layer ready) |
+| 04–24 | TBD | — | 🔲 Planned |
 
 ---
 
 ## Documentation
 
 ### Architecture
-- [Reference Architecture](architecture/reference-architecture.md) — System overview, data flows, infrastructure
+- [Reference Architecture v2.0.0](architecture/reference-architecture.md) — Provider routing, data flows, infrastructure
 
 ### Implementation Specifications
+- [Agent 01 — Multi-Provider Architecture](implementation/agent-01-multi-provider-architecture.md) — v2.0.0 Session 3
 - [Agent 01 — Historical Price Queries](implementation/agent-01-historical-price-queries.md) — v1.2.0 Session 2
-- Agent 01 — Database Persistence *(Session 1 — to be documented)*
 
 ### Decisions
-- [Decisions Log](decisions/decisions-log.md) — ADR-001 through ADR-007
-- [Security Incident 2026-02-23](decisions/security-incident-2026-02-23.md) — Redis public exposure
+- [Decisions Log](decisions/decisions-log.md) — ADR-001 through ADR-012
+- [Security Incident 2026-02-23](decisions/security-incident-2026-02-23.md) — Redis public exposure resolved
 
 ### Change History
-- [CHANGELOG](CHANGELOG.md) — v1.1.0, v1.2.0
+- [CHANGELOG](CHANGELOG.md) — v1.1.0, v1.2.0, v2.0.0
+
+---
+
+## Data Provider Stack
+
+| Provider | Plan | Cost | Primary Use |
+|----------|------|------|-------------|
+| Polygon.io | Stocks Starter | $29/mo | OHLCV, price history |
+| Financial Modeling Prep | Starter (annual) | $22/mo | Dividends, fundamentals |
+| yfinance | Free | $0 | ETF holdings, fallback |
+| SEC EDGAR | Free | $0 | Future: authoritative filings |
+| **Total** | | **$51/mo** | |
 
 ---
 
@@ -55,12 +67,22 @@ The Income Fortress Platform is a tax-efficient income investment system built a
 
 ---
 
-## Upcoming: Data Provider Migration
+## Upgrade Triggers
 
-After Agent 02, the platform will migrate from Alpha Vantage to:
-- **Polygon.io** — real-time data, full history
-- **Financial Modeling Prep** — dividends, fundamentals, ETF holdings
+| Condition | Action |
+|-----------|--------|
+| Backtesting engine (Agent 08+) needs 10yr intraday | Polygon → Stocks Developer ($79/mo) |
+| Monte Carlo needs 30yr dividend history | FMP → Premium ($59/mo) |
+| ETF NAV analysis needs holdings data from FMP | FMP → Ultimate ($149/mo) |
+| Real-time portfolio monitoring | Polygon → Developer or Advanced |
 
-This unlocks full capabilities for Agent 03 Income Scorer and NAV Erosion Analyzer.
+---
+
+## Next Steps
+
+1. **Agent 02 — Newsletter Ingestion** — email parsing + LLM extraction, pgvector semantic search
+2. **Agent 03 — Income Scorer** — data layer now ready; dividend history, fundamentals, ETF holdings all available
+3. **`requests_today` tracking** — rate limit monitoring for Polygon and FMP
+4. **`docker-compose.yml` reconciliation** — resolve full-platform vs production-only conflict permanently
 
 ---
