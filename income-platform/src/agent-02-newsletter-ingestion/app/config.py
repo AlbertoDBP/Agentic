@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     apidojo_sa_host: str = "seeking-alpha.p.rapidapi.com"
     sa_fetch_limit_per_analyst: int = 10       # max articles per analyst per run
     sa_request_timeout: int = 30               # seconds
+    sa_access_token: Optional[str] = None      # unlocks paywalled SA content
 
     # ── Anthropic (Claude) ────────────────────────────────────────────────────
     anthropic_api_key: str

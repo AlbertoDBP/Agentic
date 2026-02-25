@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api.health import router as health_router
+from app.api.flows import router as flows_router
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -94,7 +95,10 @@ app.add_middleware(
 # Phase 1 — Foundation
 app.include_router(health_router)
 
-# Phase 2 — Harvester Flow API (added in Phase 2)
+# Phase 2 — Flow trigger + status API
+app.include_router(flows_router)
+
+# Phase 2 — Article ingestion API (added later in Phase 2)
 # from app.api.articles import router as articles_router
 # app.include_router(articles_router, prefix="/articles", tags=["Articles"])
 
