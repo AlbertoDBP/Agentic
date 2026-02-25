@@ -4,7 +4,7 @@ API: Flow trigger and status endpoints
 
 Endpoints:
   POST /flows/harvester/trigger    — trigger Harvester Flow (background)
-  POST /flows/intelligence/trigger — 501 until Phase 3
+  POST /flows/intelligence/trigger — trigger Intelligence Flow (background)
   GET  /flows/status               — last run metadata for both flows
 """
 import logging
@@ -26,6 +26,10 @@ class HarvesterTriggerRequest(BaseModel):
     analyst_ids: Optional[list[int]] = None
 
 
+class IntelligenceTriggerRequest(BaseModel):
+    analyst_ids: Optional[list[int]] = None
+
+
 def _run_harvester(analyst_ids: Optional[list[int]] = None):
     """Execute Harvester Flow. Called in a background thread/task."""
     try:
@@ -33,6 +37,15 @@ def _run_harvester(analyst_ids: Optional[list[int]] = None):
         harvester_flow(analyst_ids=analyst_ids)
     except Exception as e:
         logger.error(f"Harvester flow failed: {e}")
+
+
+def _run_intelligence(analyst_ids: Optional[list[int]] = None):
+    """Execute Intelligence Flow. Called in a background thread/task."""
+    try:
+        from app.flows.intelligence_flow import intelligence_flow
+        intelligence_flow(analyst_ids=analyst_ids)
+    except Exception as e:
+        logger.error(f"Intelligence flow failed: {e}")
 
 
 @router.post("/harvester/trigger")
@@ -63,12 +76,40 @@ def trigger_harvester(
 
 
 @router.post("/intelligence/trigger")
-def trigger_intelligence():
-    """Intelligence Flow — not yet implemented (Phase 3)."""
-    return JSONResponse(
-        status_code=501,
-        content={"detail": "Intelligence Flow not yet implemented (Phase 3)"},
-    )
+def trigger_intelligence(
+    body: IntelligenceTriggerRequest = IntelligenceTriggerRequest(),
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Trigger the Intelligence Flow asynchronously.
+    Optionally scope to specific analyst DB IDs via analyst_ids.
+
+    Pipeline per analyst:
+      1. Staleness decay sweep (S-curve)
+      2. FMP accuracy backtest (T+30 / T+90)
+      3. Philosophy synthesis (LLM or K-Means)
+      4. Weighted consensus rebuild
+    """
+    analyst_ids = body.analyst_ids
+
+    if background_tasks is not None:
+        background_tasks.add_task(_run_intelligence, analyst_ids)
+    else:
+        thread = threading.Thread(
+            target=_run_intelligence, args=(analyst_ids,), daemon=True
+        )
+        thread.start()
+
+    if analyst_ids:
+        message = f"Intelligence flow triggered for analysts {analyst_ids}"
+    else:
+        message = "Intelligence flow triggered for all active analysts"
+
+    return {
+        "triggered": True,
+        "flow_name": "intelligence_flow",
+        "message": message,
+    }
 
 
 @router.get("/status")
