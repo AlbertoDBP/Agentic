@@ -1,0 +1,69 @@
+version: "3.9"
+
+# Local development stack for Agent 02
+# Mirrors production topology: postgres + valkey + agent-02
+#
+# Usage:
+#   docker compose up -d           # start all services
+#   docker compose up agent-02     # start only agent-02 (requires postgres + valkey running)
+#   docker compose logs -f agent-02
+#   docker compose down -v         # stop + remove volumes
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agent02-postgres
+    environment:
+      POSTGRES_DB: income_platform
+      POSTGRES_USER: platform_user
+      POSTGRES_PASSWORD: platform_pass
+    ports:
+      - "5433:5432"           # 5433 to avoid conflict with local postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform_user -d income_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  valkey:
+    image: valkey/valkey:7.2-alpine
+    container_name: agent02-valkey
+    ports:
+      - "6380:6379"           # 6380 to avoid conflict with local redis
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  agent-02:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent-02-newsletter-ingestion
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    environment:
+      # Override DB/cache to point at compose services
+      DATABASE_URL: postgresql://platform_user:platform_pass@postgres:5432/income_platform
+      REDIS_URL: redis://valkey:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
