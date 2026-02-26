@@ -1,0 +1,61 @@
+sequenceDiagram
+    participant Client
+    participant API as FastAPI Routes
+    participant ACD as Asset Class Detector
+    participant DP as DataProvider Router
+    participant QGR as Quality Gate Router
+    participant MC as Monte Carlo Engine
+    participant CACHE as Cache (Valkey/Redis)
+    participant COMP as Composite Scorer
+    participant VETO as VETO Engine
+    participant OB as Output Builder
+    participant DB as PostgreSQL
+    participant BUS as Message Bus
+
+    Client->>API: POST /score {ticker, hint?}
+    API->>ACD: detect_asset_class(ticker)
+    ACD-->>API: (class_name, confidence)
+
+    API->>DP: fetch(ticker, class_name)
+    Note over DP: yfinance → FMP → Polygon<br/>resolution order per data type
+    DP-->>API: feature_dict
+
+    API->>QGR: evaluate(ticker, class_name, features)
+    Note over QGR: Load class-specific gate criteria
+    alt Gate Failed
+        QGR-->>API: GateResult(passed=false, failures=[...])
+        API-->>Client: {gate_failure, composite_score=null}
+    else Gate Passed
+        QGR-->>API: GateResult(passed=true)
+
+        alt Class requires Monte Carlo
+            API->>CACHE: get(ticker, "nav_erosion")
+            alt Cache hit (30-day TTL)
+                CACHE-->>API: NAVErosionResult (cached)
+            else Cache miss
+                API->>MC: run_simulation(features, class_name)
+                MC-->>API: NAVErosionResult
+                API->>CACHE: set(ticker, result, ttl=30d)
+            end
+        end
+
+        API->>COMP: compute(features, class_name, nav_result)
+        Note over COMP: Load weight set from Preference Table<br/>Run all 4 sub-scorers<br/>Apply Agent 02 risk penalties<br/>Cap total penalty at -50
+        COMP-->>API: CompositeResult(score, sub_scores, penalties)
+
+        API->>VETO: check(composite_result, features)
+        Note over VETO: NAV erosion >25%<br/>Coverage <1.0× ×2 qtrs<br/>Safety component <70
+        alt VETO Triggered
+            VETO-->>API: VetoResult(triggered=true, reason)
+            Note over API: composite_score forced to 0<br/>tax_efficiency still computed
+        else VETO Clear
+            VETO-->>API: VetoResult(triggered=false)
+        end
+
+        API->>OB: build(all_results)
+        OB-->>API: ScoreOutput JSON
+
+        API->>DB: insert score (versioned)
+        API->>BUS: publish(scored_event)
+        API-->>Client: ScoreOutput JSON
+    end

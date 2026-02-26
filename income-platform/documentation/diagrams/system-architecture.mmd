@@ -1,0 +1,66 @@
+flowchart TD
+    subgraph UPSTREAM["Upstream Agents & Shared Services"]
+        A01["Agent 01\nMarket Data Service\nPrice · Technicals · Options"]
+        A02["Agent 02\nNewsletter Ingestion\nSentiment · Analyst Signals"]
+        ACD["Shared: Asset Class Detector\n/shared/asset_class_detector/\nRule-based v1 → ML v2"]
+    end
+
+    subgraph AGENT03["Agent 03 — Income Scorer"]
+        direction TB
+
+        DP["DataProvider Router\nyfinance primary\nFMP + Polygon for gaps"]
+
+        QGR["Quality Gate Router\nClass-specific binary gate\nUniversal fallback"]
+
+        MC["Monte Carlo Engine\nNAV Erosion Analysis\n30-day cache · Covered ETFs · mREITs · CEFs"]
+
+        subgraph COMPOSITE["Composite Scorer"]
+            IS["Income\nSub-Scorer"]
+            DS["Durability\nSub-Scorer"]
+            VS["Valuation\nSub-Scorer"]
+            TS["Technical\nSub-Scorer\nClass-specific factors"]
+            WL["Weight Loader\nFull replacement sets\nfrom Preference Table"]
+        end
+
+        RPL["Risk Penalty Layer\nAgent 02 signals → penalty\nYield trap · Div cut risk\nCapped at -50pts"]
+
+        VETO["VETO Engine\nNAV erosion >25%\nCoverage <1.0× ×2 qtrs\nSafety component <70\nForces score = 0"]
+
+        OB["Output Builder\ncomposite_score\nveto_triggered\nsub_scores\ntax_efficiency ← parallel only\nrecommendation · confidence"]
+
+        TMB["Tax Metadata Builder\nROC % · Qualified div %\nAfter-tax yield estimate\n0% composite weight"]
+    end
+
+    subgraph DB["Persistence"]
+        PG[("PostgreSQL\nscores table\nversioned · 24mo history")]
+        MB["Message Bus\nPublish scored event"]
+    end
+
+    subgraph DOWNSTREAM["Downstream Agents"]
+        A04["Agent 04\nAsset Class Evaluator\nBenchmark comparison\nClass sub-scores"]
+        A05["Agent 05\nTax Optimizer\nUser-specific after-tax\nAccount placement advice"]
+        AGT["Future Agents\nPosition Sizer\nPortfolio Builder\nAlert System"]
+    end
+
+    PREFS[("Preference Table\nClass weight sets\nGate thresholds\nUser tax profile")]
+
+    A01 --> DP
+    A02 --> RPL
+    ACD --> QGR
+
+    DP --> QGR
+    QGR -- "Gate passed" --> MC
+    QGR -- "Gate failed" --> OB
+    MC --> DS
+    WL --> COMPOSITE
+    PREFS --> WL
+    IS & DS & VS & TS --> RPL
+    RPL --> VETO
+    VETO --> OB
+    TMB --> OB
+
+    OB --> PG
+    OB --> MB
+    MB --> A04
+    MB --> A05
+    MB --> AGT
