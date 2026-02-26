@@ -18,7 +18,7 @@ set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SERVICE_NAME="agent-02-newsletter-ingestion"
-SERVICE_DIR="$HOME/Agentic/income-platform/src/agent-02-newsletter-ingestion"
+SERVICE_DIR="/opt/Agentic/income-platform/src/agent-02-newsletter-ingestion"
 CONTAINER_NAME="agent-02-newsletter-ingestion"
 PORT=8002
 SKIP_MIGRATE=false
@@ -47,7 +47,7 @@ cd "$SERVICE_DIR"
 
 # ── Pull latest code ──────────────────────────────────────────────────────────
 log "Pulling latest from GitHub..."
-cd "$HOME/Agentic"
+cd "/opt/Agentic"
 git pull origin main
 cd "$SERVICE_DIR"
 log "✅ Code up to date"

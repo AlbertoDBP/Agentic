@@ -43,7 +43,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD curl -f http://localhost:8002/health || exit 1
 
 # Production: 2 workers, structured JSON logging
-CMD ["uvicorn", "app.main:app", \
+CMD ["python3", "-m", "uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
      "--port", "8002", \
      "--workers", "2", \
