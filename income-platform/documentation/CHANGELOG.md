@@ -1,6 +1,6 @@
 # Income Fortress Platform — CHANGELOG
 
-All notable changes to the Income Fortress Platform are documented here.  
+All notable changes to the Income Fortress Platform are documented here.
 Format: [Semantic Versioning](https://semver.org/) — `[version] YYYY-MM-DD`
 
 ---
@@ -10,7 +10,6 @@ Format: [Semantic Versioning](https://semver.org/) — `[version] YYYY-MM-DD`
 ### Planned
 - Agent 03 Phase 1–6 implementation
 - Agent 04 — Asset Class Evaluator design
-- Multi-provider data migration (Polygon + FMP)
 - Shared Asset Class Detector v1 implementation
 
 ---
@@ -30,84 +29,140 @@ Format: [Semantic Versioning](https://semver.org/) — `[version] YYYY-MM-DD`
   - 10 Alembic database migrations specified
   - FastAPI endpoints defined (8 routes)
   - Full test suite spec (unit, integration, acceptance, performance SLAs)
-
 - **ADR-001**: Post-Scoring LLM Explanation Layer
-  - LLM translates deterministic score output to plain English
-  - Invoked on user-facing requests only (not batch scoring)
-  - Temperature 0.3–0.5, max_tokens 300, facts-only prompt
-  - Full audit trail: prompt + output stored in scores table
-  - 4 new columns added to scores table migration
-
-- **Shared Utility**: Asset Class Detector
-  - Location: `/Agentic/income-platform/shared/asset_class_detector/`
-  - v1: Rule-based (yfinance metadata)
-  - v2: ML-based (sentence-transformers + linear head) — post-MVP
-  - Consumed by Agent 03, Agent 04, Agent 05 and future agents
-
+- **Shared Utility**: Asset Class Detector scoped (`/shared/asset_class_detector/`)
 - **Agent 04 — Asset Class Evaluator**: Scoped (design pending)
-  - Benchmark comparison, class sub-scores, cross-class recommendations
-  - Consumes Agent 03 scored_event from message bus
-
-- **Agent 05 — Tax Optimizer**: Role clarified and expanded
-  - Consumes tax_efficiency metadata from Agent 03 output
-  - User-specific after-tax yield scenarios
-  - Account placement advice (taxable / Roth / IRA)
-  - FL residency context integration
+- **Agent 05 — Tax Optimizer**: Role clarified — consumes tax_efficiency metadata from Agent 03
+- **`scripts/validate-documentation.py`**: Automated documentation validation (48 checks)
+- **`documentation/decisions-log.md`**: Consolidated ADR register (ADR-001 through ADR-010)
+- **`documentation/platform-index.md`**: Master agent status tracker
 
 ### Changed
-- **Data Stack**: yfinance promoted to primary provider
-  - FMP for gaps: AFFO, NII, CEF discount/premium, non-accrual data
-  - Polygon for options chain depth and price precision
-  - DataProvider abstraction layer enforced — no direct provider calls in scoring logic
-
-- **Scoring Architecture**: Split from monolithic to modular
-  - Agent 03 = Income Fortress Score (capital safety + income quality)
-  - Agent 04 = Asset Class Evaluation (benchmark context — design pending)
-  - Previously undifferentiated; now cleanly bounded
-
-### Design Decisions Locked
-| # | Decision | Choice |
-|---|---|---|
-| 1 | Agent 03 scope | Income Scorer core only |
-| 2 | Asset class coverage | All 7 from day one, MVP priority on stocks/ETFs/bonds |
-| 3 | Quality gate placement | Agent 03 internal pre-scoring module |
-| 4 | Weight framework | Full replacement sets per class |
-| 5 | Decision matrix | Universal thresholds 85/70 + class context in output |
-| 6 | Tax efficiency | 0% weight, parallel metadata field |
-| 7 | Newsletter signals | Negative-only penalty layer |
-| 8 | Monte Carlo scope | Covered ETFs, mREITs, CEFs — 30-day cache |
-| 9 | Data stack | yfinance → FMP → Polygon resolution order |
-| 10 | Asset class detector | Shared utility, rule-based v1 |
-| 11 | Learning loop | Quarterly, LR=0.01, ±5% max per cycle |
-| 12 | VETO placement | Post-composite |
+- **Data Stack**: yfinance designated as Agent 03 primary provider with FMP/Polygon for gaps
+- **Scoring Architecture**: Formally split — Agent 03 = Income Fortress Score, Agent 04 = Asset Class Evaluation
 
 ---
 
-## [0.2.0] — 2026-02-05 — Agent 02 Phase 1 Complete
+## [0.2.0] — 2026-02-25 — Agent 02 Production Complete
 
 ### Added
-- Agent 02 — Newsletter Ingestion Service Phase 1 (foundation)
-  - SQLAlchemy models and database migrations with pgvector support
-  - Comprehensive unit tests
-  - Seeking Alpha API integration (validated against actual response shapes)
-- Agent 02 Phase 2 — Harvester flow implemented
+- Agent 02 — Newsletter Ingestion Service: all 5 phases complete and production-deployed
+  - Phase 1: FastAPI skeleton, SQLAlchemy ORM (5 tables), pgvector + IVFFlat index, health endpoint, 13 tests
+  - Phase 2: APIDojo Seeking Alpha client, Prefect 3 harvester flow, Claude Haiku signal extraction, OpenAI embeddings, 47 tests
+  - Phase 3: S-curve decay sweeper, FMP market truth client, accuracy backtest, philosophy synthesis (LLM + K-Means), weighted consensus builder, Intelligence Prefect flow, 57 tests
+  - Phase 4: Analysts API, recommendations API, consensus API (Redis-cached 30min), signal endpoint (Agent 12 contract), 18 tests
+  - Phase 5: Multi-stage Dockerfile, docker-compose, Nginx config, DigitalOcean deploy script, Prefect schedule, `.env.production.example`
 
-### In Progress
-- Agent 02 Phases 3–5 (signal extraction, database integration, API endpoints)
+### Fixed
+- APIDojo SA API: category-based author discovery after legacy author-filter endpoints removed (2026)
+- Consensus builder: chained `.filter()` calls for testability
+- Signal endpoint: `rec_metadata` attr to avoid SQLAlchemy MetaData name collision
+- Dockerfile: uses `python3 -m uvicorn`; deploy.sh uses `/opt/Agentic` path
 
 ---
 
-## [0.1.0] — 2026-01-26 — Agent 01 Production Deployed
+## [0.1.1] — 2026-02-23 — Agent 01 Provider Migration
+
+### Added
+- PolygonClient: Polygon.io REST API v2/v3 implementation
+- FMPClient: Financial Modeling Prep stable API implementation
+- YFinanceClient: yfinance fallback provider
+- BaseDataProvider abstract class + provider exceptions
+- ProviderRouter with Polygon/FMP/yfinance fallback chains
+- New endpoints: dividends, fundamentals, ETF holdings, provider status
+
+### Changed
+- Alpha Vantage retired as primary provider
+- FMP migrated from legacy v3 to stable API (all endpoints)
+
+### Fixed
+- yfinance ETF field mappings (expense_ratio, AUM, top_holdings)
+- Covered call detection expanded (JEPI ELN pattern, buy-write, symbol list)
+- FMP: surface ProviderError on empty API key; re-raise on primary request failure
+- Routes consolidated to `/stocks/` pattern; legacy `/api/v1/price/` removed
+
+---
+
+## [0.1.0] — 2026-02-12 — Agent 01 Production Deployed
 
 ### Added
 - Agent 01 — Market Data Service: production deployment
-  - FastAPI microservice with Redis caching
+  - FastAPI microservice on port 8001 with Redis caching
   - Alpha Vantage integration with rate limiting and fallback chains
   - Database persistence (PostgreSQL managed, DigitalOcean)
-  - Real-time stock data with proper fallback handling
-- Platform infrastructure: DigitalOcean App Platform, managed PostgreSQL (68+ tables), Valkey cache, Nginx reverse proxy with SSL
-- Reference architecture: 24-agent platform design
+  - Historical price queries v1.2.0
+- Platform infrastructure: DigitalOcean App Platform, managed PostgreSQL (68+ tables), Valkey cache, Nginx reverse proxy with SSL at legatoinvest.com
 - Monorepo structure: `/Agentic/income-platform/`
+
+---
+
+## [1.0.0-design] — 2026-01-28 — Initial Platform Design
+
+> **Note:** This entry records the original design-phase specification completed before implementation began. Preserved for historical reference.
+
+### Design Complete — Production Ready
+
+Complete design specification for the Tax-Efficient Income Investment Platform.
+
+#### Core Architecture
+- Capital preservation scoring system (70% threshold with VETO)
+- Income generation optimization (secondary to capital safety)
+- Yield trap detection framework
+- Tax efficiency optimization system
+- User-controlled proposal workflow (no auto-execution)
+
+#### Data Model
+- 97 database tables across 12 domains
+- Multi-tenant architecture with Row-Level Security (RLS)
+- Time-series partitioning for market data
+- pgvector for semantic search
+
+#### AI Agent Architecture (22 Agents)
+- Data Processing Agents (5): Asset Class Identifier, ETF Look-Through, Analyst Extractor, Tax Processor, Sentiment Analyzer
+- Scoring Agents (4): Capital Protection, Portfolio Fit, Asset Class-Specific (9), Conflict Resolver
+- Analysis Agents (5): Portfolio Analyzer, Risk Aggregator, Simulator, Scenario Predictor, Stock Evaluator
+- Recommendation Agents (4): Proposal Generator, Alert Monitor, Market Scanner, Trade Generator
+- Support Agents (4): Price Calculator, Explanation Generator, Framework Generator, Conversational AI
+
+#### API Architecture
+- 88+ endpoints (OpenAPI 3.0)
+- Authentication, portfolio, trading, alerts, proposals, analytics, tax, goals, simulations, backtesting, DRIP, rebalancing, document generation, GDPR, admin, WebSocket
+
+#### Security & Compliance
+- JWT authentication via Supabase
+- AES-256 encryption, RBAC, GDPR framework (DSAR, consent, erasure)
+- 7-year data retention with legal holds
+- Comprehensive audit logging
+
+#### Advanced Features
+- Monte Carlo Simulation (10K+ simulations)
+- Retirement Planning + Safe Withdrawal Rate
+- Backtesting Engine
+- Automated Rebalancing (tax-aware)
+- DRIP System
+- Goals Management
+- Multi-Currency (7 currencies)
+- Document Generation (PDF/Excel/Word)
+
+#### Learning Systems (6 Layers)
+1. Analyst Learning: Extract frameworks from analyst content
+2. Tax Learning: Pattern recognition from tax documents
+3. Model Learning: XGBoost retraining on outcomes
+4. Execution Learning: Optimize order execution
+5. Conversational Learning: User preference extraction
+6. LLM Self-Learning: Real-time session adaptation
+
+#### Design Metrics
+| Metric | Value |
+|---|---|
+| Design Completeness | 100% |
+| Database Tables | 97 |
+| AI Agents | 22 |
+| API Endpoints | 88+ |
+| Supported Asset Classes | 9 |
+| Learning Layers | 6 |
+| Mermaid Diagrams | 15+ |
+| Total Design Sessions | 4 |
 
 ---
 
