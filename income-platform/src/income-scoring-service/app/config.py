@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     score_accumulate: int = 70                 # 70-84  → Accumulate (DCA)
     # below score_accumulate               →   Watch only
 
+    # Scoring engine simulation / history config
+    nav_erosion_simulations: int = 10000       # Monte Carlo paths for NAV erosion
+    score_history_days: int = 90               # days of price history for technical scoring
+
     # NAV erosion penalty config (covered call ETFs)
     nav_erosion_penalty_max: int = 30          # max points deducted
     nav_erosion_prob_threshold_low: float = 0.30
