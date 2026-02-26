@@ -1,78 +1,120 @@
-# CHANGELOG — Agent 02 + Agent 12
+# Income Fortress Platform — CHANGELOG
 
-All notable changes to Agent 02 (Newsletter Ingestion) and Agent 12 (Proposal Agent).
-
----
-
-## [1.0.0] — 2026-02-25
-
-### Agent 02 — Complete Implementation
-
-**Phase 1 — Foundation**
-- FastAPI service skeleton on port 8002
-- SQLAlchemy ORM: analysts, analyst_articles, analyst_recommendations, analyst_accuracy_log, credit_overrides
-- pgvector integration with IVFFlat indexes on embedding columns
-- Idempotent migration script with pgvector extension validation
-- Health endpoint with healthy/degraded/unhealthy states
-- Pydantic schemas including AnalystSignalResponse (Agent 12 contract)
-- Production Dockerfile with non-root user and health check
-
-**Phase 2 — Harvester Flow**
-- APIDojo SA client: `/articles/v2/list` + `/articles/v2/get-details` confirmed endpoints
-- `_normalize_article()` flattens nested `attributes` response structure
-- SHA-256 deduplicator: SA article ID check (fast) + content hash check (thorough)
-- HTML → Markdown conversion via `markdownify` at ingest time
-- Claude Haiku structured extraction: 12-field income signal prompt
-- OpenAI text-embedding-3-small: article body + recommendation thesis embeddings (1536d)
-- Recommendation supersession model: ticker-scoped, preserves history
-- Prefect harvester_flow: per-analyst + per-article error isolation
-- Flow trigger endpoints: POST /flows/harvester/trigger + POST /flows/intelligence/trigger
-- Analyst seed script with test authors 96726 and 104956
-
-**Phase 3 — Intelligence Flow**
-- S-curve decay sweeper: configurable aging_days + halflife_days per analyst
-- FMP market truth client: historical price + dividend history
-- Accuracy backtest: T+30/T+90 price checks, dividend cut detection, outcome_label, accuracy_delta
-- Per-analyst sector_alpha tracking
-- Philosophy synthesis: LLM summary (< 20 articles) + K-Means K=5 (≥ 20 articles)
-- Weighted consensus score builder: accuracy × decay × user_weight
-- Intelligence Prefect flow: Monday 6AM ET schedule
-- /flows/intelligence/trigger endpoint activated (was 501)
-
-**Phase 4 — API Layer**
-- GET/POST /analysts with 409 guard on duplicate SA ID
-- GET /analysts/{id}/recommendations with decay_weight ordering
-- GET /recommendations/{ticker} with min_decay_weight filter
-- GET /consensus/{ticker}: Redis-cached 30min, weighted accuracy × decay
-- GET /signal/{ticker}: Agent 12 contract — signal_strength, proposal_readiness
-- signal_strength: strong/moderate/weak/insufficient quality ladder
-- proposal_readiness: strength ≥ moderate AND accuracy ≥ threshold
-- 16 Phase 4 unit tests + Agent 12 contract field validation
-
-**Phase 5 — Production Hardening**
-- Multi-stage Dockerfile: builder + runtime (smaller final image)
-- docker-compose.yml: local dev stack (postgres + valkey + agent-02)
-- nginx/agent-02.conf: Nginx location block for DO reverse proxy
-- scripts/deploy.sh: DigitalOcean deployment with health check gate
-- scripts/prefect_schedule.py: Harvester + Intelligence schedule registration
-- .env.production.example: all variables documented
-- Integration smoke tests: auto-skip if service not running
-
-### Agent 12 — Functional Specification Complete
-
-- Dual-lens proposal model (analyst view + platform view side by side)
-- Alignment computation: Aligned | Partial | Divergent | Vetoed
-- ProposalObject schema with full execution parameters
-- VETO enforcement: Path A blocked, Path B requires hard acknowledgment
-- Three trigger modes: signal-driven, on-demand, scheduled re-evaluation
-- Platform alignment writeback to Agent 02 analyst_recommendations
-- Override outcome logging to Agent 02 accuracy log
-- Implementation pending (follows Agent 03 completion)
+All notable changes to the Income Fortress Platform are documented here.  
+Format: [Semantic Versioning](https://semver.org/) — `[version] YYYY-MM-DD`
 
 ---
 
-## Upcoming
+## [Unreleased]
 
-- Agent 02: Production deployment to DigitalOcean (requires .env update)
-- Agent 03: Income Scorer — builds on Agent 02 signal API
-- Agent 12: Implementation (after Agent 03 completion)
+### Planned
+- Agent 03 Phase 1–6 implementation
+- Agent 04 — Asset Class Evaluator design
+- Multi-provider data migration (Polygon + FMP)
+- Shared Asset Class Detector v1 implementation
+
+---
+
+## [0.3.0] — 2026-02-25 — Agent 03 Design Complete
+
+### Added
+- **Agent 03 — Income Scorer**: Complete architecture design
+  - 7-class scoring framework (REITs, mREITs, BDCs, CEFs, Covered Call ETFs, Bonds, Preferred Stocks)
+  - Quality Gate Router with 8 class-specific gates + universal fallback
+  - Composite scorer with full replacement weight sets per asset class
+  - VETO engine (post-composite — preserves sub-scores for audit)
+  - Monte Carlo NAV erosion analysis (Covered Call ETFs, mREITs, leveraged CEFs)
+  - Risk penalty layer with Agent 02 negative-signal integration
+  - Tax efficiency as parallel metadata field (0% composite weight)
+  - Quarterly adaptive learning loop with shadow portfolio
+  - 10 Alembic database migrations specified
+  - FastAPI endpoints defined (8 routes)
+  - Full test suite spec (unit, integration, acceptance, performance SLAs)
+
+- **ADR-001**: Post-Scoring LLM Explanation Layer
+  - LLM translates deterministic score output to plain English
+  - Invoked on user-facing requests only (not batch scoring)
+  - Temperature 0.3–0.5, max_tokens 300, facts-only prompt
+  - Full audit trail: prompt + output stored in scores table
+  - 4 new columns added to scores table migration
+
+- **Shared Utility**: Asset Class Detector
+  - Location: `/Agentic/income-platform/shared/asset_class_detector/`
+  - v1: Rule-based (yfinance metadata)
+  - v2: ML-based (sentence-transformers + linear head) — post-MVP
+  - Consumed by Agent 03, Agent 04, Agent 05 and future agents
+
+- **Agent 04 — Asset Class Evaluator**: Scoped (design pending)
+  - Benchmark comparison, class sub-scores, cross-class recommendations
+  - Consumes Agent 03 scored_event from message bus
+
+- **Agent 05 — Tax Optimizer**: Role clarified and expanded
+  - Consumes tax_efficiency metadata from Agent 03 output
+  - User-specific after-tax yield scenarios
+  - Account placement advice (taxable / Roth / IRA)
+  - FL residency context integration
+
+### Changed
+- **Data Stack**: yfinance promoted to primary provider
+  - FMP for gaps: AFFO, NII, CEF discount/premium, non-accrual data
+  - Polygon for options chain depth and price precision
+  - DataProvider abstraction layer enforced — no direct provider calls in scoring logic
+
+- **Scoring Architecture**: Split from monolithic to modular
+  - Agent 03 = Income Fortress Score (capital safety + income quality)
+  - Agent 04 = Asset Class Evaluation (benchmark context — design pending)
+  - Previously undifferentiated; now cleanly bounded
+
+### Design Decisions Locked
+| # | Decision | Choice |
+|---|---|---|
+| 1 | Agent 03 scope | Income Scorer core only |
+| 2 | Asset class coverage | All 7 from day one, MVP priority on stocks/ETFs/bonds |
+| 3 | Quality gate placement | Agent 03 internal pre-scoring module |
+| 4 | Weight framework | Full replacement sets per class |
+| 5 | Decision matrix | Universal thresholds 85/70 + class context in output |
+| 6 | Tax efficiency | 0% weight, parallel metadata field |
+| 7 | Newsletter signals | Negative-only penalty layer |
+| 8 | Monte Carlo scope | Covered ETFs, mREITs, CEFs — 30-day cache |
+| 9 | Data stack | yfinance → FMP → Polygon resolution order |
+| 10 | Asset class detector | Shared utility, rule-based v1 |
+| 11 | Learning loop | Quarterly, LR=0.01, ±5% max per cycle |
+| 12 | VETO placement | Post-composite |
+
+---
+
+## [0.2.0] — 2026-02-05 — Agent 02 Phase 1 Complete
+
+### Added
+- Agent 02 — Newsletter Ingestion Service Phase 1 (foundation)
+  - SQLAlchemy models and database migrations with pgvector support
+  - Comprehensive unit tests
+  - Seeking Alpha API integration (validated against actual response shapes)
+- Agent 02 Phase 2 — Harvester flow implemented
+
+### In Progress
+- Agent 02 Phases 3–5 (signal extraction, database integration, API endpoints)
+
+---
+
+## [0.1.0] — 2026-01-26 — Agent 01 Production Deployed
+
+### Added
+- Agent 01 — Market Data Service: production deployment
+  - FastAPI microservice with Redis caching
+  - Alpha Vantage integration with rate limiting and fallback chains
+  - Database persistence (PostgreSQL managed, DigitalOcean)
+  - Real-time stock data with proper fallback handling
+- Platform infrastructure: DigitalOcean App Platform, managed PostgreSQL (68+ tables), Valkey cache, Nginx reverse proxy with SSL
+- Reference architecture: 24-agent platform design
+- Monorepo structure: `/Agentic/income-platform/`
+
+---
+
+## Legend
+- **Added** — New features or components
+- **Changed** — Changes to existing functionality
+- **Deprecated** — Features to be removed in future
+- **Removed** — Features removed
+- **Fixed** — Bug fixes
+- **Security** — Security-related changes

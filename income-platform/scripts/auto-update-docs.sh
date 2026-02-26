@@ -677,7 +677,7 @@ fi
 
 # Step 13: Show commit
 print_step "Commit details:"
-git log -1 --stat
+git --no-pager log -1 --stat
 
 echo ""
 
