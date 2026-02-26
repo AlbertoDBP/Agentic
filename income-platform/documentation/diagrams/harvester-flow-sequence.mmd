@@ -1,0 +1,50 @@
+sequenceDiagram
+    participant PF as Prefect Scheduler
+    participant HF as Harvester Flow
+    participant SA as APIDojo SA API
+    participant DED as Deduplicator
+    participant EXT as Extractor (Haiku)
+    participant VEC as Vectorizer (OpenAI)
+    participant DB as PostgreSQL
+
+    PF->>HF: trigger (Tue/Fri 7AM ET)
+    HF->>DB: load active analysts
+
+    loop For each analyst
+        HF->>DB: get last fetched article ID
+        HF->>SA: GET /articles/v2/list (author, page, size)
+        SA-->>HF: [{id, attributes: {title, publishOn}}]
+
+        loop For each article
+            HF->>DED: is_duplicate_by_sa_id?
+            DED->>DB: query analyst_articles
+            DB-->>DED: exists/not-exists
+            DED-->>HF: skip / proceed
+
+            alt New article
+                HF->>SA: GET /articles/v2/get-details (id)
+                SA-->>HF: {data: {attributes: {content: "<html>"}}}
+                HF->>EXT: html_to_markdown(html)
+                EXT-->>HF: markdown_text
+                HF->>DED: is_duplicate_by_content(hash)?
+                DED-->>HF: skip / proceed
+
+                HF->>EXT: extract_signals(markdown)
+                Note over EXT: Claude Haiku<br/>Structured JSON extraction<br/>tickers, yields, safety grades...
+                EXT-->>HF: {tickers: [...], themes: [...]}
+
+                HF->>VEC: embed_text(markdown)
+                HF->>VEC: embed_batch(thesis_texts)
+                Note over VEC: OpenAI text-embedding-3-small<br/>1536 dimensions
+                VEC-->>HF: [article_embedding, thesis_embeddings]
+
+                HF->>DB: save_article(...)
+                HF->>DB: save_recommendations(...) + supersede prior
+                DB-->>HF: article.id, rec.ids
+            end
+        end
+
+        HF->>DB: update analyst.article_count + last_fetched_at
+    end
+
+    HF->>DB: upsert flow_run_log (status, duration, articles_processed)

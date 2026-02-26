@@ -1,142 +1,78 @@
-```mermaid
-graph TB
-    subgraph "Income Fortress Platform"
-        A1[Agent 1<br/>Market Data Sync]
-        A3[Agent 3<br/>Income Scoring]
-        A24[Agent 24<br/>Explanation]
+flowchart TB
+    subgraph External["External Data Sources"]
+        SA["Seeking Alpha\nAPIDojo API"]
+        FMP["Financial Modeling Prep\nMarket Truth"]
     end
-    
-    subgraph "NAV Erosion Analysis Service"
-        API[FastAPI Service<br/>Port 8003]
-        
-        subgraph "Core Components"
-            DC[Data Collector<br/>350 lines]
-            MCE[Monte Carlo Engine<br/>450 lines]
-            SI[Sustainability Integration<br/>300 lines]
+
+    subgraph Agent02["Agent 02 — Newsletter Ingestion :8002"]
+        direction TB
+        subgraph Flows["Prefect Flows"]
+            HF["Harvester Flow\nTue+Fri 7AM ET"]
+            IF["Intelligence Flow\nMon 6AM ET"]
         end
-        
-        subgraph "Supporting"
-            CACHE[Cache Manager<br/>30-day TTL]
-            VAL[Data Validator<br/>Quality Scoring]
-            REG[ETF Registry<br/>7 known ETFs]
+        subgraph Processors["Processors"]
+            EXT["Extractor\nClaude Haiku"]
+            VEC["Vectorizer\nOpenAI Embeddings"]
+            DED["Deduplicator\nSHA-256"]
+            STALE["Staleness\nS-Curve Decay"]
+            BT["Backtest\nT+30 / T+90"]
+            PHI["Philosophy\nLLM + K-Means"]
+            CON["Consensus\nWeighted Score"]
         end
-    end
-    
-    subgraph "Data Layer"
-        PG[(PostgreSQL<br/>Managed)]
-        
-        subgraph "Tables"
-            T1[(covered_call_etf_metrics)]
-            T2[(nav_erosion_analysis_cache)]
-            T3[(nav_erosion_data_collection_log)]
-        end
-        
-        subgraph "Views"
-            V1[v_latest_nav_erosion_analysis]
-            V2[v_covered_call_etf_risk_summary]
+        subgraph API["API Layer"]
+            SIG["GET /signal/{ticker}\nAgent 12 Contract"]
+            CONS["GET /consensus/{ticker}"]
+            RECS["GET /recommendations/{ticker}"]
+            ANA["GET /analysts"]
+            HLTH["GET /health"]
         end
     end
-    
-    %% Data flow
-    A1 -->|Historical Data<br/>12 months| DC
-    A3 -->|Analysis Request<br/>ticker, type| API
-    
-    API -->|Check Cache| CACHE
-    CACHE -->|Hit| API
-    CACHE -->|Miss| DC
-    
-    DC -->|Validate| VAL
-    VAL -->|Parameters| MCE
-    MCE -->|Simulation Results<br/>20+ metrics| SI
-    SI -->|Penalty & Risk<br/>0-30 points| API
-    API -->|Store| CACHE
-    
-    API -->|Response| A3
-    A3 -->|Trigger| A24
-    
-    DC <-->|Read/Write| T1
-    CACHE <-->|Read/Write| T2
-    DC -->|Audit| T3
-    
-    T1 & T2 & T3 -->|Data| PG
-    T2 -->|Query| V1
-    T2 & T1 -->|Join| V2
-    
-    DC -.->|Lookup| REG
-    
-    %% Styling
-    style MCE fill:#ff9,stroke:#333,stroke-width:3px
-    style SI fill:#9f9,stroke:#333,stroke-width:2px
-    style CACHE fill:#99f,stroke:#333,stroke-width:2px
-    style API fill:#f99,stroke:#333,stroke-width:2px
-    style PG fill:#9cf,stroke:#333,stroke-width:2px
-    
-    classDef agent fill:#e1f5ff,stroke:#01579b,stroke-width:2px
-    class A1,A3,A24 agent
-```
 
-**Diagram: System Architecture**
+    subgraph Storage["Platform Storage (platform_shared schema)"]
+        PG[("PostgreSQL 16\n+ pgvector")]
+        VK[("Valkey Cache\nRedis-compatible")]
+    end
 
-This diagram shows the high-level architecture of the NAV Erosion Analysis system and its integration with the Income Fortress Platform.
+    subgraph Agent12["Agent 12 — Proposal Agent"]
+        direction LR
+        PA["Proposal\nAssembler"]
+        AC["Alignment\nComputer"]
+        VC["VETO\nChecker"]
+    end
 
-**Key Components:**
+    subgraph Agents345["Platform Assessment Agents"]
+        A03["Agent 03\nIncome Scorer"]
+        A04["Agent 04\nEntry Price"]
+        A05["Agent 05\nTax Placement"]
+    end
 
-1. **FastAPI Service** (Port 8003)
-   - REST API endpoints
-   - Request validation
-   - Background task scheduling
-   - Health checks
+    subgraph User["User Interface"]
+        DASH["Dashboard\nProposal View"]
+    end
 
-2. **Data Collector** (350 lines)
-   - Fetches historical data from Agent 1
-   - Validates data completeness (0-100 score)
-   - Derives simulation parameters
-   - Consults ETF registry for known strategies
+    SA -->|"articles/v2/list\narticles/v2/get-details"| HF
+    FMP -->|"price history\ndividend history"| BT
 
-3. **Monte Carlo Engine** (450 lines)
-   - Core simulation logic
-   - 10K (quick) or 50K (deep) paths
-   - Market regime transitions
-   - Vectorized NumPy implementation
+    HF --> EXT --> VEC --> DED
+    DED --> PG
+    IF --> STALE & BT & PHI & CON
+    STALE & BT & PHI & CON --> PG
 
-4. **Sustainability Integration** (300 lines)
-   - Calculates graduated penalties (0-30 points)
-   - Classifies risk (5 tiers)
-   - Manages cache with 30-day TTL
-   - Provides Agent 3 integration hooks
+    PG --> SIG & CONS & RECS & ANA
+    SIG & CONS --> VK
 
-5. **Cache Manager**
-   - 30-day TTL for results
-   - 95% cost reduction
-   - <10ms cache hit latency
-   - Manual invalidation support
+    SIG -->|"AnalystSignalResponse"| PA
+    A03 & A04 & A05 -->|"score + entry + tax"| PA
+    PA --> AC --> VC
+    VC -->|"ProposalObject"| PG
+    PG --> DASH
 
-**Data Flow:**
+    classDef agent fill:#1a1a2e,stroke:#4a9eff,color:#fff
+    classDef storage fill:#16213e,stroke:#4a9eff,color:#fff
+    classDef external fill:#0f3460,stroke:#4a9eff,color:#fff
+    classDef user fill:#533483,stroke:#9b72cf,color:#fff
 
-1. Agent 3 sends analysis request to API
-2. API checks cache (30-day TTL)
-3. On cache miss:
-   a. Data Collector fetches 12 months history from Agent 1
-   b. Validator checks data quality
-   c. Monte Carlo Engine runs simulation
-   d. Sustainability Integration calculates penalty
-   e. Results cached for 30 days
-4. API returns penalty & risk classification to Agent 3
-5. Agent 3 adjusts Sustainability score
-6. Agent 24 generates explanation
-
-**Database Tables:**
-
-- **covered_call_etf_metrics**: Historical data (monthly)
-- **nav_erosion_analysis_cache**: Cached results (30-day TTL)
-- **nav_erosion_data_collection_log**: Audit trail
-
-**Database Views:**
-
-- **v_latest_nav_erosion_analysis**: Latest analysis per ticker
-- **v_covered_call_etf_risk_summary**: Risk classification summary
-
-**Performance:**
-- Cache hit: <10ms
-- Cache miss (quick): ~500ms
-- Cache miss (deep): ~2.5s
+    class Agent02,Agent12,Agents345 agent
+    class Storage storage
+    class External external
+    class User user

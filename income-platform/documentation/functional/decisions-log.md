@@ -1,125 +1,84 @@
-# Architecture Decision Records — Income Fortress Platform
-
-This log captures significant architectural and technical decisions made during development.
+# Decisions Log — Agent 02 + Agent 12
 
 ---
 
-## ADR-008 — Dual-Provider Architecture: Polygon.io + FMP
-**Date:** 2026-02-23
+## ADR-001: HTML → Markdown at Ingest Time
+
+**Date:** 2026-02-25  
 **Status:** Accepted
-**Session:** Market Data Service Session 3
 
-### Context
-Alpha Vantage free tier lacks dividend history, fundamentals, and ETF holdings required by Agent 03 Income Scorer. A migration was planned (ADR-002) for after Agent 02 completion but was prioritized earlier as a hard dependency for all downstream agents.
+**Decision:** Convert article HTML to Markdown at ingestion time. Store Markdown in `full_text`. Never store raw HTML.
 
-### Decision
-Implement a dual-primary + fallback provider architecture:
-- **Polygon.io Stocks Starter ($29/mo)** — OHLCV, splits, corporate actions
-- **Financial Modeling Prep Starter ($22/mo annual)** — dividends, fundamentals, ETF metadata
-- **yfinance (free)** — fallback for all methods, primary for ETF holdings (FMP Starter tier restriction)
-- **SEC EDGAR (free)** — future tertiary source for authoritative filings
+**Rationale:** LLM extraction (Claude Haiku) performs better on clean Markdown than raw HTML. Storage is more efficient. Downstream consumers (Agent 03, philosophy synthesis) never need to handle HTML. Runtime truncation to ~6000 tokens is applied on the already-clean Markdown.
 
-### Consequences
-- Agent 03 Income Scorer now has full access to dividend history, payout ratios, and fundamentals
-- $51/mo total data provider cost sustainable for development phase
-- FMP ETF holdings endpoint requires higher tier — yfinance handles this permanently until upgrade
-- Alpha Vantage retained as deprecated reference; not active in routing chain
+**Alternatives Considered:** Store raw HTML + convert at extraction time. Rejected — would require double-conversion overhead on every extraction call and every re-extraction run.
 
 ---
 
-## ADR-009 — BaseDataProvider Abstract Interface
-**Date:** 2026-02-23
+## ADR-002: APIDojo Endpoint Confirmed as /articles/v2/list
+
+**Date:** 2026-02-25  
 **Status:** Accepted
-**Session:** Market Data Service Session 3
 
-### Context
-Three providers with different APIs, authentication patterns, and data availability needed a unified contract to enable transparent routing and fallback.
+**Decision:** Use `/articles/v2/list` with `author` + `page` params (not `/news/v2/list` with `id` + `number`).
 
-### Decision
-Define `BaseDataProvider` ABC with five abstract methods: `get_current_price`, `get_daily_prices`, `get_dividend_history`, `get_fundamentals`, `get_etf_holdings`. Concrete implementations per provider. `ProviderRouter` operates against the interface, not concrete classes.
+**Rationale:** Confirmed from V1 bulk ingestion code. The `/articles/v2/list` endpoint returns the correct nested response shape `{data: [{id, attributes: {title, publishOn}}]}` and supports pagination via `page` parameter. The news endpoint returned a different (flatter) shape unsuitable for author-scoped article ingestion.
 
-### Consequences
-- New providers can be added (Seeking Alpha, Intrinio) without changing router logic
-- `__aenter__`/`__aexit__` default in base class — subclasses only override when managing HTTP sessions
-- Interface is the single source of truth for what data each provider must supply
+**Impact:** `seeking_alpha.py` uses `_normalize_article()` to flatten the nested `attributes` structure into a clean dict for use throughout the pipeline.
 
 ---
 
-## ADR-010 — ProviderRouter Priority Chains
-**Date:** 2026-02-23
+## ADR-003: S-Curve Decay Formula
+
+**Date:** 2026-02-25  
 **Status:** Accepted
-**Session:** Market Data Service Session 3
 
-### Context
-Different providers have different strengths. Polygon has better price data; FMP has better income data. A single fallback order doesn't serve all data types equally.
+**Decision:** Use sigmoid-based S-curve decay: `1 / (1 + exp(k * (days_elapsed - halflife_days)))` where `k = 10 / aging_days`.
 
-### Decision
-Define per-method priority chains in `ProviderRouter`:
-- Price: Polygon → FMP → yfinance
-- Daily prices: Polygon → yfinance (FMP omitted — data quality inferior)
-- Dividends: FMP → yfinance
-- Fundamentals: FMP → yfinance
-- ETF holdings: FMP → yfinance
+**Rationale:** S-curve provides three desirable properties: (1) fresh recommendations retain near-full weight, (2) aging happens gradually around the halflife, (3) old recommendations decay toward (not to) zero. Linear decay would penalize fresh recommendations unfairly; hard cutoffs would create cliff effects.
 
-Graceful degradation: providers that fail to initialize are set to `None` and silently skipped. `_try_chain` catches `ProviderError` and `DataUnavailableError` per attempt; unexpected exceptions propagate immediately.
-
-### Consequences
-- FMP is effectively the primary for all income-related data
-- Polygon failure does not affect dividend or fundamental queries
-- Every successful response logs which provider served it — operational visibility built in
+**Parameters:** Default `aging_days=365`, `halflife_days=180`, `min_weight=0.1`. Configurable per-analyst via `analysts.config` JSONB.
 
 ---
 
-## ADR-011 — FMP Stable API Migration
-**Date:** 2026-02-23
+## ADR-004: Recommendation Supersession Model
+
+**Date:** 2026-02-25  
 **Status:** Accepted
-**Session:** Market Data Service Session 3
 
-### Context
-FMP migrated from `/api/v3/` to `/stable/` base URL after August 31, 2025. New API keys created after this date receive 403 on all legacy endpoints. Field names also changed (e.g. `priceEarningsRatio` → `priceToEarningsRatio`).
+**Decision:** When analyst publishes a new recommendation for a ticker they already cover, prior recs are marked `is_active=False, superseded_by=new_rec.id`. Historical recs are never deleted.
 
-### Decision
-All FMP endpoints use `/stable/` base URL. All field mappings updated to stable API names. `_get` raises `ProviderError("FMP API key is not configured")` immediately on empty key rather than sending `apikey=` and receiving a cryptic 403.
-
-### Consequences
-- Platform is compatible with all post-Aug-2025 FMP API keys
-- `asyncio.gather(return_exceptions=True)` pattern must always re-raise critical endpoint failures — silent null returns are worse than explicit fallback
-- FMP `/stable/ratios` returns 403 if called with wrong param format — always use `?symbol=` query param, never `/symbol` path format
+**Rationale:** Preserves complete recommendation history for accuracy backtesting and analytics. The supersession chain allows traversal of an analyst's position history on any ticker. Consensus and signal endpoints query `is_active=True` only, so superseded recs don't pollute current signals.
 
 ---
 
-## ADR-012 — yfinance as Production Fallback
-**Date:** 2026-02-23
+## ADR-005: Philosophy Synthesis — LLM vs K-Means Threshold
+
+**Date:** 2026-02-25  
 **Status:** Accepted
-**Session:** Market Data Service Session 3
 
-### Context
-yfinance has no official API contract and can break without notice. However, it provides ETF-specific data (expense ratios, fund holdings via `funds_data`) that paid providers don't expose on Starter tiers.
+**Decision:** Use Claude Sonnet LLM summary for analysts with < 20 articles. Switch to K-Means K=5 clustering on article embeddings for analysts with ≥ 20 articles.
 
-### Decision
-Use yfinance as production fallback with these constraints:
-- All yfinance calls wrapped with `asyncio.to_thread()` — sync library must not block event loop
-- No Redis caching — stale fallback data is worse than fresh fetch
-- No rate limiting — Yahoo Finance has no enforced per-key limits at fallback volumes
-- `funds_data` guarded with try/except for older yfinance versions
-
-### Consequences
-- ETF holdings (expense_ratio, aum, top_holdings, covered_call) served reliably via yfinance
-- yfinance instability would degrade ETF endpoint only — other endpoints have paid primary providers
-- `_infer_frequency` helper covers dividend frequency gap in yfinance data
+**Rationale:** LLM summary is higher quality but can't extract reliable statistical patterns from small samples. K-Means clustering at ≥ 20 articles reveals genuine thematic clusters (sectors, strategies, risk tolerance) that LLM synthesis would miss. The centroid vector enables semantic similarity matching between analyst philosophies.
 
 ---
 
-## ADR-007 — Managed Valkey over Local Redis
-**Date:** 2026-02-23
+## ADR-006: Dual-Lens Proposal — Never Silent Blocking
+
+**Date:** 2026-02-25  
 **Status:** Accepted
-**Session:** Market Data Service Session 2 (Security Incident)
 
-Orphaned `redis:7-alpine` container removed. All services use managed Valkey via `${REDIS_URL}`.
+**Decision:** Agent 12 always generates proposals regardless of alignment state. Even on VETO, Path B (analyst-as-stated with explicit acknowledgment) remains available.
 
----
-
-## ADR-004 through ADR-006
-See decisions-log from Session 2 documentation.
+**Rationale:** User autonomy is a platform core principle. The platform's role is to inform and protect, not to override. Users who understand the risks and choose to proceed with an analyst-recommended position against platform advice must be able to do so — but only with full transparency and documented acknowledgment. Silent blocking would undermine user trust and violate the capital preservation philosophy (which is about informed decisions, not forced ones).
 
 ---
+
+## ADR-007: Agent 12 Writeback to Agent 02
+
+**Date:** 2026-02-25  
+**Status:** Accepted
+
+**Decision:** After generating a proposal, Agent 12 writes `platform_alignment` and `platform_scored_at` back to `analyst_recommendations` in Agent 02's database.
+
+**Rationale:** Enables Agent 02's Intelligence Flow backtest processor to access the platform alignment outcome when evaluating recommendation accuracy. This closes the feedback loop: analyst recommendation → proposal → user decision → accuracy attribution. Without this writeback, the accuracy log would be missing the platform's view of the recommendation quality at time of proposal.

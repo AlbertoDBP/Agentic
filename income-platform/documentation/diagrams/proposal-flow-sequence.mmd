@@ -1,0 +1,59 @@
+sequenceDiagram
+    actor User
+    participant DASH as Dashboard
+    participant A12 as Agent 12
+    participant A02 as Agent 02 :8002
+    participant A03 as Agent 03 Income Scorer
+    participant A04 as Agent 04 Entry Price
+    participant A05 as Agent 05 Tax Placement
+    participant DB as PostgreSQL
+
+    alt Signal-Driven Trigger
+        A02->>A12: AnalystSignal (proposal_readiness=true)
+    else On-Demand Trigger
+        User->>DASH: "Analyze O"
+        DASH->>A12: POST /proposals/generate {ticker: "O"}
+    end
+
+    Note over A12: Concurrent calls to Agents 02/03/04/05
+
+    par Parallel Assessment
+        A12->>A02: GET /signal/O
+        A02-->>A12: AnalystSignalResponse
+    and
+        A12->>A03: POST /score/ticker/O
+        A03-->>A12: IncomeScore + VETO flags
+    and
+        A12->>A04: POST /entry-price/O
+        A04-->>A12: entry zones + position size
+    and
+        A12->>A05: POST /tax-placement/O
+        A05-->>A12: recommended account type
+    end
+
+    A12->>A12: check_veto_flags(A03 response)
+    A12->>A12: compute_alignment(analyst_sentiment, platform_score, veto_flags)
+
+    Note over A12: alignment = Aligned | Partial | Divergent | Vetoed
+
+    A12->>DB: INSERT proposals (ProposalObject)
+    A12->>A02: PATCH /recommendations/{id} {platform_alignment, platform_scored_at}
+
+    A12-->>DASH: ProposalObject (dual-lens view)
+    DASH-->>User: Show proposal with Lens 1 (Analyst) + Lens 2 (Platform)
+
+    alt User executes Path A (platform-aligned)
+        User->>DASH: Execute (aligned)
+        DASH->>A12: POST /proposals/{id}/execute
+        A12->>DB: UPDATE proposals status=executed_aligned
+    else User overrides to Path B (analyst-as-stated)
+        User->>DASH: Override (with rationale)
+        Note over DASH: Requires acknowledgment if Divergent/Vetoed
+        DASH->>A12: POST /proposals/{id}/override {rationale}
+        A12->>DB: UPDATE proposals status=executed_override
+        A12->>A02: log override outcome → analyst_accuracy_log
+    else User rejects
+        User->>DASH: Reject
+        DASH->>A12: POST /proposals/{id}/reject
+        A12->>DB: UPDATE proposals status=rejected
+    end

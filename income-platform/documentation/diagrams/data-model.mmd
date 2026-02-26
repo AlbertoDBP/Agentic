@@ -1,0 +1,107 @@
+erDiagram
+    analysts {
+        int id PK
+        varchar sa_publishing_id UK
+        varchar display_name
+        boolean is_active
+        numeric overall_accuracy
+        jsonb sector_alpha
+        text philosophy_summary
+        varchar philosophy_source
+        jsonb philosophy_tags
+        vector philosophy_vector
+        int philosophy_cluster
+        int article_count
+        timestamptz last_article_fetched_at
+        timestamptz last_backtest_at
+        jsonb config
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    analyst_articles {
+        int id PK
+        int analyst_id FK
+        varchar sa_article_id UK
+        char url_hash
+        char content_hash
+        varchar title
+        text full_text
+        timestamptz published_at
+        jsonb tickers_mentioned
+        vector content_embedding
+        jsonb metadata
+        timestamptz created_at
+    }
+
+    analyst_recommendations {
+        int id PK
+        int analyst_id FK
+        int article_id FK
+        varchar ticker
+        varchar sector
+        varchar asset_class
+        varchar recommendation
+        numeric sentiment_score
+        numeric yield_at_publish
+        numeric payout_ratio
+        numeric dividend_cagr_3yr
+        numeric dividend_cagr_5yr
+        varchar safety_grade
+        varchar source_reliability
+        vector content_embedding
+        jsonb metadata
+        timestamptz published_at
+        timestamptz expires_at
+        numeric decay_weight
+        boolean is_active
+        int superseded_by FK
+        varchar platform_alignment
+        timestamptz platform_scored_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    analyst_accuracy_log {
+        int id PK
+        int analyst_id FK
+        int recommendation_id FK
+        varchar ticker
+        numeric entry_price
+        numeric price_t30
+        numeric price_t90
+        varchar outcome_label
+        numeric accuracy_delta
+        boolean dividend_cut_detected
+        jsonb metadata
+        timestamptz evaluated_at
+        timestamptz created_at
+    }
+
+    credit_overrides {
+        int id PK
+        varchar ticker UK
+        varchar override_grade
+        text rationale
+        varchar overridden_by
+        timestamptz expires_at
+        timestamptz created_at
+    }
+
+    flow_run_log {
+        varchar flow_name PK
+        timestamptz last_run_at
+        varchar last_run_status
+        int articles_processed
+        timestamptz next_scheduled_at
+        numeric duration_seconds
+        jsonb metadata
+        timestamptz created_at
+    }
+
+    analysts ||--o{ analyst_articles : "writes"
+    analysts ||--o{ analyst_recommendations : "publishes"
+    analysts ||--o{ analyst_accuracy_log : "tracked in"
+    analyst_articles ||--o{ analyst_recommendations : "source of"
+    analyst_recommendations ||--o{ analyst_accuracy_log : "evaluated in"
+    analyst_recommendations }o--o| analyst_recommendations : "superseded_by"

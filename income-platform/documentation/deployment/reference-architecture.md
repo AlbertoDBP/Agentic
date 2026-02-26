@@ -1,150 +1,167 @@
-# Market Data Service — Reference Architecture
-**Version:** 2.0.0
-**Updated:** 2026-02-23
-**Status:** Production ✅
+# Reference Architecture — Agent 02 + Agent 12
+
+**Income Fortress Platform**  
+**Date:** 2026-02-25  
+**Version:** 1.0
 
 ---
 
-## Overview
+## System Overview
 
-The Market Data Service (Agent 01) provides real-time prices, historical OHLCV, dividend history, fundamentals, and ETF metadata to all Income Fortress agents via a REST API. Version 2.0.0 replaces the single Alpha Vantage provider with a dual-primary + fallback architecture: Polygon.io for price data, Financial Modeling Prep for income data, and yfinance as a fallback.
+Agent 02 and Agent 12 form the platform's **signal acquisition and proposal pipeline**. Agent 02 is the intelligence layer — it reads, understands, and scores analyst opinions. Agent 12 is the decision layer — it synthesizes those opinions with the platform's independent assessment and presents the user with a structured proposal.
+
+The core design principle: **the platform never silently overrides an analyst.** Users always see both perspectives and make the final call.
 
 ---
 
-## System Architecture
+## Agent 02 — Architecture
 
-```mermaid
-graph TB
-    Client["External Clients\n(legatoinvest.com)"]
-    Nginx["Nginx Reverse Proxy\n(SSL / Port 443)"]
-    MDS["Market Data Service\nFastAPI / Port 8001"]
-    Router["ProviderRouter"]
-    Polygon["Polygon.io\nStocks Starter\n$29/mo"]
-    FMP["Financial Modeling Prep\nStarter Annual\n$22/mo"]
-    YF["yfinance\nFallback / Free"]
-    Valkey["Managed Valkey\n(DigitalOcean VPC)"]
-    PG["Managed PostgreSQL\n(DigitalOcean VPC)"]
+Agent 02 is a FastAPI microservice with two internal flows and one external API surface.
 
-    Client -->|"HTTPS /api/market-data/*"| Nginx
-    Nginx -->|"HTTP /stocks/* (prefix stripped)"| MDS
-    MDS --> Router
-    Router -->|"Price, OHLCV"| Polygon
-    Router -->|"Dividends, Fundamentals, ETF"| FMP
-    Router -->|"Fallback (all methods)"| YF
-    MDS <-->|"Cache TTL: 5min–24hr"| Valkey
-    MDS <-->|"Persist OHLCV"| PG
+### Two Flows
 
-    style MDS fill:#2196F3,color:#fff
-    style Router fill:#9C27B0,color:#fff
-    style Polygon fill:#FF9800,color:#fff
-    style FMP fill:#FF9800,color:#fff
-    style YF fill:#9E9E9E,color:#fff
-    style Valkey fill:#FF6B6B,color:#fff
-    style PG fill:#4CAF50,color:#fff
+**Harvester Flow** (Tue + Fri 7AM ET)
+Ingests new articles from registered SA analysts. For each article: fetch via APIDojo → HTML to Markdown → Claude Haiku extraction → OpenAI embedding → persist to PostgreSQL. Rate-limited at 10 calls/minute. Per-analyst and per-article error isolation — one failure never aborts the full run.
+
+**Intelligence Flow** (Mon 6AM ET)
+Weekly maintenance across all stored data. Four sequential processors: staleness decay (S-curve reweighting) → accuracy backtest (FMP price/dividend checks at T+30 and T+90) → philosophy synthesis (LLM summary or K-Means clustering) → consensus rebuild.
+
+### API Surface (Port 8002)
+
+```
+GET  /health                           Service health + flow status
+GET  /analysts                         List registered analysts
+POST /analysts                         Add analyst by SA author ID
+GET  /analysts/{id}                    Analyst profile + accuracy stats
+GET  /analysts/{id}/recommendations    All recs by analyst
+GET  /recommendations/{ticker}         All active recs for ticker
+GET  /consensus/{ticker}               Weighted consensus (cached 30min)
+GET  /signal/{ticker}                  Full signal → Agent 12 contract
+POST /flows/harvester/trigger          Manual harvester trigger
+POST /flows/intelligence/trigger       Manual intelligence trigger
+GET  /flows/status                     Last run status
+```
+
+### Data Architecture
+
+All tables in `platform_shared` schema (shared with Agent 01):
+
+```
+analysts               → analyst registry, accuracy, philosophy
+analyst_articles       → ingested articles with embeddings
+analyst_recommendations → extracted signals with decay weights
+analyst_accuracy_log   → backtest outcomes
+credit_overrides       → manual safety grade overrides
+flow_run_log           → flow execution history
+```
+
+pgvector IVFFlat indexes on content_embedding columns enable semantic article and thesis search.
+
+---
+
+## Agent 12 — Architecture
+
+Agent 12 is the decision interface layer. It receives signals from Agent 02 and independent assessments from Agents 03, 04, 05 — then synthesizes them into a structured proposal for the user.
+
+### Three Trigger Modes
+
+**Signal-Driven (Automatic):** Agent 02 Harvester completes → `proposal_readiness=true` → event/queue → Agent 12 generates proposal.
+
+**On-Demand (User-Initiated):** User requests proposal for ticker from dashboard → API → Agent 12.
+
+**Scheduled Re-evaluation:** Weekly — re-evaluate open proposals where price moved >10% or platform score changed ≥1 grade.
+
+### Dual-Lens Proposal Model
+
+Every proposal presents two complete pictures side by side:
+
+**Lens 1 — Analyst View:** Analyst recommendation, yield estimate, safety grade, bull/bear thesis, source reliability, entry suggestion.
+
+**Lens 2 — Platform View:** Independent income score (Agent 03), entry zone (Agent 04), tax placement (Agent 05), VETO flags.
+
+### Platform Alignment States
+
+```
+Aligned    → Both perspectives agree (divergence ≤ 0.25)
+Partial    → Mild disagreement (divergence ≤ 0.50)
+Divergent  → Significant disagreement (divergence > 0.50)
+Vetoed     → Platform VETO flags present
+```
+
+Proposals are **always generated** regardless of alignment state. Path A (platform-recommended execution) and Path B (analyst-as-stated override) are always available — except Path A is unavailable on VETO.
+
+### User Action Flows
+
+```
+Aligned/Partial:   Execute Path A  |  Execute Path B (with note)  |  Reject
+Divergent:         Execute Path A  |  Execute Path B (requires divergence acknowledgment)  |  Reject
+Vetoed:            [Path A unavailable]  |  Execute Path B (requires hard VETO acknowledgment)  |  Reject
 ```
 
 ---
 
-## Provider Routing
+## Integration Contract: Agent 02 → Agent 12
 
-```mermaid
-graph LR
-    P["get_current_price"] --> P1["Polygon"] --> P2["FMP"] --> P3["yfinance"]
-    D["get_daily_prices"] --> D1["Polygon"] --> D2["yfinance"]
-    DH["get_dividend_history"] --> DH1["FMP"] --> DH2["yfinance"]
-    F["get_fundamentals"] --> F1["FMP"] --> F2["yfinance"]
-    E["get_etf_holdings"] --> E1["FMP ❌ 404*"] --> E2["yfinance ✅"]
+Agent 12 calls `GET /signal/{ticker}` on Agent 02. The response contract:
+
+```json
+{
+  "ticker": "O",
+  "asset_class": "REIT",
+  "sector": "Real Estate",
+  "signal_strength": "strong",
+  "proposal_readiness": true,
+  "analyst": {
+    "id": 1,
+    "display_name": "Analyst Name",
+    "accuracy_overall": 0.72,
+    "sector_alpha": {"REIT": 0.81},
+    "philosophy_summary": "Focuses on high-yield sustainability...",
+    "philosophy_source": "llm"
+  },
+  "recommendation": {
+    "id": 42,
+    "label": "Buy",
+    "sentiment_score": 0.75,
+    "yield_at_publish": 0.052,
+    "payout_ratio": 0.75,
+    "safety_grade": "A",
+    "source_reliability": "EarningsCall",
+    "bull_case": "29 year dividend streak...",
+    "bear_case": "Rising rate headwind...",
+    "published_at": "2025-01-10T12:00:00Z",
+    "decay_weight": 0.85
+  },
+  "consensus": {
+    "ticker": "O",
+    "score": 0.72,
+    "confidence": "low",
+    "n_analysts": 1,
+    "n_recommendations": 1,
+    "dominant_recommendation": "Buy"
+  },
+  "generated_at": "2026-02-25T10:00:00Z"
+}
 ```
 
-*FMP ETF holdings require higher tier — yfinance handles permanently on Starter plan.
+Agent 12 writes `platform_alignment` and `platform_scored_at` back to `analyst_recommendations` after proposal generation.
 
 ---
 
-## API Endpoints
+## Technology Stack
 
-| Method | Path | Provider | Description |
-|--------|------|----------|-------------|
-| GET | `/health` | — | Service health with DB and cache status |
-| GET | `/stocks/{symbol}/price` | Polygon → FMP → yfinance | Current price |
-| GET | `/stocks/{symbol}/history` | Polygon → yfinance (DB cache) | OHLCV range. Params: `start_date`, `end_date`, `limit` |
-| GET | `/stocks/{symbol}/history/stats` | DB only | Min, max, avg, volatility, price change % |
-| POST | `/stocks/{symbol}/history/refresh` | Polygon → yfinance | Force fetch and persist |
-| GET | `/stocks/{symbol}/dividends` | FMP → yfinance | Dividend history with ex_date, payment_date, amount |
-| GET | `/stocks/{symbol}/fundamentals` | FMP → yfinance | pe_ratio, payout_ratio, debt_to_equity, FCF, sector |
-| GET | `/stocks/{symbol}/etf` | yfinance (FMP fallback) | expense_ratio, aum, covered_call, top_holdings |
-| GET | `/api/v1/providers/status` | — | Provider health and last_used timestamps |
-| GET | `/api/v1/cache/stats` | — | Cache hit/miss statistics |
-
-**Public URL:** `https://legatoinvest.com/api/market-data/stocks/{symbol}/dividends`
-**Internal URL:** `http://localhost:8001/stocks/{symbol}/dividends`
-
----
-
-## Data Flow — Dividend History
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant R as ProviderRouter
-    participant F as FMPClient
-    participant Y as YFinanceClient
-    participant V as Valkey
-
-    C->>R: get_dividend_history(AAPL)
-    R->>F: get_dividend_history(AAPL)
-    F->>V: Check fmp:dividends:AAPL
-    alt Cache hit (4hr TTL)
-        V-->>F: Cached records
-        F-->>R: Return records
-    else Cache miss
-        F->>F: GET /stable/dividends?symbol=AAPL
-        F->>V: Cache result
-        F-->>R: Return records
-    end
-    R-->>C: 90 dividend records
-
-    Note over R,Y: On FMP failure
-    R->>Y: get_dividend_history(AAPL)
-    Y->>Y: yf.Ticker(AAPL).dividends (thread pool)
-    Y-->>R: Return records
-    R-->>C: Records from yfinance
-```
-
----
-
-## Provider Capabilities Matrix
-
-| Capability | Polygon | FMP | yfinance |
-|---|---|---|---|
-| Current price | ✅ Primary | ✅ Fallback | ✅ Last resort |
-| OHLCV history | ✅ Primary (730d) | ❌ | ✅ Fallback |
-| Dividend history | ✅ Limited | ✅ Primary (90+ records) | ✅ Fallback |
-| Fundamentals | ⚠️ Limited (Starter) | ✅ Primary | ✅ Fallback |
-| ETF holdings | ❌ Not available | ❌ Requires higher tier | ✅ Primary |
-| Credit ratings | ❌ | ❌ Starter tier | ❌ |
-| Adjusted close | ✅ VWAP | ✅ | ✅ auto_adjust |
-
----
-
-## Infrastructure
-
-| Component | Provider | Notes |
-|-----------|----------|-------|
-| Droplet | DigitalOcean NYC3 | 2vCPU, 4GB RAM |
-| PostgreSQL | Managed DO | VPC-only |
-| Valkey | Managed DO | VPC-only |
-| Firewall | DO Cloud Firewall | Ports 22, 80, 443 only |
-| Polygon.io | Stocks Starter | $29/mo, 100 req/min, 730d history |
-| FMP | Starter Annual | $22/mo, 300 req/min, stable API |
-
----
-
-## Known Limitations
-
-- **FMP ETF holdings** — requires tier above Starter; yfinance serves permanently
-- **Credit ratings** — not available on any current provider tier; Income Scorer Junk Filter will need manual data or higher FMP tier
-- **`change`/`change_percent`** on price endpoint — returns 0.0 (free tier limitation)
-- **`requests_today`** on providers/status — not yet implemented
-- **Alpha Vantage** — deprecated, DB contains historical cache from Sessions 1–2
-
----
+| Layer | Technology |
+|---|---|
+| API Framework | FastAPI 0.109 |
+| ORM | SQLAlchemy 2.0 |
+| Database | PostgreSQL 16 + pgvector |
+| Cache | Valkey / Redis 7.2 |
+| Orchestration | Prefect 2.16 |
+| LLM Extraction | Claude Haiku |
+| LLM Philosophy | Claude Sonnet |
+| Embeddings | OpenAI text-embedding-3-small (1536d) |
+| Market Truth | Financial Modeling Prep API |
+| SA Ingestion | APIDojo / RapidAPI |
+| Containerization | Docker (multi-stage) |
+| Reverse Proxy | Nginx |
+| Infrastructure | DigitalOcean |

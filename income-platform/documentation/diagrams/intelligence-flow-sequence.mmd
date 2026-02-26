@@ -1,0 +1,73 @@
+sequenceDiagram
+    participant PF as Prefect Scheduler
+    participant IF as Intelligence Flow
+    participant STALE as Staleness Processor
+    participant BT as Backtest Processor
+    participant FMP as FMP API
+    participant PHI as Philosophy Processor
+    participant LLM as Claude Sonnet
+    participant CON as Consensus Processor
+    participant DB as PostgreSQL
+
+    PF->>IF: trigger (Mon 6AM ET)
+    IF->>DB: load active analysts
+
+    loop For each analyst
+
+        rect rgb(30, 40, 80)
+            Note over STALE: Step 1 — Staleness Decay
+            IF->>STALE: sweep(analyst_id)
+            STALE->>DB: load active recommendations
+            loop For each recommendation
+                STALE->>STALE: compute_decay_weight(published_at, aging_days, halflife_days)
+                Note over STALE: S-curve: 1/(1+e^(k*(days-halflife)))
+                STALE->>DB: update decay_weight
+                alt decay_weight == 0.0
+                    STALE->>DB: set is_active=False
+                end
+            end
+        end
+
+        rect rgb(30, 60, 50)
+            Note over BT: Step 2 — Accuracy Backtest
+            IF->>BT: run_backtest(analyst_id)
+            BT->>DB: load recs published >30 days ago, no backtest
+            loop For each recommendation
+                BT->>FMP: GET /historical-price-eod (T+30, T+90)
+                BT->>FMP: GET /dividends-historical (cut detection)
+                FMP-->>BT: price history + dividend events
+                BT->>BT: compute outcome_label + accuracy_delta
+                BT->>DB: insert analyst_accuracy_log
+            end
+            BT->>DB: update analyst.overall_accuracy + sector_alpha
+        end
+
+        rect rgb(60, 30, 60)
+            Note over PHI: Step 3 — Philosophy Synthesis
+            IF->>PHI: synthesize(analyst_id)
+            PHI->>DB: load analyst.article_count + article embeddings
+            alt article_count < 20
+                PHI->>LLM: summarize philosophy (Claude Sonnet)
+                LLM-->>PHI: philosophy_summary text
+                PHI->>DB: update philosophy_summary, source='llm'
+            else article_count >= 20
+                PHI->>PHI: K-Means K=5 on article embeddings
+                PHI->>DB: update philosophy_cluster, vector, tags, source='kmeans'
+            end
+        end
+
+        rect rgb(60, 50, 20)
+            Note over CON: Step 4 — Consensus Rebuild
+            IF->>CON: rebuild(analyst_id)
+            CON->>DB: load all tickers this analyst has active recs for
+            loop For each ticker
+                CON->>DB: load all active recs + analyst accuracy stats
+                CON->>CON: compute weighted consensus score
+                Note over CON: score = Σ(sentiment × accuracy × decay) / Σ(accuracy × decay)
+                CON->>DB: cache invalidation (Valkey)
+            end
+        end
+
+    end
+
+    IF->>DB: upsert flow_run_log
