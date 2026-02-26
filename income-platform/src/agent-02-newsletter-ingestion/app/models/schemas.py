@@ -5,7 +5,7 @@ Schemas: Pydantic models for API request/response validation
 Separate from SQLAlchemy models — these define the API contract,
 not the database structure.
 """
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, AliasPath
 from datetime import datetime
 from typing import Optional, List
 from decimal import Decimal
@@ -104,7 +104,7 @@ class RecommendationResponse(BaseModel):
     dividend_cagr_5yr: Optional[Decimal]
     safety_grade: Optional[str]
     source_reliability: Optional[str]
-    metadata: Optional[dict]
+    metadata: Optional[dict] = Field(None, validation_alias='rec_metadata')
     published_at: datetime
     expires_at: datetime
     decay_weight: Decimal

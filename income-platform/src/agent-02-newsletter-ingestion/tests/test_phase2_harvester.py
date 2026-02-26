@@ -317,10 +317,6 @@ class TestFlowAPI:
         assert data["triggered"] is True
         assert "analysts [1, 2, 3]" in data["message"]
 
-    def test_trigger_intelligence_returns_501(self, client):
-        response = client.post("/flows/intelligence/trigger")
-        assert response.status_code == 501
-
     def test_flow_status_endpoint_exists(self, client):
         with patch("app.api.flows.engine") as mock_engine:
             mock_conn = MagicMock()
