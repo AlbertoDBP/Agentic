@@ -12,7 +12,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -41,9 +41,22 @@ _client   = MarketDataClient()
 
 # ── Pydantic request / response models ────────────────────────────────────────
 
+class GateData(BaseModel):
+    """Optional inline gate fields — mirrors QualityGateRequest (minus ticker/asset_class)."""
+    credit_rating: Optional[str] = None
+    consecutive_positive_fcf_years: Optional[int] = None
+    dividend_history_years: Optional[int] = None
+    aum_millions: Optional[float] = None
+    track_record_years: Optional[float] = None
+    distribution_history_months: Optional[int] = None
+    duration_years: Optional[float] = None
+    issuer_type: Optional[str] = None
+
+
 class ScoreRequest(BaseModel):
     ticker: str
     asset_class: str
+    gate_data: Optional[GateData] = None
 
 
 class ScoreResponse(BaseModel):
@@ -145,60 +158,77 @@ async def _fetch_market_data(ticker: str, asset_class: str) -> dict:
     return market_data
 
 
-def _derive_dividend_years(dividend_history: list) -> Optional[int]:
-    """Count unique calendar years in dividend history."""
-    years = set()
-    for d in dividend_history or []:
-        ex_date = d.get("ex_date")
-        if ex_date:
-            try:
-                years.add(str(ex_date)[:4])
-            except (IndexError, TypeError):
-                pass
-    return len(years) if years else None
-
-
-def _run_inline_gate(ticker: str, asset_class: str, market_data: dict):
-    """Run quality gate inline using fetched market data.
+def _run_gate_from_data(ticker: str, asset_class: str, gate_data: GateData):
+    """Run quality gate using explicitly provided GateData fields.
 
     Returns a GateResult with a dynamically attached ``dividend_history_years``
     attribute so the scorer can read it without caring about the object type.
     """
-    fundamentals     = market_data.get("fundamentals")     or {}
-    dividend_history = market_data.get("dividend_history") or []
-    dividend_years   = _derive_dividend_years(dividend_history)
-
-    # Best-effort FCF year count: 1 positive year if current FCF is positive.
-    fcf       = fundamentals.get("free_cash_flow")
-    fcf_years = 1 if (fcf is not None and fcf > 0) else None
-
     ac = asset_class.upper()
     if ac in (AssetClass.DIVIDEND_STOCK, "DIVIDEND_STOCK"):
         gate_result = _gate.evaluate_dividend_stock(DividendStockGateInput(
             ticker=ticker,
-            credit_rating=fundamentals.get("credit_rating"),
-            consecutive_positive_fcf_years=fcf_years,
-            dividend_history_years=dividend_years,
+            credit_rating=gate_data.credit_rating,
+            consecutive_positive_fcf_years=gate_data.consecutive_positive_fcf_years,
+            dividend_history_years=gate_data.dividend_history_years,
         ))
 
     elif ac in (AssetClass.COVERED_CALL_ETF, "COVERED_CALL_ETF"):
-        etf_data    = market_data.get("etf_data") or {}
-        aum_raw     = etf_data.get("aum")
-        aum_millions = float(aum_raw) / 1_000_000 if aum_raw else None
         gate_result = _gate.evaluate_covered_call_etf(CoveredCallETFGateInput(
             ticker=ticker,
-            aum_millions=aum_millions,
+            aum_millions=gate_data.aum_millions,
+            track_record_years=gate_data.track_record_years,
+            distribution_history_months=gate_data.distribution_history_months,
         ))
 
     else:  # BOND or unknown
         gate_result = _gate.evaluate_bond(BondGateInput(
             ticker=ticker,
-            credit_rating=fundamentals.get("credit_rating"),
+            credit_rating=gate_data.credit_rating,
+            duration_years=gate_data.duration_years,
+            issuer_type=gate_data.issuer_type,
         ))
 
     # Attach dividend_history_years so the scorer can read it via getattr
-    gate_result.dividend_history_years = dividend_years
+    gate_result.dividend_history_years = gate_data.dividend_history_years
     return gate_result
+
+
+def _persist_gate_result(db: Session, gate_result, asset_class: str):
+    """Persist a GateResult dataclass to the database.
+
+    Returns the saved ORM QualityGateResult (with .id set) or None on failure.
+    """
+    checks = gate_result.checks
+    now = gate_result.evaluated_at
+    try:
+        db_gate = QualityGateResult(
+            ticker=gate_result.ticker,
+            asset_class=asset_class.upper(),
+            passed=gate_result.passed,
+            fail_reasons=gate_result.fail_reasons or [],
+            credit_rating=checks.get("credit_rating", {}).get("value"),
+            credit_rating_passed=checks.get("credit_rating", {}).get("passed"),
+            consecutive_fcf_years=checks.get("fcf", {}).get("value"),
+            fcf_passed=checks.get("fcf", {}).get("passed"),
+            dividend_history_years=checks.get("dividend_history", {}).get("value"),
+            dividend_history_passed=checks.get("dividend_history", {}).get("passed"),
+            etf_aum_millions=checks.get("aum", {}).get("value_millions"),
+            etf_aum_passed=checks.get("aum", {}).get("passed"),
+            etf_track_record_years=checks.get("track_record", {}).get("value_years"),
+            etf_track_record_passed=checks.get("track_record", {}).get("passed"),
+            data_quality_score=gate_result.data_quality_score,
+            evaluated_at=now,
+            valid_until=gate_result.valid_until,
+        )
+        db.add(db_gate)
+        db.commit()
+        db.refresh(db_gate)
+        return db_gate
+    except Exception as e:
+        db.rollback()
+        logger.warning("Failed to persist inline gate result for %s: %s", gate_result.ticker, e)
+        return None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -233,7 +263,8 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
     Flow:
     1. Look up the latest passing quality gate result from DB (24-h cache hit).
     2. Fetch market data from Agent 01 concurrently.
-    3. If no DB gate record, run the quality gate inline from market data.
+    3. Gate resolution: DB hit → use it; no record + no gate_data → 422;
+       gate_data provided → run inline gate, persist result, 422 if fails.
     4. Run the income scoring engine.
     5. Apply NAV erosion penalty for COVERED_CALL_ETF.
     6. Persist IncomeScore to DB.
@@ -260,14 +291,37 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         logger.error("Failed to fetch market data for %s: %s", ticker, e)
         market_data = {}
 
-    # 3. Inline gate if no DB record found
+    # 3. Gate resolution: DB hit → use it; no DB record → require gate_data or 422
     gate_proxy = gate_db
     if gate_proxy is None:
+        if req.gate_data is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"No passing quality gate record found for {ticker}. "
+                    "Run POST /quality-gate/evaluate first, or include gate data in this request."
+                ),
+            )
+        # Run gate inline from caller-supplied data
         try:
-            gate_proxy = _run_inline_gate(ticker, asset_class, market_data)
+            inline_result = _run_gate_from_data(ticker, asset_class, req.gate_data)
         except Exception as e:
-            logger.warning("Inline gate failed for %s: %s", ticker, e)
-            gate_proxy = None
+            logger.warning("Inline gate error for %s: %s", ticker, e)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Quality gate evaluation error: {e}",
+            )
+        if not inline_result.passed:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": f"Quality gate failed for {ticker}",
+                    "fail_reasons": inline_result.fail_reasons,
+                },
+            )
+        # Persist the passing inline result; update gate_db so quality_gate_id is set
+        gate_db = _persist_gate_result(db, inline_result, asset_class)
+        gate_proxy = inline_result
 
     # 4. Score
     try:
