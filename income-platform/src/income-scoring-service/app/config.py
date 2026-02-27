@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     scoring_timeout_seconds: int = 60          # per-ticker timeout
 
     class Config:
-        env_file = ".env"
+        env_file = ("../../.env", ".env")
         case_sensitive = False
 
 
