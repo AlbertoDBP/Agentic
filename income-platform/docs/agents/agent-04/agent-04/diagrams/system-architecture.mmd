@@ -1,0 +1,49 @@
+graph TB
+    subgraph Clients["Clients"]
+        A03[Agent 03\nIncome Scorer\nPort 8003]
+        A05[Agent 05\nTax Optimizer\nPort 8005]
+        EXT[External Callers]
+    end
+
+    subgraph Agent04["Agent 04 — Asset Classification Service (Port 8004)"]
+        API[FastAPI Layer\n/classify /rules /health]
+        ENGINE[Classification Engine]
+
+        subgraph Pipeline["7-Step Pipeline"]
+            OVR[1. Override Check]
+            CACHE[2. Cache Check\n24hr TTL]
+            DETECT[3. Rule Detection]
+            ENRICH[4. Enrichment\nconfidence lt 0.70]
+            BENCH[5. Benchmarks]
+            TAX[6. Tax Profile]
+            PERSIST[7. Persist + Cache]
+        end
+    end
+
+    subgraph Shared["src/shared/asset_class_detector/"]
+        DET[AssetClassDetector]
+        TAX2[taxonomy.py\n7 Classes]
+        RULES[rule_matcher.py\n4 Rule Types]
+        SEED[seed_rules.py\n19 Rules]
+    end
+
+    subgraph External["Infrastructure"]
+        A01[Agent 01\nMarket Data\nPort 8001]
+        DB[(PostgreSQL\nplatform_shared)]
+    end
+
+    A03 -->|POST /classify| API
+    A05 -->|tax_efficiency| API
+    EXT -->|POST /classify| API
+    API --> ENGINE
+    ENGINE --> OVR --> CACHE --> DETECT --> ENRICH --> BENCH --> TAX --> PERSIST
+    DETECT --> DET
+    DET --> TAX2
+    DET --> RULES
+    RULES --> SEED
+    ENRICH -->|confidence lt 0.70| A01
+    PERSIST --> DB
+
+    style Agent04 fill:#1a1a2e,stroke:#4a9eff,color:#fff
+    style Shared fill:#16213e,stroke:#4a9eff,color:#fff
+    style Pipeline fill:#0f3460,stroke:#4a9eff,color:#fff
