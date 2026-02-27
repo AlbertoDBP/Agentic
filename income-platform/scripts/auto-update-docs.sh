@@ -153,6 +153,8 @@ categorize_file() {
             # Python files - check filename patterns
             if [[ "$filename" =~ (test_|_test\.py|test\.py) ]]; then
                 echo "testing"
+            elif [[ "$filename" =~ (validate|verify|check_) ]]; then
+                echo "scripts"
             elif [[ "$filename" =~ (deploy|migration|setup) ]]; then
                 echo "deployment"
             elif [[ "$filename" =~ (agent|scorer|analyzer) ]]; then
@@ -247,12 +249,31 @@ categorize_file() {
     # === MARKDOWN FILES ===
     if [[ "$extension" == "md" ]]; then
         case "$filename" in
-            deployment-checklist*.md|operational-runbook*.md|monitoring-guide*.md|disaster-recovery*.md|*ADDENDUM.md|*deployment*.md|circuit-breaker*.md|DIGITALOCEAN*.md)
-                echo "deployment"
-                return
-                ;;
+            # === Agent and ADR docs checked FIRST — unambiguous prefixes take priority ===
             agent-[0-9]*.md|agents-[0-9]*.md|*functional*.md|*specification*.md)
                 echo "functional"
+                return
+                ;;
+            ADR-[0-9]*.md|ADR-*.md|adr-[0-9]*.md|adr-*.md)
+                echo "functional"
+                return
+                ;;
+            # === Reference architecture ===
+            reference-architecture*.md)
+                echo "architecture"
+                return
+                ;;
+            # === Platform root docs — checked before deployment/implementation to avoid false positives ===
+            DOCUMENTATION-MANIFEST.md|PACKAGE-SUMMARY.md|*-README.md|README*.md|CHANGELOG*.md|\
+            decisions-log.md|DEPLOYMENT.md|DESIGN-SUMMARY.md|DOCUMENTATION-STATUS.md|\
+            QUICKSTART.md|INTEGRATION_GUIDE.md|PLATFORM-INDEX.md|platform-index.md|\
+            AUTO-UPDATE-README.md)
+                echo "root"
+                return
+                ;;
+            # === Deployment ===
+            deployment-checklist*.md|operational-runbook*.md|monitoring-guide*.md|disaster-recovery*.md|*ADDENDUM.md|*deployment*.md|circuit-breaker*.md|DIGITALOCEAN*.md)
+                echo "deployment"
                 return
                 ;;
             implementation-*.md|*technical*.md|*design*.md)
@@ -263,17 +284,14 @@ categorize_file() {
                 echo "testing"
                 return
                 ;;
-            DOCUMENTATION-MANIFEST.md|PACKAGE-SUMMARY.md|*-README.md|README*.md|CHANGELOG*.md)
-                echo "root"
-                return
-                ;;
         esac
         
         # Fallback: Check content for markdown files
-        if grep -qi "deployment\|docker\|infrastructure\|checklist" "$filepath" 2>/dev/null; then
-            echo "deployment"
-        elif grep -qi "agent.*specification\|Agent [0-9]" "$filepath" 2>/dev/null; then
+        # Check functional/ADR content first so platform docs aren't hijacked by deployment keywords
+        if grep -qi "ADR-[0-9]\|Architecture Decision Record\|agent.*specification\|Agent [0-9]\|feature store\|income scorer" "$filepath" 2>/dev/null; then
             echo "functional"
+        elif grep -qi "docker-compose\|checklist\|operational runbook\|disaster recovery\|circuit.breaker" "$filepath" 2>/dev/null; then
+            echo "deployment"
         elif grep -qi "implementation\|technical design" "$filepath" 2>/dev/null; then
             echo "implementation"
         elif grep -qi "test.*matrix\|testing\|edge.*case" "$filepath" 2>/dev/null; then
@@ -319,6 +337,9 @@ get_target_dir() {
             ;;
         diagrams)
             echo "$DOCS_DIR/diagrams"
+            ;;
+        architecture)
+            echo "$DOCS_DIR/architecture"
             ;;
         root)
             echo "$DOCS_DIR"
@@ -478,6 +499,7 @@ mkdir -p "$DOCS_DIR/functional"
 mkdir -p "$DOCS_DIR/implementation"
 mkdir -p "$DOCS_DIR/testing"
 mkdir -p "$DOCS_DIR/diagrams"
+mkdir -p "$DOCS_DIR/architecture"
 mkdir -p "$DOCS_DIR/misc"
 mkdir -p "$PROJECT_DIR/scripts"
 
