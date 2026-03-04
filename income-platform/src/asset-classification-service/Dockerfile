@@ -1,17 +1,20 @@
-FROM python:3.13-slim
+FROM python:3.11-slim
 
-WORKDIR /service
+WORKDIR /app
 
-COPY requirements.txt .
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY src/asset-classification-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy shared utility
-COPY ../../shared /shared
+COPY src/asset-classification-service/ .
+COPY src/shared/ ./shared/
 
-COPY . .
+ENV PYTHONPATH=/app
 
-ENV PYTHONPATH=/service:/
+EXPOSE 8004
 
-RUN PYTHONPATH=/service:/  python scripts/migrate.py
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8004"]
+CMD ["sh", "-c", "python scripts/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port 8004"]
