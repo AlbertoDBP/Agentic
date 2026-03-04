@@ -67,3 +67,6 @@ temp/
 # Backups
 *.bak
 *.backup
+.env
+src/*/.env
+.env

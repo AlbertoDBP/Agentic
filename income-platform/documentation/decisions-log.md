@@ -14,11 +14,12 @@ Consolidated record of all Architecture Decision Records (ADRs) and key design d
 | [ADR-004](#adr-004) | Granular SAIS Curves (5-Zone Scoring) | 2026-01-22 | ✅ Accepted | High — Scoring precision |
 | [ADR-005](#adr-005) | Profile-Driven Circuit Breaker Auto-Enable | 2026-01-25 | ✅ Accepted | Medium — User protection |
 | [ADR-006](#adr-006) | Preference-Based Configuration System | 2026-01-28 | ✅ Accepted | High — Multi-tenancy |
+| [ADR-007](#adr-007) | Agent 05 Portfolio Data Scope Deferral | 2026-03-04 | ✅ Accepted | High — Agent 05 architecture |
 | [ADR-008](#adr-008) | Celery Queue Specialization (6 Queues) | 2026-01-31 | ✅ Accepted | Medium — Task prioritization |
 | [ADR-009](#adr-009) | Structured JSON Logging | 2026-02-01 | ✅ Accepted | Medium — Observability |
 | [ADR-010](#adr-010) | Manual Tax Breakdown Mapping (Short-Term) | 2026-02-02 | ✅ Accepted (Interim) | Low — Temporary solution |
 
-*Note: ADR-007 (Docker Compose vs Kubernetes) referenced in original summary but document not recovered. ADR-011+ planned.*
+*Note: Original ADR-007 (Docker Compose vs Kubernetes) was referenced in an earlier summary but the document was not recovered. That decision has been superseded by the current ADR-007 above.*
 
 ---
 
@@ -223,6 +224,54 @@ Essential for SaaS model. No-code configuration. JSONB allows any preference typ
 
 ---
 
+### ADR-007: Agent 05 Portfolio Data Scope Deferral {#adr-007}
+
+**Date:** 2026-03-04
+**Status:** ✅ Accepted
+**Scope:** Agent 05 — Tax Optimization Service
+**Deciders:** Alberto De Bernardi Pérez
+
+#### Context
+Agent 05 requires portfolio-level data (holdings, account types, cost basis, current prices) to perform account placement optimization and tax harvesting analysis. No portfolio persistence layer exists in the platform yet.
+
+Designing a portfolio DB schema as a side effect of Agent 05 would prematurely constrain all future agents that touch portfolios: Agent 08 (Rebalancing), Agent 09 (Income Projection), Agent 12 (Proposal). That schema belongs in a dedicated design session before Agent 08.
+
+Additionally, `current_price` was considered as a live fetch from Agent 01. This was rejected — price will be caller-supplied in v1.1, sourced from daily batch-updated portfolio positions when portfolio DB is live.
+
+#### Decision
+Agent 05 accepts portfolio data as a **request payload** in v1.1. No portfolio DB reads or writes. `current_price` supplied by caller — no Agent 01 dependency. Only DB access: read-only query to `user_preferences` by `user_id` for tax profile defaults.
+
+#### Rationale
+1. **Unblocks v1.1 delivery** — no dependency on portfolio persistence layer
+2. **Stateless compute pattern** — consistent with Agent 03 scoring approach
+3. **Schema integrity** — portfolio DB schema deserves its own design session pre-Agent 08
+4. **Reliability** — daily batch prices more consistent than real-time Agent 01 fetch
+
+#### Consequences
+| Impact | Description |
+|---|---|
+| ✅ Positive | Agent 05 ships in v1.1 as planned |
+| ✅ Positive | No new DB tables required |
+| ✅ Positive | Fully testable with mock payloads |
+| ✅ Positive | No Agent 01 dependency — simpler docker-compose |
+| ⚠️ Limitation | Callers must supply full portfolio context on every request |
+| ⚠️ Limitation | No cross-session portfolio memory in v1.1 |
+
+#### Amendment — Portfolio DB + Valkey Caching (Future)
+When portfolio DB schema is designed (pre-Agent 08 design session):
+1. Add optional `portfolio_id` parameter to `POST /analyze`
+2. If provided: fetch holdings from portfolio DB (holdings + daily-updated prices)
+3. Cache result in Valkey keyed by `portfolio_id:user_id` (TTL: 1 hour)
+4. Payload-based input remains supported as fallback
+5. `current_price` sourced from daily batch-updated portfolio positions
+
+**Revisit Trigger:** Pre-Agent 08 (Rebalancing) DESIGN phase.
+
+#### Full Document
+`documentation/functional/ADR-007-agent05-portfolio-scope.md`
+
+---
+
 ### ADR-008: Celery Queue Specialization (6 Queues) {#adr-008}
 
 **Date:** 2026-01-31
@@ -344,17 +393,28 @@ KNOWN_TAX_BREAKDOWNS = {
 | Learning loop | Quarterly, shadow portfolio | 2026-02-25 | Adaptive improvement without over-fitting |
 | VETO placement | Post-composite | 2026-02-25 | Preserves sub-score visibility for analytics and learning loop |
 
+### Agent 05 — Tax Optimization Service
+
+| Decision | Choice | Date | Rationale |
+|---|---|---|---|
+| Data access | Payload-based (ADR-007) | 2026-03-04 | No portfolio DB in v1.1 |
+| API surface | Single POST /analyze | 2026-03-04 | Clean, minimal surface |
+| Tax model | Federal only, Florida 0% state | 2026-03-04 | User context — no state tax |
+| Tax profile defaults | user_preferences → 22/15/0 | 2026-03-04 | Personalized with safe fallback |
+| Agent 04 fallback | Conservative ORDINARY_INCOME | 2026-03-04 | Never fail silently |
+| current_price source | Caller payload | 2026-03-04 | Batch prices more reliable than real-time |
+| Portfolio DB | Deferred to pre-Agent 08 | 2026-03-04 | ADR-007 — schema deserves own session |
+
 ---
 
 ## Open Questions (Pending Decision)
 
 | Question | Context | Target Agent | Priority |
 |---|---|---|---|
-| Agent 04 design scope | Benchmark comparison + class sub-scores | Agent 04 | High — design next |
+| Agent 06+ design scope | Next agents to design after Agent 05 Develop | Agent 06+ | High |
+| Portfolio DB schema | Full schema design session needed before Agent 08 | Platform | High — triggers ADR-007 amendment |
 | ML classifier training data | When to start collecting labeled ticker dataset for v2 detector | Shared | Medium |
-| Agent 05 Tax Optimizer design | Scope confirmed; design not started | Agent 05 | Medium |
 | Monte Carlo simulation count | 1K (batch) vs 10K (deep analysis) — configurable? | Agent 03 | Low |
-| ADR-007 recovery | Docker Compose vs Kubernetes decision — document missing | Platform | Low |
 
 ---
 
@@ -362,9 +422,9 @@ KNOWN_TAX_BREAKDOWNS = {
 
 | ADR | Topic | Trigger |
 |---|---|---|
-| ADR-011 | Agent 04 Asset Class Evaluator architecture | Agent 04 design phase |
-| ADR-012 | Bond Scoring Methodology | Agent 03 Phase 2 |
-| ADR-013 | Adaptive Learning Integration | Agent 03 Phase 6 |
-| ADR-014 | Kubernetes Migration Strategy | Scale threshold reached |
-| ADR-015 | Multi-Region Deployment | Production growth |
+| ADR-011 | Agent 06 design architecture | Agent 06 design phase |
+| ADR-012 | Portfolio DB Schema Design | Pre-Agent 08 design session |
+| ADR-013 | Bond Scoring Methodology | Agent 03 Phase 2 |
+| ADR-014 | Adaptive Learning Integration | Agent 03 Phase 6 |
+| ADR-015 | Kubernetes Migration Strategy | Scale threshold reached |
 | ADR-016 | ML Model Management (Asset Class Detector v2) | Post-MVP |

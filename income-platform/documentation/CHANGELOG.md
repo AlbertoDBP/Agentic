@@ -8,9 +8,41 @@ Format: [Semantic Versioning](https://semver.org/) — `[version] YYYY-MM-DD`
 ## [Unreleased]
 
 ### Planned
-- Agent 03 Phase 1–6 implementation
-- Agent 04 — Asset Class Evaluator design
-- Shared Asset Class Detector v1 implementation
+- Agent 05 — Tax Optimization Service implementation (Develop phase)
+- Agent 06+ design phases
+
+---
+
+## [0.4.0] — 2026-03-04 — Agent 05 Design Complete
+
+### Added
+- **Agent 05 — Tax Optimization Service**: Complete DESIGN phase
+  - Single endpoint `POST /analyze` returning full tax optimization analysis
+  - Four tax engine modules: TaxProfiler, AfterTaxCalculator, PlacementOptimizer, HarvestingScanner
+  - Federal-only tax model (Florida = 0% state tax)
+  - Income types: ORDINARY, QUALIFIED, ROC, SHORT_TERM
+  - Account types: TAXABLE, TRAD_IRA, ROTH, 401K
+  - Tax profile resolution: payload → user_preferences → platform defaults (22%/15%/0%)
+  - Agent 04 fallback: conservative ORDINARY_INCOME default with response flag
+  - Portfolio tax efficiency score (0–100)
+  - Placement recommendations with estimated annual $ savings
+  - Tax harvesting candidates with wash-sale flag (v1.1: flag only, no enforcement)
+  - No Agent 01 dependency — current_price supplied by caller in payload
+  - Read-only DB access to user_preferences only — no new tables in v1.1
+- **ADR-007**: Agent 05 portfolio data scope deferral
+  - Payload-based in v1.1 (no portfolio DB reads/writes)
+  - Amendment recorded: portfolio_id + Valkey caching when portfolio DB is live
+  - Revisit trigger: pre-Agent 08 portfolio schema design session
+- **Platform Skill**: `.claude/SKILL.md` created at income-platform root
+  - Project-specific documentation orchestrator — single source of truth
+  - Supersedes SKILL/SKILL.md and SKILL/platform-documentation-orchestrator-v2.md
+  - Records canonical Mac/droplet/GitHub paths
+  - Records actual documentation folder structure and naming conventions
+  - Embeds TAR → download → git → droplet-pull workflow
+
+### Changed
+- **[Unreleased] Planned**: Updated to reflect Agent 05 moving to Develop phase
+- **decisions-log.md ADR Index**: ADR-007 added, note about original ADR-007 resolved
 
 ---
 
