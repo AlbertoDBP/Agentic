@@ -1,18 +1,19 @@
 # Income Fortress Platform — Documentation Orchestrator
 ## Project-Specific Skill for Claude Chat + Claude Code
 
-**Version:** 2.0.0
+**Version:** 2.1.0
 **Last Updated:** 2026-03-04
-**Replaces:** SKILL/SKILL.md, SKILL/platform-documentation-orchestrator-v2.md (repo root)
-**Canonical Location:** `/Agentic/income-platform/.claude/SKILL.md`
+**Canonical Location:** `income-platform/.claude/SKILL.md`
+**Replaces:** SKILL/SKILL.md, SKILL/platform-documentation-orchestrator-v2.md,
+             /mnt/skills/user/platform-documentation-orchestrator/SKILL.md
 
 ---
 
 ## Purpose
 
 This skill governs how Claude generates, updates, and packages documentation for the
-Income Fortress Platform. It is the single source of truth for documentation workflow —
-used in both Claude Chat (claude.ai) and Claude Code (VS Code).
+Income Fortress Platform. It is the **single source of truth** for documentation
+workflow — used in both Claude Chat (claude.ai) and Claude Code (VS Code).
 
 ---
 
@@ -30,14 +31,33 @@ used in both Claude Chat (claude.ai) and Claude Code (VS Code).
 
 ---
 
-## Documentation Folder Structure (Actual — income-platform)
+## Live Documentation Files (Read Before Updating)
+
+These files must be **fetched and read** at the start of every Document phase.
+Never work from memory — always read the current state first.
+
+| File | Purpose | How to Get Current Content |
+|---|---|---|
+| `documentation/CHANGELOG.md` | Platform version history | Ask user to `cat` on droplet, or read from uploaded file |
+| `documentation/decisions-log.md` | All ADRs consolidated | Ask user to `cat` on droplet, or read from uploaded file |
+| `documentation/index.md` | Master agent status | Ask user to `cat` on droplet if agent status update needed |
+
+**In Claude Chat:** Ask the user to paste the content if not already in context.
+**In Claude Code:** Read directly via file tools from Mac project root.
+
+When generating updated versions of these files, always produce the **complete file**
+— never produce patch files or partial content. The user replaces the file entirely.
+
+---
+
+## Documentation Folder Structure (Actual)
 
 ```
 income-platform/
 ├── .claude/
 │   └── SKILL.md                          ← THIS FILE
 ├── documentation/
-│   ├── CHANGELOG.md                      ← Single changelog for platform
+│   ├── CHANGELOG.md                      ← Full platform changelog (replace on update)
 │   ├── CHANGELOG-market-data-service.md  ← Service-level changelogs
 │   ├── CHANGELOG-root.md
 │   ├── DOCUMENTATION-MANIFEST.md
@@ -48,46 +68,23 @@ income-platform/
 │   ├── DEPLOYMENT.md
 │   ├── QUICKSTART.md
 │   ├── README.md
-│   ├── index.md                          ← Master navigation
+│   ├── index.md                          ← Master navigation + agent status
 │   ├── reference-architecture.md
-│   ├── decisions-log.md                  ← ALL ADRs consolidated here
+│   ├── decisions-log.md                  ← ALL ADRs consolidated (replace on update)
 │   ├── architecture/                     ← Architecture docs + diagrams
 │   ├── functional/                       ← One .md per agent/component
-│   │   ├── agent-01-market-data-functional-spec.md
-│   │   ├── agent-01-market-data-sync.md
-│   │   ├── agent-01-multi-provider-architecture.md
-│   │   ├── agent-01-historical-price-queries.md
-│   │   ├── agent-02-newsletter-ingestion.md
-│   │   ├── agent-02-api-layer.md
-│   │   ├── agent-03-functional-spec.md
-│   │   ├── agent-03-income-scoring.md
-│   │   ├── agent-03-implementation-spec.md
-│   │   ├── agent-12-proposal-agent.md
-│   │   ├── agents-5-6-7-9-summary.md
-│   │   ├── ADR-001-post-scoring-llm-explanation.md
-│   │   ├── feature-store-v2.md
-│   │   ├── income-scorer-v6.md
-│   │   └── reference-architecture.md
 │   ├── implementation/                   ← Implementation specs
-│   │   ├── implementation-01-market-data.md
-│   │   ├── V2.0__nav_erosion_analysis.sql
-│   │   ├── V3.0__complete_platform_schema.sql
-│   │   ├── data_collector.py
-│   │   ├── examples.py
-│   │   ├── monte_carlo_engine.py
-│   │   └── service.py
 │   ├── deployment/                       ← Deployment guides
 │   ├── testing/                          ← Test matrices
 │   ├── diagrams/                         ← Mermaid .mmd files
-│   ├── archive/                          ← Deprecated docs
-│   └── decisions-log.md                  ← ADR index + all records
+│   └── archive/                          ← Deprecated docs
 └── src/
-    ├── market-data-service/
-    ├── agent-02-newsletter-ingestion/
-    ├── income-scoring-service/
-    ├── asset-classification-service/
-    ├── tax-optimization-service/         ← Agent 05 (Develop pending)
-    └── shared/
+    ├── market-data-service/              ← Agent 01
+    ├── agent-02-newsletter-ingestion/    ← Agent 02
+    ├── income-scoring-service/           ← Agent 03
+    ├── asset-classification-service/     ← Agent 04
+    ├── tax-optimization-service/         ← Agent 05
+    └── shared/                           ← Shared modules (asset_class_detector)
 ```
 
 ---
@@ -98,8 +95,8 @@ income-platform/
 |---|---|---|
 | Agent functional spec | `agent-NN-[name]-functional-spec.md` | `agent-05-tax-optimization-functional-spec.md` |
 | Agent implementation spec | `agent-NN-[name]-implementation-spec.md` | `agent-05-tax-optimization-implementation-spec.md` |
-| ADR (standalone) | `ADR-NNN-[slug].md` in `functional/` | `ADR-007-agent05-portfolio-scope.md` |
-| ADR (consolidated) | Append to `decisions-log.md` | New section `### ADR-007` |
+| ADR standalone file | `ADR-NNN-[slug].md` in `functional/` | `ADR-007-agent05-portfolio-scope.md` |
+| ADR consolidated entry | Section in `decisions-log.md` | `### ADR-007: ...` |
 | Service changelog | `CHANGELOG-[service-name].md` | `CHANGELOG-tax-optimization-service.md` |
 
 ---
@@ -108,82 +105,121 @@ income-platform/
 
 ADRs are maintained in **two places** — always update both:
 
-1. **Standalone file** in `documentation/functional/ADR-NNN-[slug].md`
-2. **Consolidated entry** appended to `documentation/decisions-log.md`
+1. **Standalone file** → `documentation/functional/ADR-NNN-[slug].md`
+2. **Consolidated entry** → appended to `documentation/decisions-log.md` ADR Index table + full section
 
-Current ADR index (from decisions-log.md):
-- ADR-001: Post-Scoring LLM Explanation Layer
-- ADR-002: NAV Erosion Calculation for Covered Call ETFs
-- ADR-003: ROC Tax Efficiency Tracking
-- ADR-004: Granular SAIS Curves (5-Zone Scoring)
-- ADR-005: Profile-Driven Circuit Breaker Auto-Enable
-- ADR-006: Preference-Based Configuration System
-- ADR-007: Agent 05 Portfolio Data Scope Deferral ← NEW (this session)
-- ADR-008: Celery Queue Specialization
-- ADR-009: Structured JSON Logging
-- ADR-010: Manual Tax Breakdown Mapping
+### Current ADR Registry
 
-Next ADR: **ADR-011**
+| ADR | Title | Status |
+|---|---|---|
+| ADR-001 | Post-Scoring LLM Explanation Layer | ✅ Accepted |
+| ADR-002 | NAV Erosion Calculation for Covered Call ETFs | ✅ Accepted |
+| ADR-003 | ROC Tax Efficiency Tracking | ✅ Accepted |
+| ADR-004 | Granular SAIS Curves (5-Zone Scoring) | ✅ Accepted |
+| ADR-005 | Profile-Driven Circuit Breaker Auto-Enable | ✅ Accepted |
+| ADR-006 | Preference-Based Configuration System | ✅ Accepted |
+| ADR-007 | Agent 05 Portfolio Data Scope Deferral | ✅ Accepted |
+| ADR-008 | Celery Queue Specialization (6 Queues) | ✅ Accepted |
+| ADR-009 | Structured JSON Logging | ✅ Accepted |
+| ADR-010 | Manual Tax Breakdown Mapping (Short-Term) | ✅ Accepted (Interim) |
+
+**Next ADR number: ADR-011**
 
 ---
 
 ## CHANGELOG Format
 
 File: `documentation/CHANGELOG.md`
+Versioning: Semantic — `[MAJOR.MINOR.PATCH] — YYYY-MM-DD — [Title]`
+
+Current version: **0.4.0** (Agent 05 Design Complete — 2026-03-04)
+Next version: **0.5.0** (Agent 05 Develop Complete)
 
 ```markdown
 ## [Unreleased]
 
+### Planned
+- [next planned item]
+
+---
+
+## [0.5.0] — YYYY-MM-DD — [Title]
+
 ### Added
-- **Agent 05 (Tax Optimization)**: Functional spec, implementation spec — DESIGN complete
-- **ADR-007**: Agent 05 portfolio data scope deferral
-
----
-
-## [0.4.0] — 2026-03-04 — Agent 05 Design Complete
-...
+- **Agent NN — [Name]**: [description]
 ```
 
 ---
 
-## Document Phase Workflow
+## Platform Architecture — Current State
 
-When user says **"Document"**, Claude executes this exact sequence:
+| Agent | Service Directory | Port | Status |
+|---|---|---|---|
+| 01 | `src/market-data-service` | 8001 | ✅ Production |
+| 02 | `src/agent-02-newsletter-ingestion` | 8002 | ✅ Production |
+| 03 | `src/income-scoring-service` | 8003 | ✅ Production |
+| 04 | `src/asset-classification-service` | 8004 | ✅ Production |
+| 05 | `src/tax-optimization-service` | 8005 | 🔧 Develop Pending |
 
-### Step 1 — Generate Files (Claude Chat)
+Infrastructure: DigitalOcean droplet (2 vCPU / 4GB RAM) at `138.197.78.238`,
+managed PostgreSQL, Valkey cache, Nginx + SSL at `legatoinvest.com`.
 
-Claude creates all documentation files in `/home/claude/[session-dir]/`:
+**Update this table in SKILL.md whenever an agent status changes.**
+
+---
+
+## Document Phase — Full Workflow
+
+When user says **"Document"**, execute this exact sequence:
+
+### Step 1 — Read Live Files First (CRITICAL)
+
+Before generating anything, ensure you have the current content of:
+- `documentation/CHANGELOG.md`
+- `documentation/decisions-log.md`
+
+If not already in context, ask:
+> "Before I generate the documentation package, I need the current content of
+> CHANGELOG.md and decisions-log.md. Please run on the droplet:
+> `cat /opt/Agentic/income-platform/documentation/CHANGELOG.md`
+> `cat /opt/Agentic/income-platform/documentation/decisions-log.md`"
+
+### Step 2 — Generate All Files
+
+Create files in `/home/claude/[agent-NN]-docs/` matching the exact repo structure:
 
 ```
-/home/claude/agent-NN-docs/
+[agent-NN]-docs/
+├── .claude/
+│   └── SKILL.md                          ← Updated SKILL.md (if changed)
 └── documentation/
+    ├── CHANGELOG.md                      ← COMPLETE updated file (not a patch)
+    ├── decisions-log.md                  ← COMPLETE updated file (not a patch)
     ├── functional/
     │   ├── agent-NN-[name]-functional-spec.md
-    │   └── ADR-NNN-[slug].md
+    │   └── ADR-NNN-[slug].md             ← If new ADR this session
     └── implementation/
         └── agent-NN-[name]-implementation-spec.md
 ```
 
-Plus patch files for existing docs:
-```
-/home/claude/agent-NN-docs/
-├── CHANGELOG-patch.md        ← New entry to prepend to CHANGELOG.md
-└── decisions-log-patch.md    ← New ADR entry to append to decisions-log.md
-```
+**Always produce complete replacement files for CHANGELOG.md and decisions-log.md.**
+Never produce patch files, diff files, or partial content for these two files.
 
-### Step 2 — Package as TAR
+### Step 3 — Package as TAR
 
 ```bash
 cd /home/claude
-tar -czf agent-NN-[name]-documentation.tar.gz agent-NN-docs/
+tar -czf agent-NN-[name]-documentation.tar.gz [agent-NN]-docs/
 cp agent-NN-[name]-documentation.tar.gz /mnt/user-data/outputs/
 ```
 
-### Step 3 — Present for Download
+Verify TAR contents with `tar -tzf` before presenting.
 
-Claude calls `present_files` with the TAR path.
+### Step 4 — Present for Download
 
-### Step 4 — Mac Extraction Instructions
+Call `present_files` with `/mnt/user-data/outputs/[tarfile]`.
+
+### Step 5 — Mac Extraction + File Placement
 
 User downloads TAR to `/Volumes/CH-DataOne/AlbertoDBP/Downloads/`
 
@@ -192,40 +228,51 @@ User downloads TAR to `/Volumes/CH-DataOne/AlbertoDBP/Downloads/`
 cd /Volumes/CH-DataOne/AlbertoDBP/Downloads
 tar -xzf agent-NN-[name]-documentation.tar.gz
 
-# Copy new files to project
-cp documentation/functional/*.md \
-   /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/documentation/functional/
-
-cp documentation/implementation/*.md \
-   /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/documentation/implementation/
-
-# Manually prepend CHANGELOG-patch.md content to CHANGELOG.md
-# Manually append decisions-log-patch.md content to decisions-log.md
+# Copy entire structure into project (replaces existing files)
+cp -r [agent-NN]-docs/. \
+   /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/
 ```
 
-### Step 5 — Git Commit + Push
+### Step 6 — Git Commit + Push
 
 ```bash
 cd /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform
 
-git add documentation/
+git add .
 git commit -m "docs(agent-NN): [description] — DESIGN complete"
+
+# If push is rejected (remote has newer commits):
+git pull origin main --rebase
 git push origin main
 ```
 
-### Step 6 — Droplet Sync
+### Step 7 — Droplet Sync
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 root@138.197.78.238
-cd /opt/Agentic/income-platform
-git pull origin main
+cd /opt/Agentic/income-platform && git pull origin main
 ```
+
+---
+
+## Updating SKILL.md Itself
+
+When any of the following change, update this file and include it in the TAR:
+
+| Trigger | What to Update |
+|---|---|
+| New agent deployed to production | Platform Architecture table — change status to ✅ Production |
+| New agent design started | Platform Architecture table — add row with 🔧 status |
+| New ADR created | ADR Registry table + Next ADR number |
+| New CHANGELOG version released | Current version + Next version fields |
+| New src/ service directory created | Documentation Folder Structure tree |
+| Path changes (Mac, droplet, etc.) | Project Paths table |
 
 ---
 
 ## Agent File Structure Rule (CRITICAL)
 
-All agent source files must be inside `app/` subdirectory:
+All agent source files must be inside `app/` subdirectory. Never flat in service root.
 
 ```
 src/[service-name]/
@@ -238,27 +285,26 @@ src/[service-name]/
 │   ├── api/
 │   │   ├── __init__.py
 │   │   └── routes.py
-│   └── [domain]/          ← domain logic (tax/, scoring/, etc.)
+│   └── [domain]/
 │       ├── __init__.py
 │       └── *.py
 ├── scripts/
-│   └── migrate.py         ← NOT Alembic. Run from service root.
+│   └── migrate.py         ← NOT Alembic. sys.path.insert(0, "..") at top.
 ├── tests/
+│   ├── __init__.py
 │   └── test_*.py
 ├── Dockerfile
 └── requirements.txt
 ```
 
-**Never generate files flat in the service root.**
-
 ---
 
-## Docker Patterns (CRITICAL — Learned from Agents 01-04)
+## Docker Patterns (CRITICAL — Learned from Agents 01–04)
 
 ### Python Version
-Always use `FROM python:3.11-slim` — never 3.13 (numpy/psycopg2 incompatibility).
+Always `FROM python:3.11-slim` — never 3.13 (numpy/psycopg2 incompatible).
 
-### Health Check — No curl
+### Health Check — No curl (not installed in slim images)
 ```yaml
 healthcheck:
   test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:PORT/health')"]
@@ -268,67 +314,71 @@ healthcheck:
   start_period: 30s
 ```
 
-### Build Context
-- If service uses `src/shared/`: `context: .` (income-platform root), dockerfile path explicit
-- If service is self-contained: `context: src/[service-name]`
+### Build Context Rules
+- Service uses `src/shared/` → `context: .` (income-platform root), explicit dockerfile path
+- Self-contained service → `context: src/[service-name]`
 
 ### No Alembic
-Use `scripts/migrate.py` only. Run from service root with `sys.path.insert(0, "..")`.
+`scripts/migrate.py` only. Always: `sys.path.insert(0, "..")` at top of file.
 
-### Service Dependencies
-```yaml
-depends_on:
-  [upstream-service]:
-    condition: service_healthy
+### Stale Container Cache
+If rebuilt container still shows old behavior:
+```bash
+docker rmi [image-name] --force
+docker compose build --no-cache [service]
+docker compose up -d --force-recreate [service]
 ```
-
----
-
-## Platform Architecture Summary
-
-| Agent | Service | Port | Status |
-|---|---|---|---|
-| 01 | market-data-service | 8001 | ✅ Production |
-| 02 | agent-02-newsletter-ingestion | 8002 | ✅ Production |
-| 03 | income-scoring-service | 8003 | ✅ Production |
-| 04 | asset-classification-service | 8004 | ✅ Production |
-| 05 | tax-optimization-service | 8005 | 🔧 Develop Pending |
-
-Infrastructure: DigitalOcean droplet (2 vCPU / 4GB RAM), managed PostgreSQL,
-Valkey cache, Nginx reverse proxy + SSL at legatoinvest.com.
 
 ---
 
 ## Platform Principles
 
 - **Capital preservation** — 70% safety threshold, veto power over yield-chasing
-- **No silent blocking** — explicit user acknowledgment for overrides
+- **No silent blocking** — explicit user acknowledgment for all overrides
 - **Proposal-based** — Claude recommends, user approves, never auto-execute
-- **Graceful degradation** — every upstream call has a fallback
+- **Graceful degradation** — every upstream call has a defined fallback
 - **Stateless compute** — agents calculate, don't store (unless explicitly designed to)
+- **Conservative fallback** — when upstream unavailable, flag it, never fail silently
 
 ---
 
 ## Session Workflow Directives
 
-| Command | Action |
-|---|---|
-| `Brainstorm` | Explore options, trade-offs, open questions |
-| `DESIGN` | Architecture specs, schemas, API contracts |
-| `Develop` | Implementation in Claude Code |
-| `Summarize` | Consolidated decisions + handoff doc |
-| `Review` | Gap analysis + validation checkpoint |
-| `Document` | Execute this skill → generate files → TAR → download |
-| `Quick Update` | Minor fix without full cycle |
+| Command | Action | Produces |
+|---|---|---|
+| `Brainstorm` | Explore options, trade-offs, open questions | Approaches + trade-off analysis |
+| `DESIGN` | Architecture specs, schemas, API contracts | Diagrams, specs, component designs |
+| `Develop` | Handoff to Claude Code for implementation | Working code + configs |
+| `Summarize` | Consolidated decisions + handoff doc | Decision log + implementation notes |
+| `Review` | Gap analysis + validation checkpoint | Checklist + open questions resolved |
+| `Document` | Execute this skill — generate TAR | Files ready for download + git |
+| `Quick Update` | Minor fix without full cycle | Updated specific file only |
+
+---
+
+## Claude Chat vs Claude Code — Tool Differences
+
+### Claude Chat (claude.ai)
+- ✅ Has `bash_tool`, `create_file`, `present_files` — use for Document phase
+- ✅ Strategic planning, Brainstorm, DESIGN, Review, Summarize
+- ❌ Cannot access Mac filesystem directly
+- ❌ Cannot read private GitHub repo (authentication required)
+- **Workflow:** Generate files → TAR → present_files → user downloads → user extracts + commits
+
+### Claude Code (VS Code)
+- ✅ Direct Mac filesystem access — can read/write project files
+- ✅ Can run `git` commands directly
+- ✅ Develop phase — implementation
+- ✅ Can read `.claude/SKILL.md` automatically at session start
+- **Workflow:** Read existing files → modify in place → git add/commit/push directly
 
 ---
 
 ## Skill Consolidation Note
 
-This file replaces and supersedes:
-- `/Agentic/SKILL/SKILL.md` (generic, outdated paths)
-- `/Agentic/SKILL/platform-documentation-orchestrator-v2.md` (enhanced but generic)
-- `/mnt/skills/user/platform-documentation-orchestrator/SKILL.md` (Claude Chat mount)
+This file is the **single canonical reference** for income-platform documentation.
 
-Those files can be archived or deleted. This `.claude/SKILL.md` is the single
-canonical reference for the income-platform project.
+Supersedes and replaces:
+- `/Agentic/SKILL/SKILL.md` (generic, outdated paths — archive or delete)
+- `/Agentic/SKILL/platform-documentation-orchestrator-v2.md` (archive or delete)
+- `/mnt/skills/user/platform-documentation-orchestrator/SKILL.md` (Claude Chat mount — keep for trigger, but this file governs)
