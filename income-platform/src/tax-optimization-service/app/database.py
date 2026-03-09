@@ -9,12 +9,12 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy import text
 
 from app.config import get_settings
 
@@ -22,9 +22,12 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Convert sync postgres URL to async
+# asyncpg does not support ?sslmode=require — strip it and pass ssl via connect_args
 _db_url = settings.database_url.replace(
     "postgresql://", "postgresql+asyncpg://"
-)
+).replace("?sslmode=require", "").replace("&sslmode=require", "")
+
+_connect_args = {"ssl": "require"} if "sslmode=require" in settings.database_url else {}
 
 engine = create_async_engine(
     _db_url,
@@ -32,6 +35,7 @@ engine = create_async_engine(
     max_overflow=settings.db_max_overflow,
     echo=settings.db_echo,
     future=True,
+    connect_args=_connect_args,
 )
 
 AsyncSessionLocal = async_sessionmaker(
