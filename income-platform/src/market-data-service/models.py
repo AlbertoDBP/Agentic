@@ -134,3 +134,21 @@ class ProvidersStatusResponse(BaseModel):
     polygon: ProviderInfo
     fmp: ProviderInfo
     yfinance: ProviderInfo
+    finnhub: ProviderInfo
+
+
+# ---------------------------------------------------------------------------
+# Sync endpoint — POST /stocks/{symbol}/sync
+# ---------------------------------------------------------------------------
+
+class SyncResponse(BaseModel):
+    symbol: str
+    as_of_date: date
+    securities_updated: bool
+    features_updated: bool
+    credit_rating: Optional[str] = None
+    credit_quality_proxy: Optional[str] = None
+    chowder_number: Optional[float] = None
+    yield_5yr_avg: Optional[float] = None
+    providers_used: List[str] = []
+    missing_fields: List[str] = []

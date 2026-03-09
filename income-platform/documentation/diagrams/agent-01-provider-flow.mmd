@@ -1,0 +1,59 @@
+flowchart TD
+    subgraph Endpoints["API Endpoints"]
+        EP1[GET /stocks/symbol/price]
+        EP2[GET /stocks/symbol/history]
+        EP3[GET /stocks/symbol/dividends]
+        EP4[GET /stocks/symbol/fundamentals]
+        EP5[GET /stocks/symbol/etf]
+        EP6[POST /stocks/symbol/sync\nNEW v1.1.0]
+        EP7[GET /api/v1/providers/status]
+    end
+
+    subgraph Providers["External Providers"]
+        AV[Alpha Vantage\nlegacy price]
+        POLY[Polygon.io\nhistory primary]
+        FMP[Financial Modeling Prep\nfundamentals + dividends]
+        YF[yfinance\nfallback]
+        FINN[Finnhub\nNEW credit rating]
+    end
+
+    subgraph Cache["Valkey Cache"]
+        VC[Price Cache\nTTL configurable]
+    end
+
+    subgraph DB["PostgreSQL platform_shared"]
+        SEC[(securities\nTEXT PK)]
+        FH[(features_historical)]
+        MDD[(market_data_daily)]
+        PH[(price_history)]
+    end
+
+    EP1 --> VC
+    VC -->|miss| MDD
+    MDD -->|miss| AV
+    AV --> MDD
+    AV --> VC
+
+    EP2 --> POLY
+    POLY -->|fail| FMP
+    FMP -->|fail| YF
+    POLY & FMP & YF --> PH
+
+    EP3 --> FMP
+    FMP -->|fail| YF
+
+    EP4 --> FMP
+    FMP -->|fail| YF
+    EP4 -->|fire-and-forget| SEC
+
+    EP5 --> FMP
+    FMP -->|fail| YF
+    EP5 -->|fire-and-forget| SEC
+
+    EP6 --> FMP
+    EP6 --> FINN
+    FMP -->|interest_coverage\nproxy fallback| EP6
+    EP6 --> SEC
+    EP6 --> FH
+
+    EP7 --> POLY & FMP & YF & FINN

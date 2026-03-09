@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     market_data_api_key: str          # Alpha Vantage (legacy / reference)
     polygon_api_key: str = ""         # Polygon.io Stocks Starter
     fmp_api_key: str = ""             # Financial Modeling Prep
+    finnhub_api_key: str = ""         # Finnhub (credit ratings)
     
     # Sync
     sync_interval: int = 300

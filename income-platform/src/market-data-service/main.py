@@ -7,6 +7,7 @@ Imports are loaded by file path via importlib so this file can be run directly:
 or via uvicorn:
     uvicorn main:app --host 0.0.0.0 --port 8001
 """
+import asyncio
 import importlib.util
 import logging
 import statistics as _stats
@@ -47,6 +48,9 @@ _yf       = _load("fetchers.yfinance_client",_DIR / "fetchers" / "yfinance_clien
 _router   = _load("fetchers.provider_router",_DIR / "fetchers" / "provider_router.py")
 _repo     = _load("repositories.price_repository",         _DIR / "repositories" / "price_repository.py")
 _ph_repo  = _load("repositories.price_history_repository", _DIR / "repositories" / "price_history_repository.py")
+_finn     = _load("fetchers.finnhub_client",               _DIR / "fetchers" / "finnhub_client.py")
+_srep     = _load("repositories.securities_repository",    _DIR / "repositories" / "securities_repository.py")
+_frep     = _load("repositories.features_repository",      _DIR / "repositories" / "features_repository.py")
 _svc      = _load("services.price_service",       _DIR / "services" / "price_service.py")
 _mds      = _load("services.market_data_service", _DIR / "services" / "market_data_service.py")
 
@@ -64,10 +68,14 @@ ETFHolding                = _models.ETFHolding
 StockETFResponse          = _models.StockETFResponse
 ProviderInfo              = _models.ProviderInfo
 ProvidersStatusResponse   = _models.ProvidersStatusResponse
+SyncResponse              = _models.SyncResponse
 CacheManager   = _cache.CacheManager
 DatabaseManager = _database.DatabaseManager
 PriceRepository        = _repo.PriceRepository
 PriceHistoryRepository = _ph_repo.PriceHistoryRepository
+FinnhubClient          = _finn.FinnhubClient
+SecuritiesRepository   = _srep.SecuritiesRepository
+FeaturesRepository     = _frep.FeaturesRepository
 PriceService           = _svc.PriceService
 MarketDataService      = _mds.MarketDataService
 
@@ -129,11 +137,24 @@ async def lifespan(app: FastAPI):
         if db_manager.session_factory
         else None
     )
+    securities_repo = (
+        SecuritiesRepository(db_manager.session_factory)
+        if db_manager.session_factory
+        else None
+    )
+    features_repo = (
+        FeaturesRepository(db_manager.session_factory)
+        if db_manager.session_factory
+        else None
+    )
     market_data_service = MarketDataService(
         price_history_repo=price_history_repo,
         cache_manager=cache_manager,
         polygon_api_key=settings.polygon_api_key,
         fmp_api_key=settings.fmp_api_key,
+        finnhub_api_key=settings.finnhub_api_key,
+        securities_repo=securities_repo,
+        features_repo=features_repo,
     )
     await market_data_service.connect()
 
@@ -376,7 +397,7 @@ async def get_stock_fundamentals(symbol: str):
     symbol = symbol.upper()
     try:
         data = await market_data_service.get_fundamentals(symbol)
-        return StockFundamentalsResponse(
+        response = StockFundamentalsResponse(
             symbol=symbol,
             pe_ratio=data.get("pe_ratio"),
             debt_to_equity=data.get("debt_to_equity"),
@@ -386,6 +407,21 @@ async def get_stock_fundamentals(symbol: str):
             sector=data.get("sector"),
             source="fmp",
         )
+        # Fire-and-forget: persist security metadata from fundamentals data
+        if market_data_service and market_data_service._securities_repo:
+            asyncio.ensure_future(
+                market_data_service._securities_repo.upsert_security(
+                    symbol=symbol,
+                    name=data.get("name"),
+                    asset_type=data.get("asset_type"),
+                    sector=data.get("sector"),
+                    exchange=data.get("exchange"),
+                    currency=data.get("currency"),
+                    expense_ratio=None,
+                    aum_millions=None,
+                )
+            )
+        return response
     except ValueError as e:
         logger.error(f"❌ Fundamentals not found for {symbol}: {e}")
         raise HTTPException(status_code=404, detail=str(e))
@@ -410,7 +446,7 @@ async def get_etf_data(symbol: str):
     try:
         data = await market_data_service.get_etf_holdings(symbol)
         holdings = [ETFHolding(**h) for h in data.get("top_holdings", [])]
-        return StockETFResponse(
+        response = StockETFResponse(
             symbol=symbol,
             expense_ratio=data.get("expense_ratio"),
             aum=data.get("aum"),
@@ -418,6 +454,23 @@ async def get_etf_data(symbol: str):
             top_holdings=holdings,
             source="fmp",
         )
+        # Fire-and-forget: persist ETF metadata (expense_ratio, aum_millions)
+        if market_data_service and market_data_service._securities_repo:
+            aum_raw = data.get("aum")
+            aum_millions = round(float(aum_raw) / 1_000_000, 4) if aum_raw else None
+            asyncio.ensure_future(
+                market_data_service._securities_repo.upsert_security(
+                    symbol=symbol,
+                    name=None,
+                    asset_type="ETF",
+                    sector=None,
+                    exchange=None,
+                    currency=None,
+                    expense_ratio=data.get("expense_ratio"),
+                    aum_millions=aum_millions,
+                )
+            )
+        return response
     except ValueError as e:
         logger.error(f"❌ ETF data not found for {symbol}: {e}")
         raise HTTPException(status_code=404, detail=str(e))
@@ -446,9 +499,12 @@ async def get_providers_status():
         ts = getattr(provider_class, "_last_request_time", None)
         return ts.isoformat() if ts else None
 
-    polygon_healthy = bool(router and router.polygon)
-    fmp_healthy     = bool(router and router.fmp)
-    yf_healthy      = bool(router and router.yfinance)
+    polygon_healthy  = bool(router and router.polygon)
+    fmp_healthy      = bool(router and router.fmp)
+    yf_healthy       = bool(router and router.yfinance)
+    finnhub_healthy  = bool(
+        market_data_service and market_data_service._finnhub
+    )
 
     return ProvidersStatusResponse(
         polygon=ProviderInfo(
@@ -463,7 +519,32 @@ async def get_providers_status():
             healthy=yf_healthy,
             last_used=None,  # YFinanceClient has no rate-limit timestamp
         ),
+        finnhub=ProviderInfo(
+            healthy=finnhub_healthy,
+            last_used=_last_used(_finn.FinnhubClient) if finnhub_healthy else None,
+        ),
     )
+
+
+@app.post(
+    "/stocks/{symbol}/sync",
+    response_model=SyncResponse,
+)
+async def sync_stock(symbol: str):
+    """
+    Fetch and persist key features for a stock symbol to platform_shared tables.
+
+    Calls fundamentals → dividend history → credit rating (Finnhub), then
+    upserts to platform_shared.securities and platform_shared.features_historical.
+    All DB writes are fire-and-forget — errors are logged but never surface here.
+    """
+    symbol = symbol.upper()
+    try:
+        result = await market_data_service.sync_symbol(symbol)
+        return SyncResponse(**result)
+    except Exception as e:
+        logger.error(f"❌ Sync error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/v1/cache/stats")
