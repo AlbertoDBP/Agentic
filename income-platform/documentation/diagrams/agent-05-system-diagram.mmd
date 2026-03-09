@@ -1,0 +1,28 @@
+flowchart TD
+    Client([API Client / Platform]) --> R[routes.py\nFastAPI :8005]
+
+    R -->|GET /tax/profile| PRO[profiler.py\nTax Treatment Mapper]
+    R -->|POST /tax/calculate| CAL[calculator.py\nFederal + State + NIIT]
+    R -->|POST /tax/optimize| OPT[optimizer.py\nAccount Placement Engine]
+    R -->|POST /tax/harvest| HAR[harvester.py\nLoss Harvesting Scanner]
+
+    PRO -->|asset_class missing| A04{Agent 04\n:8004}
+    A04 -->|success| PRO
+    A04 -->|timeout / error| FB[Fallback\nORDINARY_INCOME\nasset_class_fallback=true]
+    FB --> PRO
+
+    PRO --> MAP[(in-memory\n_PROFILE_MAP\n10 asset classes)]
+    CAL --> BKT[(in-memory\nIRS 2024 Brackets\n51 State Rates\nNIIT Thresholds)]
+    OPT --> PRO
+    OPT --> CAL
+    HAR --> SR[calculator._state_rate]
+
+    R -->|user_id present| DB[(PostgreSQL\nuser_preferences\nREAD-ONLY SELECT)]
+    DB -->|unavailable| GD[Graceful Degradation\nService continues]
+
+    style FB fill:#f90,color:#000
+    style GD fill:#f90,color:#000
+    style MAP fill:#e8f4e8
+    style BKT fill:#e8f4e8
+    style DB fill:#dde8ff
+    style A04 fill:#dde8ff

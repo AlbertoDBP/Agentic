@@ -1,0 +1,34 @@
+sequenceDiagram
+    participant C as Client
+    participant R as routes.py
+    participant OPT as optimizer.py
+    participant PRO as profiler.py
+    participant CAL as calculator.py
+
+    C->>R: POST /tax/optimize {holdings[], annual_income, filing_status}
+
+    loop For each holding
+        R->>OPT: optimize_portfolio(request)
+        OPT->>PRO: build_tax_profile(holding.symbol, holding.asset_class)
+        PRO-->>OPT: TaxProfileResponse(asset_class, treatment)
+
+        OPT->>CAL: calculate_tax_burden(current account_type)
+        CAL-->>OPT: current_tax_burden
+
+        alt MLP
+            OPT->>OPT: recommended = TAXABLE (UBTI rule — never in IRA)
+        else High-ordinary-income (REIT, BDC, Bond ETF, Covered Call ETF)
+            OPT->>OPT: recommended = ROTH_IRA or TRAD_IRA
+        else Tax-efficient (Dividend Stock, Preferred)
+            OPT->>OPT: recommended = TAXABLE (QDI rate is low)
+        end
+
+        OPT->>CAL: calculate_tax_burden(recommended account_type)
+        CAL-->>OPT: optimized_tax_burden
+
+        OPT->>OPT: savings = current - optimized
+        OPT->>OPT: append PlacementRecommendation if savings > $1
+    end
+
+    OPT-->>R: OptimizationResponse(savings, recommendations[])
+    R-->>C: OptimizationResponse (200 OK)

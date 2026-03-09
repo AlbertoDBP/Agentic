@@ -1,0 +1,95 @@
+classDiagram
+    class AssetClass {
+        <<enumeration>>
+        COVERED_CALL_ETF
+        DIVIDEND_STOCK
+        REIT
+        BOND_ETF
+        PREFERRED_STOCK
+        MLP
+        BDC
+        CLOSED_END_FUND
+        ORDINARY_INCOME
+        UNKNOWN
+    }
+
+    class TaxTreatment {
+        <<enumeration>>
+        QUALIFIED_DIVIDEND
+        ORDINARY_INCOME
+        RETURN_OF_CAPITAL
+        CAPITAL_GAIN_SHORT
+        CAPITAL_GAIN_LONG
+        TAX_EXEMPT
+        REIT_DISTRIBUTION
+        MLP_DISTRIBUTION
+        SECTION_1256_60_40
+    }
+
+    class AccountType {
+        <<enumeration>>
+        TAXABLE
+        TRAD_IRA
+        ROTH_IRA
+        HSA
+        FOUR01K
+    }
+
+    class FilingStatus {
+        <<enumeration>>
+        SINGLE
+        MARRIED_JOINT
+        MARRIED_SEPARATE
+        HEAD_OF_HOUSEHOLD
+    }
+
+    class TaxProfileResponse {
+        +str symbol
+        +AssetClass asset_class
+        +bool asset_class_fallback
+        +TaxTreatment primary_tax_treatment
+        +list secondary_treatments
+        +bool qualified_dividend_eligible
+        +bool section_199a_eligible
+        +bool section_1256_eligible
+        +bool k1_required
+        +list notes
+    }
+
+    class TaxCalculationResponse {
+        +str symbol
+        +float gross_distribution
+        +float federal_tax_owed
+        +float state_tax_owed
+        +float niit_owed
+        +float total_tax_owed
+        +float net_distribution
+        +float effective_tax_rate
+        +float after_tax_yield_uplift
+        +list bracket_detail
+        +list notes
+    }
+
+    class PlacementRecommendation {
+        +str symbol
+        +AccountType current_account
+        +AccountType recommended_account
+        +str reason
+        +float estimated_annual_tax_savings
+    }
+
+    class HarvestingOpportunity {
+        +str symbol
+        +float unrealized_loss
+        +float tax_savings_estimated
+        +int holding_period_days
+        +bool long_term
+        +bool wash_sale_risk
+        +str action
+        +str rationale
+    }
+
+    TaxProfileResponse --> AssetClass
+    TaxProfileResponse --> TaxTreatment
+    TaxCalculationResponse --> TaxTreatment
+    PlacementRecommendation --> AccountType

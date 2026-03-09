@@ -1,0 +1,32 @@
+sequenceDiagram
+    participant C as Client
+    participant R as routes.py
+    participant PRO as profiler.py
+    participant A04 as Agent 04 (:8004)
+    participant CAL as calculator.py
+
+    C->>R: POST /tax/calculate {symbol, distribution_amount, annual_income, ...}
+
+    R->>PRO: build_tax_profile(symbol, asset_class=None)
+    PRO->>A04: GET /classify/{symbol} (timeout: 3s)
+
+    alt Agent 04 available
+        A04-->>PRO: {asset_class: "REIT"}
+        PRO-->>R: TaxProfileResponse(asset_class=REIT, fallback=false)
+    else Agent 04 timeout / error
+        PRO-->>R: TaxProfileResponse(asset_class=ORDINARY_INCOME, fallback=true)
+    end
+
+    R->>CAL: calculate_tax_burden(request + resolved_asset_class)
+
+    alt Tax-sheltered account (IRA / 401k / HSA)
+        CAL-->>R: TaxCalculationResponse(total_tax_owed=0.0)
+    else Taxable account
+        CAL->>CAL: determine treatment (qualified / ordinary / ROC / S1256 / MLP)
+        CAL->>CAL: apply federal bracket rate
+        CAL->>CAL: apply state rate (_STATE_RATES lookup)
+        CAL->>CAL: apply NIIT if income > threshold
+        CAL-->>R: TaxCalculationResponse(federal, state, niit, net, effective_rate)
+    end
+
+    R-->>C: TaxCalculationResponse (200 OK)

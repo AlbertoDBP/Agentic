@@ -1,328 +1,336 @@
-# Agent 05 — Tax Optimization Service
-## Implementation Specification
+# Agent 05 — Tax Optimization Service: Implementation Specification
 
 **Version:** 1.0.0
-**Status:** Develop Pending
-**Port:** 8005
-**Last Updated:** 2026-03-04
+**Date:** 2026-03-09
+**Status:** Complete — Deployed Locally, Pending Production
 **Functional Spec:** `documentation/functional/agent-05-tax-optimization-functional-spec.md`
 
 ---
 
-## 1. File Structure
+## 1. Technical Design
+
+### 1.1 Architecture
+
+```
+Request
+  │
+  ▼
+app/api/routes.py          ← FastAPI route handlers (8 endpoints)
+  │
+  ├── /tax/profile/*  ──► app/tax/profiler.py
+  │                          └── Agent 04 callout (httpx, 3s timeout)
+  │                          └── _PROFILE_MAP (in-memory lookup)
+  │
+  ├── /tax/calculate/* ──► app/tax/calculator.py
+  │                          └── profiler.py (asset class resolution)
+  │                          └── IRS bracket tables (in-memory constants)
+  │                          └── State rate table (in-memory constants)
+  │
+  ├── /tax/optimize   ──► app/tax/optimizer.py
+  │                          └── profiler.py + calculator.py per holding
+  │
+  └── /tax/harvest    ──► app/tax/harvester.py
+                             └── calculator._state_rate() for loss tax value
+```
+
+### 1.2 Module Responsibilities
+
+| Module | Responsibility | External Calls |
+|---|---|---|
+| `profiler.py` | Asset class → tax treatment mapping | Agent 04 (optional) |
+| `calculator.py` | Federal + state + NIIT computation | None |
+| `optimizer.py` | Account placement recommendations | profiler + calculator |
+| `harvester.py` | Loss harvesting opportunity scoring | calculator._state_rate |
+| `routes.py` | HTTP request/response handling | None |
+| `database.py` | user_preferences read-only access | PostgreSQL (optional) |
+
+---
+
+## 2. API / Interface Details
+
+### 2.1 GET `/tax/profile/{symbol}`
+
+```
+Query params:
+  asset_class: AssetClass (optional)
+  filing_status: FilingStatus = SINGLE
+  state_code: str (2-char, optional)
+  account_type: AccountType = TAXABLE
+  annual_income: float (optional)
+
+Response: TaxProfileResponse
+  symbol: str
+  asset_class: AssetClass
+  asset_class_fallback: bool        ← True when Agent 04 unavailable
+  primary_tax_treatment: TaxTreatment
+  secondary_treatments: list[TaxTreatment]
+  qualified_dividend_eligible: bool
+  section_199a_eligible: bool
+  section_1256_eligible: bool
+  k1_required: bool
+  notes: list[str]
+```
+
+### 2.2 POST `/tax/calculate`
+
+```
+Body: TaxCalculationRequest
+  symbol: str
+  annual_income: float
+  filing_status: FilingStatus
+  state_code: str (optional)
+  account_type: AccountType
+  distribution_amount: float        ← annual gross distribution per share
+  asset_class: AssetClass (optional)
+
+Response: TaxCalculationResponse
+  gross_distribution: float
+  federal_tax_owed: float
+  state_tax_owed: float
+  niit_owed: float
+  total_tax_owed: float
+  net_distribution: float
+  effective_tax_rate: float         ← 0.0–1.0
+  after_tax_yield_uplift: float     ← vs treating as pure ordinary income
+  bracket_detail: list[TaxBracketDetail]
+  notes: list[str]
+```
+
+### 2.3 POST `/tax/optimize`
+
+```
+Body: OptimizationRequest
+  holdings: list[HoldingInput]
+    symbol, asset_class (optional), account_type, current_value, annual_yield
+  annual_income: float
+  filing_status: FilingStatus
+  state_code: str (optional)
+
+Response: OptimizationResponse
+  total_portfolio_value: float
+  current_annual_tax_burden: float
+  optimized_annual_tax_burden: float
+  estimated_annual_savings: float
+  placement_recommendations: list[PlacementRecommendation]
+    symbol, current_account, recommended_account, reason,
+    estimated_annual_tax_savings
+  summary: str
+  notes: list[str]
+```
+
+### 2.4 POST `/tax/harvest`
+
+```
+Body: HarvestingRequest
+  candidates: list[HarvestingCandidate]
+    symbol, current_value, cost_basis, holding_period_days, account_type
+  annual_income: float
+  filing_status: FilingStatus
+  state_code: str (optional)
+  wash_sale_check: bool = True
+
+Response: HarvestingResponse
+  total_harvestable_losses: float
+  total_estimated_tax_savings: float
+  opportunities: list[HarvestingOpportunity]
+    symbol, unrealized_loss, tax_savings_estimated, holding_period_days,
+    long_term, wash_sale_risk, action, rationale
+  wash_sale_warnings: list[str]
+  notes: list[str]
+```
+
+---
+
+## 3. File Structure
 
 ```
 src/tax-optimization-service/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI app + lifespan
-│   ├── config.py            # Settings via pydantic-settings
-│   ├── models.py            # All Pydantic request/response schemas
-│   ├── database.py          # Read-only DB — user_preferences only
+│   ├── models.py              # All Pydantic schemas and enums
+│   ├── config.py              # Settings via pydantic-settings
+│   ├── database.py            # Async SQLAlchemy, read-only session
+│   ├── main.py                # FastAPI app, CORS, startup/shutdown hooks
 │   ├── api/
 │   │   ├── __init__.py
-│   │   └── routes.py        # POST /analyze, GET /health
+│   │   └── routes.py          # All 8 route handlers
 │   └── tax/
 │       ├── __init__.py
-│       ├── profiler.py      # TaxProfiler
-│       ├── calculator.py    # AfterTaxCalculator
-│       ├── optimizer.py     # PlacementOptimizer
-│       └── harvester.py     # HarvestingScanner
+│       ├── profiler.py        # Tax treatment profiles + Agent 04 callout
+│       ├── calculator.py      # IRS brackets, state rates, NIIT
+│       ├── optimizer.py       # Account placement engine
+│       └── harvester.py       # Loss harvesting scanner
 ├── scripts/
-│   └── migrate.py           # No-op in v1.1
+│   └── migrate.py             # No-op — documents read-only intent
 ├── tests/
 │   ├── __init__.py
-│   ├── test_calculator.py
-│   ├── test_optimizer.py
-│   └── test_harvester.py
-├── Dockerfile
-└── requirements.txt
+│   └── test_tax_optimization.py   # 24 test cases
+├── Dockerfile                 # python:3.11-slim, port 8005
+├── requirements.txt           # Pinned for Python 3.13 arm64 (local dev)
+├── pytest.ini                 # asyncio_mode = auto
+└── docker-compose-stanza.yml  # Append to root docker-compose.yml
 ```
 
 ---
 
-## 2. Requirements
+## 4. Environment Variables
 
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `DATABASE_URL` | `postgresql://...@db:5432/income_platform` | Yes (prod) | Shared platform DB |
+| `ASSET_CLASSIFICATION_URL` | `http://asset-classification-service:8004` | No | Agent 04 base URL |
+| `LOG_LEVEL` | `INFO` | No | Logging verbosity |
+| `DEBUG` | `false` | No | FastAPI debug mode |
+
+---
+
+## 5. Dependencies & Versions
+
+### Production (Python 3.11 Docker)
 ```
-fastapi==0.115.0
-uvicorn[standard]==0.30.0
-pydantic==2.8.0
-pydantic-settings==2.4.0
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-core==2.27.1
+pydantic-settings==2.7.0
 sqlalchemy==2.0.36
-psycopg2-binary==2.9.9
-httpx==0.27.2
-pytest==8.3.3
-pytest-cov==5.0.0
-pytest-mock==3.14.0
+asyncpg==0.30.0
+httpx==0.28.1
+python-dotenv==1.0.1
 ```
 
-No numpy, no ML libraries. Pure Python math — lightest requirements of any agent.
+### Local Dev (Python 3.13 arm64 Mac)
+Same versions — all have pre-built `cp313-cp313-macosx_11_0_arm64` wheels.
+Install with `--only-binary :all:` for `pydantic` and `asyncpg`.
 
 ---
 
-## 3. Dockerfile
+## 6. Docker Configuration
 
 ```dockerfile
 FROM python:3.11-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y gcc libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
 EXPOSE 8005
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8005/health || exit 1
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005", "--workers", "1"]
 ```
 
-Build context: `src/tax-optimization-service` (self-contained — no shared/ dependency).
+**docker-compose service** depends on:
+- `db` (condition: service_healthy)
+- Optional: `asset-classification-service` (soft dependency, no condition)
 
 ---
 
-## 4. docker-compose.yml Entry
+## 7. Tax Data Maintenance
 
-```yaml
-agent-05-tax-optimization:
-  build:
-    context: src/tax-optimization-service
-    dockerfile: Dockerfile
-  container_name: agent-05-tax-optimization
-  environment:
-    - DATABASE_URL=${DATABASE_URL}
-    - REDIS_URL=${REDIS_URL}
-    - ASSET_CLASSIFICATION_SERVICE_URL=http://agent-04-asset-classification:8004
-    - SERVICE_PORT=8005
-    - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    - PYTHONUNBUFFERED=1
-  ports:
-    - "8005:8005"
-  restart: unless-stopped
-  depends_on:
-    agent-04-asset-classification:
-      condition: service_healthy
-  healthcheck:
-    test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health')"]
-    interval: 30s
-    timeout: 10s
-    retries: 3
-    start_period: 30s
-```
+The following constants in `calculator.py` require annual review each January:
 
----
-
-## 5. Module Responsibilities
-
-### app/config.py
-```python
-class Settings(BaseSettings):
-    database_url: str
-    redis_url: str
-    asset_classification_service_url: str = "http://agent-04-asset-classification:8004"
-    service_port: int = 8005
-    log_level: str = "INFO"
-    # Tax defaults
-    default_ordinary_rate: float = 0.22
-    default_qualified_rate: float = 0.15
-    default_state_rate: float = 0.0
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-```
-
-### app/database.py
-- Read-only async connection to PostgreSQL
-- Single query: `SELECT tax_profile FROM user_preferences WHERE user_id = $1`
-- Returns `TaxProfile | None`
-- No writes, no schema changes
-
-### app/tax/profiler.py — TaxProfiler
-- Input: holding with optional `tax_efficiency` block
-- If `tax_efficiency` present in payload → use it, set `tax_profile_source: "payload"`
-- If absent → call Agent 04 via `httpx.AsyncClient`
-- If Agent 04 unavailable → use `ORDINARY_INCOME` defaults, set `tax_profile_source: "conservative_default"`
-- Returns enriched holding with `tax_profile_source` field populated
-
-### app/tax/calculator.py — AfterTaxCalculator
-- Input: enriched holding + resolved `TaxProfile`
-- Output: `AfterTaxYieldRow` with yields for all 4 account types
-- Pure math, no I/O, fully unit-testable
-- Formula:
-  ```
-  taxable_yield = gross_yield * (1 - applicable_rate)
-  deferred_yield = gross_yield  (tax deferred — TradIRA/401k)
-  free_yield = gross_yield      (tax free — Roth)
-  roc_yield = gross_yield       (return of capital — no tax until sale)
-  ```
-
-### app/tax/optimizer.py — PlacementOptimizer
-- Input: list of `AfterTaxYieldRow` + current account for each holding
-- Output: ranked `PlacementRecommendation` list
-- Logic: for each holding, compare current account yield vs optimal account yield
-  → if delta > threshold (0.5% annual), generate recommendation
-  → priority: HIGH (>2%), MEDIUM (1-2%), LOW (<1%)
-- Also computes `portfolio_tax_score`, `annual_tax_drag_current`, `annual_tax_drag_optimized`
-
-### app/tax/harvester.py — HarvestingScanner
-- Input: holdings with `cost_basis` and `current_price`
-- Skip holdings where either field is absent
-- Output: `HarvestingCandidate` list for holdings with unrealized loss
-- `estimated_tax_savings = abs(unrealized_loss) * ordinary_rate`
-- `wash_sale_warning`: True if same ticker purchased within 30 days (v1.1: always False — placeholder)
-
-### scripts/migrate.py
-```python
-"""Agent 05: No migrations required in v1.1 — no new DB tables."""
-import sys
-print("Agent 05: No migrations required in v1.1")
-sys.exit(0)
-```
-
----
-
-## 6. Pydantic Models (app/models.py)
-
-```python
-# Key models — implement all in models.py
-
-class AccountType(str, Enum):
-    TAXABLE = "TAXABLE"
-    TRAD_IRA = "TRAD_IRA"
-    ROTH = "ROTH"
-    K401 = "401K"
-
-class IncomeType(str, Enum):
-    ORDINARY = "ORDINARY"
-    QUALIFIED = "QUALIFIED"
-    ROC = "ROC"
-    SHORT_TERM = "SHORT_TERM"
-
-class TaxEfficiency(BaseModel):
-    income_type: IncomeType
-    tax_drag_pct: float
-    preferred_account: AccountType
-
-class Holding(BaseModel):
-    ticker: str
-    account_type: AccountType
-    current_value: float
-    annual_income: float
-    current_price: Optional[float] = None
-    cost_basis: Optional[float] = None
-    tax_efficiency: Optional[TaxEfficiency] = None
-
-class TaxProfile(BaseModel):
-    ordinary_rate: float = 0.22
-    qualified_rate: float = 0.15
-    state_rate: float = 0.0
-
-class AnalyzeRequest(BaseModel):
-    user_id: Optional[str] = None
-    holdings: List[Holding]
-    tax_profile: Optional[TaxProfile] = None
-
-class PlacementRecommendation(BaseModel):
-    ticker: str
-    current_account: AccountType
-    recommended_account: AccountType
-    annual_savings_estimate: float
-    priority: str  # HIGH | MEDIUM | LOW
-    rationale: str
-
-class HarvestingCandidate(BaseModel):
-    ticker: str
-    current_price: float
-    cost_basis: float
-    unrealized_loss: float
-    estimated_tax_savings: float
-    wash_sale_warning: bool
-
-class AfterTaxYieldRow(BaseModel):
-    ticker: str
-    gross_yield_pct: float
-    income_type: IncomeType
-    tax_profile_source: str  # payload | agent04 | user_preferences | conservative_default
-    after_tax_yield_taxable: float
-    after_tax_yield_trad_ira: float
-    after_tax_yield_roth: float
-    current_account: AccountType
-    optimal_account: AccountType
-
-class AnalyzeResponse(BaseModel):
-    portfolio_tax_score: int
-    annual_tax_drag_current: float
-    annual_tax_drag_optimized: float
-    annual_savings_potential: float
-    after_tax_yield_table: List[AfterTaxYieldRow]
-    placement_recommendations: List[PlacementRecommendation]
-    harvesting_candidates: List[HarvestingCandidate]
-    service: str = "agent-05-tax-optimization"
-    version: str = "1.0.0"
-    timestamp: str
-```
-
----
-
-## 7. Test Cases
-
-### test_calculator.py
-```python
-# JEPI ORDINARY in TAXABLE: gross 7.0% → net 5.46% at 22%
-def test_ordinary_taxable_drag():
-    row = calculate(ticker="JEPI", gross_yield=0.07, income_type=ORDINARY,
-                    account=TAXABLE, profile=TaxProfile(ordinary_rate=0.22))
-    assert row.after_tax_yield_taxable == pytest.approx(0.0546, rel=1e-3)
-
-# SCHD QUALIFIED in TAXABLE: gross 3.5% → net 2.975% at 15%
-def test_qualified_taxable_drag():
-    ...
-
-# Any holding in ROTH: gross == net
-def test_roth_no_drag():
-    ...
-
-# ROC in TAXABLE: gross == net (deferred)
-def test_roc_no_immediate_drag():
-    ...
-```
-
-### test_optimizer.py
-```python
-# ORDINARY in TAXABLE → HIGH priority ROTH recommendation
-# QUALIFIED in ROTH → recommend move to TAXABLE
-# ROC anywhere → no recommendation (no drag)
-# Delta below threshold → no recommendation generated
-```
-
-### test_harvester.py
-```python
-# Unrealized loss → appears as candidate
-# Unrealized gain → excluded
-# Missing cost_basis → gracefully excluded
-# Missing current_price → gracefully excluded
-```
-
----
-
-## 8. Implementation Order (Claude Code)
-
-1. `app/models.py` — all Pydantic schemas first
-2. `app/config.py` — settings
-3. `app/database.py` — user_preferences read
-4. `app/tax/profiler.py` — Agent 04 call + fallback
-5. `app/tax/calculator.py` — pure math
-6. `app/tax/optimizer.py` — placement logic
-7. `app/tax/harvester.py` — harvesting logic
-8. `app/api/routes.py` — wire everything together
-9. `app/main.py` — FastAPI app + /health
-10. `scripts/migrate.py` — no-op
-11. `tests/` — unit tests
-12. `Dockerfile` + add to `docker-compose.yml`
-
----
-
-## 9. Test Tickers for Validation
-
-| Ticker | Income Type | Suggested Account |
+| Constant | Description | Last Updated |
 |---|---|---|
-| JEPI | ORDINARY | ROTH (covered call ETF — ordinary income) |
-| SCHD | QUALIFIED | TAXABLE (qualified dividends — tax-favored already) |
-| VNQ | ORDINARY/ROC mix | ROTH (REIT — mostly ordinary) |
-| BND | ORDINARY | TRAD_IRA (bond interest — fully ordinary) |
-| O | ORDINARY/ROC | ROTH or TRAD_IRA |
+| `_ORDINARY_BRACKETS` | Federal ordinary income brackets by filing status | 2024 |
+| `_QUALIFIED_BRACKETS` | Qualified dividend / LTCG brackets by filing status | 2024 |
+| `_NIIT_THRESHOLD` | NIIT income thresholds by filing status | 2024 |
+| `_STATE_RATES` | Top marginal state income tax rates (51 jurisdictions) | 2024 |
+
+---
+
+## 8. Testing & Acceptance
+
+### 8.1 Unit Tests (24 cases in `tests/test_tax_optimization.py`)
+
+| Class | Tests | Coverage |
+|---|---|---|
+| `TestTaxProfiler` | 7 | All asset classes, Agent 04 fallback paths, profile map completeness |
+| `TestTaxCalculator` | 6 | Sheltered=zero tax, ordinary rate, qualified < ordinary, ROC=zero, NIIT on/off, state tax |
+| `TestTaxOptimizer` | 3 | REIT → shelter, MLP → taxable only, savings non-negative |
+| `TestTaxHarvester` | 5 | Gain skipped, qualified loss, wash-sale flag, sheltered=no benefit, small loss=monitor |
+| `TestAPIRoutes` | 8 | All endpoints, health, 422 validation on empty inputs |
+
+### 8.2 Run Tests
+
+```bash
+cd src/tax-optimization-service
+source .venv/bin/activate
+pytest tests/ -v
+```
+
+### 8.3 Acceptance Criteria (Testable)
+
+| Criteria | Verification |
+|---|---|
+| JEPI $1k distribution, FL, $100k single → $780 net, 22% effective rate | `GET /tax/calculate/JEPI?...` |
+| REIT in TAXABLE → recommends TRAD_IRA or ROTH_IRA | `POST /tax/optimize` |
+| MLP recommendation → always TAXABLE | `POST /tax/optimize` with MLP holding |
+| $2k long-term loss, TX, $90k → HARVEST_NOW, ~$300 savings | `POST /tax/harvest` |
+| ROTH_IRA account → $0 tax on any distribution | `POST /tax/calculate` with ROTH_IRA |
+| No asset_class + Agent 04 down → `asset_class_fallback: true` in response | `GET /tax/profile/X` with Agent 04 mocked down |
+| DB unavailable → service starts and all rule-based endpoints respond | Start service without DB |
+
+### 8.4 Known Edge Cases
+
+| Edge Case | Handling |
+|---|---|
+| Agent 04 timeout (>3s) | Falls back to ORDINARY_INCOME, sets fallback flag |
+| Agent 04 returns unknown asset class | Defaults to UNKNOWN profile |
+| Distribution amount = 0 | Returns all zeros, no division error |
+| State code not in table | Returns 0% state rate (conservative) |
+| MLP in IRA input | Overrides to TAXABLE with UBTI warning |
+| Loss < $100 | MONITOR action, $0 harvesting recommended |
+| Holding period < 30 days + loss | REVIEW_WASH_SALE action + warning |
+| Sheltered account + loss | HOLD action, $0 savings |
+
+### 8.5 Performance SLAs
+
+| Endpoint | Target p99 |
+|---|---|
+| `/health` | < 50ms |
+| `/tax/asset-classes` | < 50ms |
+| `/tax/profile` (with asset_class) | < 100ms |
+| `/tax/profile` (Agent 04 callout) | < 3.5s |
+| `/tax/calculate` | < 200ms |
+| `/tax/optimize` (10 holdings) | < 500ms |
+| `/tax/harvest` (10 candidates) | < 300ms |
+
+---
+
+## 9. Deployment
+
+### Local (Mac, Python 3.13)
+
+```bash
+cd src/tax-optimization-service
+python3 -m venv .venv && source .venv/bin/activate
+pip install --only-binary :all: pydantic==2.10.3 pydantic-core==2.27.1 asyncpg==0.30.0
+pip install "fastapi==0.115.6" "uvicorn[standard]==0.32.1" pydantic-settings==2.7.0 \
+    sqlalchemy==2.0.36 httpx==0.28.1 python-dotenv==1.0.1
+uvicorn app.main:app --host 0.0.0.0 --port 8005 --reload
+```
+
+### Production (DigitalOcean Docker)
+
+```bash
+# From monorepo root
+docker compose up --build tax-optimization-service
+
+# Verify
+curl https://legatoinvest.com/api/agent05/health
+```
+
+### Migration
+
+```bash
+python scripts/migrate.py
+# Output: "Migration complete — no-op"
+```
+
+---
+
+## 10. Implementation Notes
+
+- **No Alembic** — platform standard is `scripts/migrate.py` with `sys.path.insert(0, "..")`
+- **Async throughout** — all DB and HTTP calls use `async/await`; no blocking I/O
+- **`_PROFILE_MAP` is the source of truth** — both `profiler.py` and `routes.py /tax/asset-classes` derive from it, ensuring consistency
+- **`after_tax_yield_uplift`** — expresses the tax advantage vs treating the same distribution as pure ordinary income; useful for comparing asset classes at the same yield
+- **Section 1256 note** — flagged as `section_1256_eligible: True` for all covered call ETFs as a conservative awareness flag; the actual eligibility depends on the fund's underlying holdings (futures vs. equity options)
+- **Python 3.13 local dev** — use `--only-binary :all:` for pydantic-core and asyncpg to avoid Rust compilation

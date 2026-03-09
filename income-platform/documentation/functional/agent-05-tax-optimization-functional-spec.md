@@ -1,210 +1,166 @@
-# Agent 05 — Tax Optimization Service
-## Functional Specification
+# Agent 05 — Tax Optimization Service: Functional Specification
 
 **Version:** 1.0.0
-**Status:** Design Complete — Develop Pending
+**Date:** 2026-03-09
+**Status:** Complete — Tested
 **Port:** 8005
-**Monorepo Path:** `/Agentic/income-platform/src/tax-optimization-service/`
-**Last Updated:** 2026-03-04
-**Authors:** Alberto De Bernardi Pérez + Claude (Anthropic)
+**Service Path:** `src/tax-optimization-service/`
 
 ---
 
-## 1. Purpose
+## 1. Purpose & Scope
 
-Agent 05 accepts a portfolio payload containing income holdings across account types
-and returns a complete tax optimization analysis. It calculates after-tax yield impact
-per holding, recommends optimal account placement, identifies tax harvesting candidates,
-and produces a portfolio-level tax efficiency score (0–100).
+Agent 05 provides tax intelligence for income-generating investments within the Income Fortress Platform. It determines how distributions from different asset classes are taxed, calculates after-tax yield, recommends optimal account placement to minimize tax drag, and identifies tax-loss harvesting opportunities.
 
----
-
-## 2. Scope (v1.1)
-
-**In scope:**
-- After-tax yield calculation per holding (TAXABLE / TRAD_IRA / ROTH / 401K)
-- Account placement recommendations with estimated annual $ savings
-- Tax harvesting candidate identification + wash-sale flag
-- Portfolio tax efficiency score (0–100)
-- Federal tax model only (Florida = 0% state tax)
-- Read-only `user_preferences` DB access for tax profile defaults
-
-**Out of scope (v1.1):**
-- Portfolio DB reads/writes — payload-based per ADR-007
-- State tax calculations
-- Wash-sale rule enforcement (flag only, no blocking)
-- Real-time harvesting triggers
-- Tax form generation
-- Agent 01 dependency — `current_price` supplied by caller in payload
+This service is **read-only** with respect to the platform database and has **no dependency on Agent 01 (Market Data)**. All tax logic is rule-based using annually-maintained IRS bracket tables and state rate constants.
 
 ---
 
-## 3. API
+## 2. Responsibilities
 
-### POST /analyze
-
-Single endpoint returning all outputs.
-
-**Request:**
-```json
-{
-  "user_id": "uuid-optional",
-  "holdings": [
-    {
-      "ticker": "JEPI",
-      "account_type": "TAXABLE",
-      "current_value": 25000.00,
-      "annual_income": 1750.00,
-      "current_price": 55.20,
-      "cost_basis": 23000.00,
-      "tax_efficiency": {
-        "income_type": "ORDINARY",
-        "tax_drag_pct": 0.22,
-        "preferred_account": "ROTH"
-      }
-    }
-  ],
-  "tax_profile": {
-    "ordinary_rate": 0.22,
-    "qualified_rate": 0.15,
-    "state_rate": 0.0
-  }
-}
-```
-
-Notes:
-- `tax_efficiency` is optional — fetched from Agent 04 if absent
-- `tax_profile` is optional — resolved from `user_preferences` then platform defaults
-- `cost_basis` and `current_price` are optional — required only for harvesting analysis
-- `user_id` is optional — used only to look up `user_preferences`
-
-**Response:**
-```json
-{
-  "portfolio_tax_score": 68,
-  "annual_tax_drag_current": 3240.00,
-  "annual_tax_drag_optimized": 1820.00,
-  "annual_savings_potential": 1420.00,
-  "after_tax_yield_table": [
-    {
-      "ticker": "JEPI",
-      "gross_yield_pct": 7.0,
-      "income_type": "ORDINARY",
-      "tax_profile_source": "payload",
-      "after_tax_yield_taxable": 5.46,
-      "after_tax_yield_trad_ira": 7.0,
-      "after_tax_yield_roth": 7.0,
-      "current_account": "TAXABLE",
-      "optimal_account": "ROTH"
-    }
-  ],
-  "placement_recommendations": [
-    {
-      "ticker": "JEPI",
-      "current_account": "TAXABLE",
-      "recommended_account": "ROTH",
-      "annual_savings_estimate": 385.00,
-      "priority": "HIGH",
-      "rationale": "ORDINARY income in taxable account eliminates 22% drag when moved to Roth"
-    }
-  ],
-  "harvesting_candidates": [
-    {
-      "ticker": "VNQ",
-      "current_price": 82.50,
-      "cost_basis": 91.00,
-      "unrealized_loss": -850.00,
-      "estimated_tax_savings": 187.00,
-      "wash_sale_warning": false
-    }
-  ],
-  "service": "agent-05-tax-optimization",
-  "version": "1.0.0",
-  "timestamp": "2026-03-04T22:00:00Z"
-}
-```
-
-### GET /health
-
-```json
-{
-  "status": "healthy",
-  "service": "agent-05-tax-optimization",
-  "database": "connected",
-  "port": 8005
-}
-```
+- **Tax Profiling** — Map each asset class to its expected tax treatment (qualified dividend, ordinary income, return of capital, REIT distribution, MLP distribution, Section 1256 60/40, tax-exempt)
+- **Tax Calculation** — Compute federal tax, state tax, and Net Investment Income Tax (NIIT) on a given distribution amount for a specific investor profile
+- **Account Placement Optimization** — Recommend which account type (taxable, TRAD_IRA, ROTH_IRA, HSA, 401k) best suits each holding to minimize annual tax drag
+- **Tax-Loss Harvesting Identification** — Scan positions for unrealized losses that qualify for harvesting, with wash-sale risk flagging
+- **Asset Class Fallback** — When asset class is unknown, call Agent 04; if Agent 04 is unavailable, default to `ORDINARY_INCOME` with a degradation flag
 
 ---
 
-## 4. Tax Model
+## 3. Supported Asset Classes
 
-### Income Type → Account Placement Priority
+| Asset Class | Primary Treatment | Section 199A | Section 1256 | K-1 Required |
+|---|---|---|---|---|
+| COVERED_CALL_ETF | ORDINARY_INCOME | No | Yes | No |
+| DIVIDEND_STOCK | QUALIFIED_DIVIDEND | No | No | No |
+| REIT | REIT_DISTRIBUTION | Yes | No | No |
+| BOND_ETF | ORDINARY_INCOME | No | No | No |
+| PREFERRED_STOCK | QUALIFIED_DIVIDEND | No | No | No |
+| MLP | MLP_DISTRIBUTION | Yes | No | Yes |
+| BDC | ORDINARY_INCOME | No | No | No |
+| CLOSED_END_FUND | ORDINARY_INCOME | No | No | No |
+| ORDINARY_INCOME | ORDINARY_INCOME | No | No | No |
+| UNKNOWN | ORDINARY_INCOME | No | No | No |
 
-| Income Type | Taxable Drag | Preferred Account |
+---
+
+## 4. Interfaces
+
+### 4.1 Inputs
+
+| Endpoint | Method | Key Inputs |
 |---|---|---|
-| ORDINARY_INCOME | 22%+ | ROTH > TRAD_IRA > TAXABLE |
-| QUALIFIED_DIVIDEND | 15% | TAXABLE > ROTH > TRAD_IRA |
-| RETURN_OF_CAPITAL | 0% (deferred) | TAXABLE |
-| SHORT_TERM_GAIN | 22%+ | ROTH > TRAD_IRA > TAXABLE |
+| `/health` | GET | — |
+| `/tax/asset-classes` | GET | — |
+| `/tax/profile/{symbol}` | GET/POST | symbol, asset_class (optional), filing_status, state_code, account_type, annual_income |
+| `/tax/calculate/{symbol}` | GET/POST | symbol, distribution_amount, annual_income, filing_status, state_code, account_type, asset_class |
+| `/tax/optimize` | POST | holdings[], annual_income, filing_status, state_code |
+| `/tax/harvest` | POST | candidates[], annual_income, filing_status, state_code, wash_sale_check |
 
-### Tax Profile Resolution Order
-1. `tax_profile` block in request payload
-2. `user_preferences` table (read by `user_id`)
-3. Platform defaults: `ordinary=0.22, qualified=0.15, state=0.0`
+### 4.2 Outputs
 
-### Agent 04 Fallback
-If `tax_efficiency` absent from holding AND Agent 04 unavailable:
-- Treat income as `ORDINARY_INCOME`
-- Set `"tax_profile_source": "conservative_default"`
-- Flag all affected holdings in response
+All responses are JSON. Key response fields:
 
----
-
-## 5. Portfolio Tax Score
-
-```
-score = 100 - ((annual_tax_drag_current / total_annual_income) * 100)
-Capped: 0–100
-```
-
-| Score | Interpretation |
-|---|---|
-| 80–100 | Well optimized |
-| 60–79 | Moderate opportunity |
-| 0–59 | High priority — significant tax drag |
+- **Tax Profile**: `asset_class`, `primary_tax_treatment`, `asset_class_fallback`, `qualified_dividend_eligible`, `section_199a_eligible`, `k1_required`, `notes[]`
+- **Tax Calculation**: `gross_distribution`, `federal_tax_owed`, `state_tax_owed`, `niit_owed`, `net_distribution`, `effective_tax_rate`, `after_tax_yield_uplift`
+- **Optimization**: `estimated_annual_savings`, `placement_recommendations[]`, each with `recommended_account`, `reason`, `estimated_annual_tax_savings`
+- **Harvesting**: `total_harvestable_losses`, `total_estimated_tax_savings`, `opportunities[]` with `action` (HARVEST_NOW / MONITOR / HOLD / REVIEW_WASH_SALE)
 
 ---
 
-## 6. Upstream Dependencies
+## 5. Dependencies
 
-| Service | Port | Usage | Fallback |
+| Dependency | Type | Required | Behavior if Unavailable |
 |---|---|---|---|
-| Agent 04 — Asset Classification | 8004 | Fetch `tax_efficiency` if absent | Conservative ORDINARY_INCOME + flag |
-| PostgreSQL | — | Read `user_preferences` by `user_id` | Platform defaults (22/15/0) |
-
-**No Agent 01 dependency.** `current_price` supplied by caller in payload.
-When portfolio DB is live (pre-Agent 08), price will come from daily batch-updated
-portfolio positions (ADR-007 amendment).
+| Agent 04 (Asset Classification, port 8004) | Soft | No | Defaults to ORDINARY_INCOME + `asset_class_fallback: true` flag |
+| Platform PostgreSQL DB | Soft | No | `user_preferences` read skipped; service continues |
+| External tax APIs | None | N/A | No external tax API calls — all rule-based |
 
 ---
 
-## 7. Integration Points
+## 6. Agent 04 Fallback Behavior
 
-| Direction | Agent | Data |
-|---|---|---|
-| Upstream consumer | Agent 04 (8004) | `tax_efficiency` enrichment |
-| Future downstream | Agent 08 Rebalancing | After-tax yield table per holding |
-| Future downstream | Agent 12 Proposal | Tax impact per recommended action |
+When `asset_class` is not provided in a request:
+
+1. Agent 05 calls `GET {ASSET_CLASSIFICATION_URL}/classify/{symbol}` with a 3-second timeout
+2. On success: uses the returned asset class, `asset_class_fallback: false`
+3. On any failure (timeout, 4xx, 5xx, network error): defaults to `ORDINARY_INCOME`, sets `asset_class_fallback: true`
+4. The fallback flag is always surfaced in the response — the platform never silently degrades
 
 ---
 
-## 8. Platform Alignment
+## 7. User Preferences Integration
 
-| Principle | How Agent 05 Satisfies It |
+Agent 05 reads the shared `user_preferences` table (read-only SELECT) to optionally pre-populate `filing_status`, `state_code`, `annual_income`, and `account_types` for a given `user_id`. This is an enhancement path — all endpoints function correctly without a DB connection.
+
+---
+
+## 8. Tax Logic Rules
+
+### Federal Brackets (2024 IRS)
+- 4 filing statuses: SINGLE, MARRIED_JOINT, MARRIED_SEPARATE, HEAD_OF_HOUSEHOLD
+- Ordinary income: 10% / 12% / 22% / 24% / 32% / 35% / 37%
+- Qualified dividends / LTCG: 0% / 15% / 20%
+
+### NIIT (Net Investment Income Tax)
+- 3.8% surcharge on investment income above threshold
+- Thresholds: $200k (single), $250k (married joint), $125k (married separate)
+- Does not apply to tax-exempt, return of capital, or MLP distributions
+
+### State Rates
+- 51 jurisdictions (50 states + DC) with flat approximation of top marginal rate
+- 9 states with 0% income tax: AK, FL, NV, NH, SD, TN, TX, WA, WY
+
+### Special Treatment Rules
+- **Section 1256 (futures-based ETFs)**: 60% LTCG + 40% short-term blended rate
+- **REIT/MLP distributions**: ~70% assumed return of capital, 30% ordinary income
+- **Return of Capital**: $0 tax at distribution; reduces cost basis
+- **Tax-exempt (muni bond ETFs)**: $0 federal tax
+
+### Account Sheltering Rules
+- Tax-sheltered accounts (TRAD_IRA, ROTH_IRA, HSA, 401k): $0 tax at distribution
+- MLPs: **never** placed in IRAs (UBTI — Unrelated Business Taxable Income)
+- High-ordinary-income assets (REITs, BDCs, Bond ETFs, Covered Call ETFs): shelter priority
+- Tax-efficient assets (qualified dividend stocks, preferred stock): taxable account preferred
+
+### Harvesting Rules
+- Minimum loss threshold: $100 (below this: MONITOR action)
+- Sheltered accounts: no benefit (HOLD action)
+- Wash-sale window: 30 days — flags risk if holding period < 30 days
+- All outputs are proposals only — no trades executed
+
+---
+
+## 9. Success Criteria
+
+- All 8 endpoints return correct responses within 200ms for rule-based calls
+- Agent 04 fallback activates within 3 seconds of timeout
+- Tax calculations produce results consistent with 2024 IRS bracket tables
+- Optimizer never recommends MLPs for IRA placement
+- Harvester never recommends harvesting in sheltered accounts
+- `asset_class_fallback: true` always present in response when fallback was used
+- Service starts and serves all endpoints even when DB is unavailable
+
+---
+
+## 10. Non-Functional Requirements
+
+| Requirement | Target |
 |---|---|
-| Capital preservation | Tax optimization preserves yield, not chases it |
-| Proposal-based workflow | Returns recommendations only — never executes moves |
-| User control | All placement changes are suggestions with $ savings shown |
-| No silent blocking | Conservative fallback is explicitly flagged in response |
-| Graceful degradation | Agent 04 down → result still returned with flags |
+| Response time (rule-based endpoints) | < 200ms p99 |
+| Response time (with Agent 04 callout) | < 3.5s p99 |
+| Availability | 99.5% |
+| Memory footprint | < 256MB |
+| Concurrent requests | 10+ without degradation |
+| Python version | 3.11 (Docker) / 3.13 (local dev) |
+
+---
+
+## 11. Out of Scope
+
+- Actual trade execution
+- Real-time tax rate updates (tables updated annually)
+- Full state bracket schedules (uses top marginal rate approximation)
+- UBTI quantification for MLPs in IRAs
+- Foreign tax credit calculations
+- AMT (Alternative Minimum Tax) calculations
+- Cost basis lot tracking
