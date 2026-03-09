@@ -1,0 +1,52 @@
+sequenceDiagram
+    participant U as User/Scheduler
+    participant A02 as Agent 02\nNewsletter
+    participant A01 as Agent 01\nMarket Data
+    participant A03 as Agent 03\nScoring
+    participant A08 as Agent 08\nConstructor
+    participant A09 as Agent 09\nIncome Metrics
+    participant A11 as Agent 11\nHealth
+    participant A12 as Agent 12\nProposal
+    participant DB as PostgreSQL
+    participant UI as User Interface
+
+    note over U,UI: Flow 1 — Portfolio Review (scheduled / user-initiated)
+    U->>A09: trigger portfolio review
+    A09->>DB: read positions + portfolios
+    A09->>DB: write portfolio_income_metrics
+    A09->>A11: trigger health score
+    A11->>DB: read metrics + constraints
+    A11->>DB: write portfolio_health_scores
+    A11->>A03: rescore stale positions
+    A03->>DB: write income_scores
+    A11->>A12: thresholds breached?
+    A12->>DB: read all context (Asset × Position × Portfolio)
+    A12->>UI: proposals
+    UI-->>U: notification
+
+    note over U,UI: Flow 2 — Analyst Signal
+    A02->>DB: write analyst_articles + recommendations
+    A02->>A03: score ticker
+    A03->>DB: read features_historical
+    A03->>DB: write income_scores
+    A03->>DB: cross-ref portfolios holding ticker
+    A03->>A12: actionable signal
+    A12->>UI: proposal
+    UI-->>U: notification
+
+    note over U,UI: Flow 3 — Circuit Breaker
+    A01->>DB: price/data event detected
+    A01->>DB: identify positions holding ticker
+    A01->>A03: rescore (portfolio weight context)
+    A03->>A12: severity-weighted alert
+    A12->>UI: alert / proposal
+    UI-->>U: notification
+
+    note over U,UI: Flow 4 — Portfolio Construction (Greenfield)
+    U->>A08: constraints only, no positions
+    A08->>DB: create DRAFT portfolio
+    A08->>DB: write PROPOSED positions
+    A08->>A12: rank proposals
+    A12->>UI: ranked proposal set
+    UI-->>U: review
+    U->>DB: approve → PROPOSED→ACTIVE, DRAFT→ACTIVE

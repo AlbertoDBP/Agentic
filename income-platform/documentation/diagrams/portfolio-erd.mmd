@@ -1,0 +1,160 @@
+erDiagram
+    securities {
+        TEXT symbol PK
+        TEXT name
+        TEXT asset_type
+        TEXT sector
+        TEXT exchange
+        TEXT currency
+        BOOLEAN is_active
+        DECIMAL expense_ratio
+        DECIMAL aum_millions
+        JSONB metadata
+    }
+
+    features_historical {
+        UUID id PK
+        TEXT symbol FK
+        DATE as_of_date
+        DECIMAL yield_trailing_12m
+        DECIMAL yield_5yr_avg
+        DECIMAL div_cagr_5y
+        DECIMAL chowder_number
+        DECIMAL payout_ratio
+        DECIMAL volatility_1y
+        DECIMAL interest_coverage
+        TEXT credit_rating
+        TEXT credit_quality_proxy
+        JSONB raw_features
+    }
+
+    user_preferences {
+        UUID id PK
+        UUID tenant_id
+        TEXT preference_key
+        TEXT preference_value
+        TEXT value_type
+    }
+
+    nav_snapshots {
+        UUID id PK
+        TEXT symbol FK
+        DATE snapshot_date
+        DECIMAL nav
+        DECIMAL market_price
+        DECIMAL erosion_rate_30d
+        DECIMAL erosion_rate_1y
+        BOOLEAN erosion_flag
+    }
+
+    accounts {
+        UUID id PK
+        UUID tenant_id
+        TEXT account_name
+        TEXT account_type
+        TEXT broker
+    }
+
+    portfolios {
+        UUID id PK
+        UUID tenant_id
+        UUID account_id FK
+        TEXT portfolio_name
+        TEXT status
+        DECIMAL total_value
+        DECIMAL cash_balance
+        DECIMAL health_score
+        INTEGER health_score_ttl_hours
+    }
+
+    portfolio_constraints {
+        UUID id PK
+        UUID portfolio_id FK
+        DECIMAL target_yield_pct
+        DECIMAL target_income_annual
+        DECIMAL max_position_pct
+        TEXT min_income_score_grade
+        TEXT min_chowder_signal
+        BOOLEAN exclude_nav_erosion_risk
+        JSONB sector_limits
+        INTEGER version
+        JSONB previous_constraints
+    }
+
+    positions {
+        UUID id PK
+        UUID portfolio_id FK
+        TEXT symbol FK
+        TEXT status
+        DECIMAL quantity
+        DECIMAL avg_cost_basis
+        DECIMAL current_value
+        DECIMAL annual_income
+        DECIMAL yield_on_cost
+        DECIMAL portfolio_weight_pct
+    }
+
+    transactions {
+        UUID id PK
+        UUID portfolio_id FK
+        UUID position_id FK
+        TEXT symbol FK
+        TEXT transaction_type
+        DECIMAL quantity
+        DECIMAL price
+        DECIMAL total_amount
+        TEXT tax_treatment
+        BOOLEAN wash_sale_flag
+        DATE transaction_date
+    }
+
+    dividend_events {
+        UUID id PK
+        UUID portfolio_id FK
+        UUID position_id FK
+        TEXT symbol FK
+        DATE ex_date
+        DECIMAL amount_per_share
+        DECIMAL total_amount
+        TEXT dividend_type
+        BOOLEAN reinvested
+    }
+
+    portfolio_income_metrics {
+        UUID id PK
+        UUID portfolio_id FK
+        DATE as_of_date
+        DECIMAL actual_yield_pct
+        DECIMAL actual_income_annual
+        DECIMAL income_gap_annual
+        DECIMAL weighted_avg_score
+        DECIMAL weighted_avg_chowder
+        JSONB monthly_income_schedule
+    }
+
+    portfolio_health_scores {
+        UUID id PK
+        UUID portfolio_id FK
+        TIMESTAMPTZ computed_at
+        DECIMAL score
+        TEXT grade
+        DECIMAL income_quality_score
+        DECIMAL safety_score
+        DECIMAL diversification_score
+        TEXT[] flags
+    }
+
+    securities ||--o{ features_historical : "symbol"
+    securities ||--o{ nav_snapshots : "symbol"
+    securities ||--o{ positions : "symbol"
+    securities ||--o{ transactions : "symbol"
+    securities ||--o{ dividend_events : "symbol"
+    accounts ||--o{ portfolios : "account_id"
+    portfolios ||--|| portfolio_constraints : "portfolio_id"
+    portfolios ||--o{ positions : "portfolio_id"
+    portfolios ||--o{ transactions : "portfolio_id"
+    portfolios ||--o{ dividend_events : "portfolio_id"
+    portfolios ||--o{ portfolio_income_metrics : "portfolio_id"
+    portfolios ||--o{ portfolio_health_scores : "portfolio_id"
+    positions ||--o{ transactions : "position_id"
+    positions ||--o{ dividend_events : "position_id"
