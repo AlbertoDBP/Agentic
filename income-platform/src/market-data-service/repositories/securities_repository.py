@@ -35,6 +35,7 @@ class SecuritiesRepository:
         suppressed — this method never raises.
         """
         try:
+            currency = currency or "USD"
             stmt = text("""
                 INSERT INTO platform_shared.securities
                     (symbol, name, asset_type, sector, exchange, currency,
