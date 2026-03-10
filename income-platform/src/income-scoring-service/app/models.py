@@ -63,11 +63,11 @@ class QualityGateResult(Base):
     data_quality_score = Column(Float, nullable=True)  # 0-100 confidence
     evaluated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     valid_until = Column(DateTime, nullable=True)       # cache expiry
-    scoring_run_id = Column(UUID(as_uuid=True), ForeignKey("scoring_runs.id"), nullable=True)
+    scoring_run_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_runs.id"), nullable=True)
 
     __table_args__ = (
         Index("ix_qg_ticker_evaluated", "ticker", "evaluated_at"),
-        {"schema": None},  # resolved by search_path
+        {"schema": "platform_shared"},
     )
 
     def __repr__(self):
@@ -137,12 +137,13 @@ class IncomeScore(Base):
     # ── Metadata ──────────────────────────────────────────────────────────────
     scored_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     valid_until = Column(DateTime, nullable=True)
-    scoring_run_id = Column(UUID(as_uuid=True), ForeignKey("scoring_runs.id"), nullable=True)
-    quality_gate_id = Column(UUID(as_uuid=True), ForeignKey("quality_gate_results.id"), nullable=True)
+    scoring_run_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_runs.id"), nullable=True)
+    quality_gate_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.quality_gate_results.id"), nullable=True)
 
     __table_args__ = (
         Index("ix_income_scores_ticker_scored", "ticker", "scored_at"),
         Index("ix_income_scores_recommendation", "recommendation"),
+        {"schema": "platform_shared"},
     )
 
     def __repr__(self):
@@ -189,6 +190,7 @@ class ScoringRun(Base):
     __table_args__ = (
         Index("ix_scoring_runs_started", "started_at"),
         Index("ix_scoring_runs_status", "status"),
+        {"schema": "platform_shared"},
     )
 
     def __repr__(self):
