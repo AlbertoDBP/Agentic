@@ -8,6 +8,7 @@ On any connection error or non-200 response: log warning and return {} or [].
 import logging
 from typing import Any
 
+import asyncpg
 import httpx
 
 from app.config import settings
@@ -75,6 +76,44 @@ class MarketDataClient:
         Returns dict with symbol, price, volume, timestamp, source.
         """
         return await self._get(f"/stocks/{ticker}/price")
+
+    async def get_features(self, ticker: str) -> dict:
+        """Query platform_shared.features_historical for the latest feature row.
+
+        Returns dict with keys: yield_trailing_12m, div_cagr_5y, chowder_number,
+        yield_5yr_avg, credit_rating, credit_quality_proxy.
+        Returns empty dict on any error — never raises.
+        """
+        try:
+            db_url = settings.database_url
+            # Strip query-string params (e.g. ?sslmode=require) — asyncpg takes ssl= separately
+            if "?" in db_url:
+                db_url = db_url.split("?")[0]
+            # Normalize to plain postgresql:// for asyncpg
+            db_url = (
+                db_url
+                .replace("postgresql+psycopg2://", "postgresql://")
+                .replace("postgresql+asyncpg://", "postgresql://")
+            )
+            conn = await asyncpg.connect(db_url, ssl="require")
+            try:
+                row = await conn.fetchrow(
+                    """
+                    SELECT yield_trailing_12m, div_cagr_5y, chowder_number,
+                           yield_5yr_avg, credit_rating, credit_quality_proxy
+                    FROM platform_shared.features_historical
+                    WHERE symbol = $1
+                    ORDER BY as_of_date DESC
+                    LIMIT 1
+                    """,
+                    ticker,
+                )
+            finally:
+                await conn.close()
+            return dict(row) if row is not None else {}
+        except Exception as e:
+            logger.warning("get_features failed for %s: %s", ticker, e)
+            return {}
 
     # ------------------------------------------------------------------
     # Internal helper

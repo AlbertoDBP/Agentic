@@ -72,6 +72,8 @@ class ScoreResponse(BaseModel):
     recommendation: str
     factor_details: dict
     nav_erosion_details: Optional[dict] = None
+    chowder_number: Optional[float] = None
+    chowder_signal: Optional[str] = None
     data_quality_score: float
     data_completeness_pct: float
     scored_at: datetime
@@ -102,6 +104,8 @@ def _orm_to_response(score: IncomeScore) -> ScoreResponse:
         recommendation=score.recommendation,
         factor_details=score.factor_details or {},
         nav_erosion_details=score.nav_erosion_details,
+        chowder_number=score.factor_details.get("chowder_number") if score.factor_details else None,
+        chowder_signal=score.factor_details.get("chowder_signal") if score.factor_details else None,
         data_quality_score=score.data_quality_score or 0.0,
         data_completeness_pct=score.data_completeness_pct or 0.0,
         scored_at=score.scored_at,
@@ -126,6 +130,8 @@ def _result_to_response(
         recommendation=result.recommendation,
         factor_details=result.factor_details,
         nav_erosion_details=nav_erosion_details,
+        chowder_number=result.chowder_number,
+        chowder_signal=result.chowder_signal,
         data_quality_score=result.data_quality_score,
         data_completeness_pct=result.data_completeness_pct,
         scored_at=scored_at,
@@ -143,6 +149,7 @@ async def _fetch_market_data(ticker: str, asset_class: str) -> dict:
         "dividend_history": _client.get_dividend_history(ticker),
         "history_stats":   _client.get_history_stats(ticker, start_date, end_date),
         "current_price":   _client.get_current_price(ticker),
+        "features":        _client.get_features(ticker),
     }
     if asset_class in (AssetClass.COVERED_CALL_ETF, "COVERED_CALL_ETF"):
         tasks["etf_data"] = _client.get_etf_data(ticker)

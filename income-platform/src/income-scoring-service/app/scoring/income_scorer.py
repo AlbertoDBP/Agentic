@@ -22,6 +22,34 @@ logger = logging.getLogger(__name__)
 # Number of scoreable dimensions (used for data_completeness_pct).
 _TOTAL_FIELDS = 8
 
+CHOWDER_THRESHOLDS = {
+    "DIVIDEND_STOCK":   {"attractive": 12.0, "floor": 8.0},
+    "COVERED_CALL_ETF": {"attractive": 8.0,  "floor": 5.0},
+    "BOND":             {"attractive": 8.0,  "floor": 5.0},
+}
+
+
+def _chowder_signal_from_number(chowder: float, asset_class: str) -> str:
+    """Classify a pre-computed chowder number against the asset-class thresholds."""
+    t = CHOWDER_THRESHOLDS.get(asset_class.upper(), CHOWDER_THRESHOLDS["DIVIDEND_STOCK"])
+    if chowder >= t["attractive"]:
+        return "ATTRACTIVE"
+    elif chowder >= t["floor"]:
+        return "BORDERLINE"
+    else:
+        return "UNATTRACTIVE"
+
+
+def _compute_chowder(
+    yield_ttm: Optional[float],
+    div_cagr_5y: Optional[float],
+    asset_class: str,
+) -> tuple[Optional[float], Optional[str]]:
+    if yield_ttm is None or div_cagr_5y is None:
+        return None, "INSUFFICIENT_DATA"
+    chowder = yield_ttm + div_cagr_5y
+    return round(chowder, 4), _chowder_signal_from_number(chowder, asset_class)
+
 
 # ── Result dataclass ──────────────────────────────────────────────────────────
 
@@ -48,6 +76,10 @@ class ScoreResult:
     factor_details: dict = field(default_factory=dict)
     data_quality_score: float = 100.0
     data_completeness_pct: float = 100.0
+
+    # Chowder Rule
+    chowder_number: Optional[float] = None
+    chowder_signal: Optional[str] = None
 
 
 # ── Scorer ────────────────────────────────────────────────────────────────────
@@ -293,7 +325,7 @@ class IncomeScorer:
             },
         }
 
-        return ScoreResult(
+        result = ScoreResult(
             ticker=ticker,
             asset_class=asset_class,
             valuation_yield_score=float(valuation_yield_score),
@@ -308,6 +340,26 @@ class IncomeScorer:
             data_quality_score=data_quality_score,
             data_completeness_pct=data_completeness_pct,
         )
+
+        features  = market_data.get("features", {})
+        yield_ttm = features.get("yield_trailing_12m")
+        div_cagr5 = features.get("div_cagr_5y")
+
+        # Prefer pre-computed chowder_number from features_historical when
+        # yield_ttm is unavailable but the DB already has the figure.
+        if features.get("chowder_number") is not None and yield_ttm is None:
+            chowder_number = float(features["chowder_number"])
+            chowder_signal = _chowder_signal_from_number(chowder_number, asset_class)
+        else:
+            chowder_number, chowder_signal = _compute_chowder(
+                yield_ttm, div_cagr5, asset_class
+            )
+        result.chowder_number = chowder_number
+        result.chowder_signal = chowder_signal
+        result.factor_details["chowder_number"] = chowder_number
+        result.factor_details["chowder_signal"] = chowder_signal
+
+        return result
 
     # ------------------------------------------------------------------
     # Classification helpers (static so API layer can call them post-penalty)

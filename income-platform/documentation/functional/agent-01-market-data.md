@@ -2,103 +2,111 @@
 
 **Version:** 1.1.0
 **Date:** 2026-03-09
+**Status:** v1.0.0 deployed → v1.1.0 pending deploy
 **Port:** 8001
-**Status:** ✅ Deployed — v1.1.0 update ready for deployment
+**Service directory:** `src/market-data-service/`
 
 ---
 
 ## Purpose & Scope
 
-Agent 01 is the data foundation of the Income Fortress Platform. It is the sole
-service responsible for fetching, caching, and persisting market data from external
-providers. All other agents consume data that Agent 01 has written to the shared
-database or cache.
+Agent 01 is the data foundation of the Income Fortress Platform. It fetches,
+caches, and persists market data from multiple external providers. In v1.1.0 it
+gains two new responsibilities:
 
-**v1.1.0 additions:**
-- Finnhub as 4th provider for credit ratings
-- `platform_shared.securities` auto-population (lazy upsert)
-- `platform_shared.features_historical` population via `/sync` endpoint
-- SEC EDGAR interest coverage proxy fallback for credit quality
+1. **Securities registry population** — auto-upserts to `platform_shared.securities`
+   on every fundamentals and ETF fetch (lazy, fire-and-forget)
+2. **Feature history writing** — full feature sync via `POST /stocks/{symbol}/sync`,
+   writing to `platform_shared.features_historical` including Chowder Number,
+   5yr avg yield, and credit quality proxy
 
 ---
 
 ## Responsibilities
 
-1. Fetch current price data (Polygon → FMP → yfinance cascade)
-2. Fetch and persist historical OHLCV price data
-3. Fetch dividend history and compute yield metrics
-4. Fetch fundamental metrics (PE, payout ratio, debt/equity, FCF)
-5. Fetch ETF metadata and top holdings
-6. **[v1.1.0]** Fetch credit ratings from Finnhub
-7. **[v1.1.0]** Upsert ticker metadata to `platform_shared.securities` (lazy, on every fundamentals/ETF call)
-8. **[v1.1.0]** Write full feature vector to `platform_shared.features_historical` (via `/sync`)
-9. Manage Valkey cache with configurable TTL
-10. Report provider health status
+### v1.0.0 (existing, unchanged)
+- Fetch current prices — Polygon → FMP → yfinance cascade
+- Fetch historical OHLCV prices
+- Fetch dividend history
+- Fetch fundamentals (PE, payout ratio, debt/equity, FCF, market cap, sector)
+- Fetch ETF metadata and top holdings
+- Cache all responses in Valkey (TTL configurable)
+- Persist price and price history to database
+
+### v1.1.0 (new)
+- Fetch credit ratings from Finnhub (4th provider)
+- Compute `credit_quality_proxy` from rating or FMP `interest_coverage` fallback
+- Compute `chowder_number` = `yield_trailing_12m + div_cagr_5y`
+- Compute `yield_5yr_avg` from last 5 years of annual dividend yield history
+- Auto-upsert symbol metadata to `platform_shared.securities` (lazy, on fundamentals + ETF)
+- Write full feature vector to `platform_shared.features_historical` (via /sync)
 
 ---
 
 ## Provider Cascade
 
-| Data Type | Primary | Secondary | Tertiary | Quaternary |
-|-----------|---------|-----------|----------|------------|
-| Price (current) | Alpha Vantage (legacy) | — | — | — |
-| Price (history) | Polygon | FMP | yfinance | — |
-| Dividends | FMP | yfinance | — | — |
-| Fundamentals | FMP | yfinance | — | — |
-| ETF metadata | FMP | yfinance | — | — |
-| Credit rating | Finnhub | — | — | — |
-| Credit proxy | interest_coverage (FMP) | — | — | — |
+### Price data
+```
+Polygon.io → FMP → yfinance
+```
+
+### Fundamentals & dividends
+```
+FMP → yfinance
+```
+
+### Credit rating (v1.1.0)
+```
+Finnhub → None
+    ↓ if None: FMP interest_coverage proxy
+        ≥ 3.0   → INVESTMENT_GRADE
+        1.5–2.9  → BORDERLINE
+        < 1.5   → SPECULATIVE_GRADE
+        None    → NULL (credit_quality_proxy = NULL)
+```
 
 ---
 
 ## Endpoints
 
-### Existing (unchanged)
+### Existing (unchanged response contracts)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/stocks/{symbol}/price` | Current price (cache → DB → Alpha Vantage) |
-| GET | `/stocks/{symbol}/history` | Historical OHLCV |
-| GET | `/stocks/{symbol}/history/stats` | Price statistics over date range |
-| POST | `/stocks/{symbol}/history/refresh` | Force-refresh from Alpha Vantage |
-| GET | `/stocks/{symbol}/dividends` | Dividend payment history |
-| GET | `/stocks/{symbol}/fundamentals` | Key fundamental metrics |
-| GET | `/stocks/{symbol}/etf` | ETF metadata + top holdings |
-| GET | `/api/v1/providers/status` | Provider health status |
-| GET | `/api/v1/cache/stats` | Cache statistics |
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/stocks/{symbol}/price` | — |
+| GET | `/stocks/{symbol}/history` | — |
+| GET | `/stocks/{symbol}/history/stats` | — |
+| POST | `/stocks/{symbol}/history/refresh` | — |
+| GET | `/stocks/{symbol}/dividends` | — |
+| GET | `/stocks/{symbol}/fundamentals` | + lazy securities upsert (v1.1.0) |
+| GET | `/stocks/{symbol}/etf` | + lazy securities upsert (v1.1.0) |
+| GET | `/api/v1/providers/status` | + Finnhub status (v1.1.0) |
+| GET | `/api/v1/cache/stats` | — |
 
 ### New (v1.1.0)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/stocks/{symbol}/sync` | Full feature sync → writes securities + features_historical |
+| POST | `/stocks/{symbol}/sync` | Full feature sync → securities + features_historical |
 
 ---
 
-## `/stocks/{symbol}/sync` — Detail
+## `/stocks/{symbol}/sync` Sequence
 
-**Trigger:** Manual or scheduled. Called by Agent 03 pipeline before scoring
-when features are stale.
-
-**Sequence:**
 ```
 1. get_fundamentals()      → name, sector, payout_ratio, pe_ratio, interest_coverage
 2. get_dividend_history()  → yield_trailing_12m, div_cagr_5y, yield_5yr_avg
-3. get_credit_rating()     → Finnhub → credit_rating TEXT
-4. compute derived fields  → chowder_number, credit_quality_proxy
-5. upsert_security()       → platform_shared.securities
-6. upsert_features()       → platform_shared.features_historical
+3. get_credit_rating()     → Finnhub credit_rating TEXT
+4. Compute derived fields:
+   - chowder_number       = yield_trailing_12m + div_cagr_5y (NULL if either absent)
+   - yield_5yr_avg        = avg of last 5 annual yields (from dividend history)
+   - credit_quality_proxy = from rating → from interest_coverage → NULL
+5. upsert_security()       → platform_shared.securities (ON CONFLICT UPDATE)
+6. upsert_features()       → platform_shared.features_historical (ON CONFLICT UPDATE)
 ```
 
-**Derived computations:**
-- `chowder_number = yield_trailing_12m + div_cagr_5y` (NULL if either input NULL)
-- `yield_5yr_avg` = mean of last 5 annual dividend yields from history
-- `credit_quality_proxy`:
-  - From Finnhub rating: BBB- and above → INVESTMENT_GRADE; BB+/BB/BB- → BORDERLINE; B+ and below → SPECULATIVE_GRADE
-  - Fallback from `interest_coverage`: ≥3.0 → INVESTMENT_GRADE; 1.5–2.99 → BORDERLINE; <1.5 → SPECULATIVE_GRADE
-  - NULL if no data available
+### SyncResponse model
 
-**Response:**
 ```json
 {
   "symbol": "JEPI",
@@ -114,15 +122,20 @@ when features are stale.
 }
 ```
 
+`missing_fields` — lists every field that returned None. Gives Agent 03 and
+Agent 12 full visibility into data gaps per symbol before scoring.
+
 ---
 
-## Lazy Securities Upsert
+## Lazy Securities Upsert (Option C)
 
-`GET /stocks/{symbol}/fundamentals` and `GET /stocks/{symbol}/etf` automatically
-call `upsert_security()` after a successful provider response. Fire-and-forget —
-errors logged, never surfaced to caller. This ensures `platform_shared.securities`
-is populated for any ticker that has been queried, without requiring an explicit
-`/sync` call.
+`GET /fundamentals` and `GET /etf` both call `SecuritiesRepository.upsert_security()`
+after a successful fetch. Pattern:
+
+- Fire-and-forget: exceptions caught, logged, never raised to API caller
+- Fields: `name`, `sector`, `exchange`, `expense_ratio` (ETF), `aum_millions` (ETF)
+- `ON CONFLICT (symbol) DO UPDATE WHERE EXCLUDED.name IS NOT NULL`
+- Safe to call on every request — idempotent
 
 ---
 
@@ -130,12 +143,12 @@ is populated for any ticker that has been queried, without requiring an explicit
 
 | Dependency | Purpose |
 |------------|---------|
-| Polygon.io API key | Historical prices |
-| Financial Modeling Prep API key | Fundamentals, dividends, ETF |
-| Alpha Vantage API key | Current price (legacy) |
-| Finnhub API key | Credit ratings |
-| PostgreSQL `platform_shared` schema | Persistence |
-| Valkey cache | Price + score TTL management |
+| Polygon.io | Price data (primary) |
+| FMP | Fundamentals, dividends, ETF (primary) |
+| yfinance | Fallback for all FMP endpoints |
+| Finnhub | Credit ratings (NEW v1.1.0) |
+| Valkey | Response cache |
+| PostgreSQL `platform_shared` | `securities`, `features_historical`, price tables |
 
 ---
 
@@ -143,20 +156,8 @@ is populated for any ticker that has been queried, without requiring an explicit
 
 | Requirement | Target |
 |-------------|--------|
-| `/sync` latency | ≤ 5s p95 (3 sequential API calls) |
-| Price endpoint latency | ≤ 500ms p95 (cache hit) |
-| Securities upsert | Fire-and-forget, ≤ 50ms |
-| Finnhub error handling | Returns None, never raises |
-| Cache TTL | Configurable, default 300s (price), 24h (health score link) |
-
----
-
-## Success Criteria
-
-- `POST /sync` populates both `securities` and `features_historical` for any valid ticker
-- `credit_rating` non-NULL for investment-grade issuers via Finnhub
-- `credit_quality_proxy` non-NULL for any ticker with FMP fundamentals (coverage proxy fallback)
-- `chowder_number` non-NULL for tickers with ≥5yr dividend history
-- Lazy upsert does not increase latency of fundamentals/ETF endpoints by more than 50ms
-- All 76 unit tests pass
-- Zero breaking changes to existing endpoint contracts
+| `/sync` latency | ≤ 5s p95 (4 sequential external calls) |
+| Lazy upsert overhead | ≤ 50ms added to fundamentals/ETF endpoints |
+| Existing endpoint latency | Unchanged from v1.0.0 |
+| DB write failure isolation | Never affects API response — logged only |
+| `chowder_number` nullability | NULL when either `yield_trailing_12m` or `div_cagr_5y` absent |

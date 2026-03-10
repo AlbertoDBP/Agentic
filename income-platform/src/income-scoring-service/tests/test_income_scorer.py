@@ -411,15 +411,18 @@ class TestRecommendation:
 class TestFactorDetails:
     def test_factor_details_has_all_eight_keys(self, scorer, null_market_data, gate_none):
         result = scorer.score("X", "DIVIDEND_STOCK", gate_none, null_market_data)
-        expected_keys = {
+        scoring_keys = {
             "payout_sustainability", "yield_vs_market", "fcf_coverage",
             "debt_safety", "dividend_consistency", "volatility_score",
             "price_momentum", "price_range_position",
         }
-        assert set(result.factor_details.keys()) == expected_keys
+        assert scoring_keys.issubset(result.factor_details.keys())
 
     def test_each_factor_has_value_score_max(self, scorer, null_market_data, gate_none):
         result = scorer.score("X", "DIVIDEND_STOCK", gate_none, null_market_data)
-        for key, detail in result.factor_details.items():
+        # chowder_number and chowder_signal are flat values, not scored sub-dicts
+        scored_keys = {k for k, v in result.factor_details.items() if isinstance(v, dict)}
+        for key in scored_keys:
+            detail = result.factor_details[key]
             assert "score" in detail, f"Missing 'score' in {key}"
             assert "max"   in detail, f"Missing 'max' in {key}"
