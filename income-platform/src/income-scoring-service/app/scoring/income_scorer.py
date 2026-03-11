@@ -47,7 +47,8 @@ def _compute_chowder(
 ) -> tuple[Optional[float], Optional[str]]:
     if yield_ttm is None or div_cagr_5y is None:
         return None, "INSUFFICIENT_DATA"
-    chowder = yield_ttm + div_cagr_5y
+    # Cast explicitly to float — asyncpg returns Decimal for NUMERIC columns
+    chowder = float(yield_ttm) + float(div_cagr_5y)
     return round(chowder, 4), _chowder_signal_from_number(chowder, asset_class)
 
 

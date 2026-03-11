@@ -279,6 +279,8 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
     """
     ticker     = req.ticker.upper()
     asset_class = req.asset_class.upper()
+    logger.debug("evaluate_score request: ticker=%s asset_class=%s gate_data=%s",
+                 ticker, asset_class, req.gate_data)
 
     # 1. Latest passing gate result from DB
     gate_db = (
@@ -383,12 +385,35 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         db.add(db_score)
         db.commit()
         db.refresh(db_score)
-        return _orm_to_response(db_score)
+        try:
+            return _orm_to_response(db_score)
+        except Exception as ser_err:
+            logger.error(
+                "Response serialization error for %s (ORM path): %s | "
+                "factor_details=%s chowder_number=%r chowder_signal=%r",
+                ticker, ser_err,
+                db_score.factor_details,
+                db_score.factor_details.get("chowder_number") if db_score.factor_details else None,
+                db_score.factor_details.get("chowder_signal") if db_score.factor_details else None,
+            )
+            raise
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error("Failed to persist score for %s: %s", ticker, e)
         # Return the in-memory result so the caller still gets a useful response
-        return _result_to_response(result, nav_erosion_details, now)
+        try:
+            return _result_to_response(result, nav_erosion_details, now)
+        except Exception as ser_err:
+            logger.error(
+                "Response serialization error for %s (in-memory path): %s | "
+                "chowder_number=%r (%s) chowder_signal=%r",
+                ticker, ser_err,
+                result.chowder_number, type(result.chowder_number).__name__,
+                result.chowder_signal,
+            )
+            raise
 
 
 @router.get("/{ticker}", response_model=ScoreResponse)
