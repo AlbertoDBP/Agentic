@@ -108,6 +108,21 @@ def _to_response(result: GateResult) -> QualityGateResponse:
 @router.post("/evaluate", response_model=QualityGateResponse)
 def evaluate_single(req: QualityGateRequest, db: Session = Depends(get_db)):
     result = _run_gate(req)
+    db_record = QualityGateResult(
+        ticker=result.ticker,
+        asset_class=result.asset_class.value,
+        passed=result.passed,
+        fail_reasons=result.fail_reasons,
+        etf_aum_millions=result.checks.get("aum", {}).get("value_millions"),
+        etf_aum_passed=result.checks.get("aum", {}).get("passed"),
+        etf_track_record_years=result.checks.get("track_record", {}).get("value_years"),
+        etf_track_record_passed=result.checks.get("track_record", {}).get("passed"),
+        data_quality_score=result.data_quality_score,
+        evaluated_at=result.evaluated_at,
+        valid_until=result.valid_until,
+    )
+    db.add(db_record)
+    db.commit()
     return _to_response(result)
 
 
