@@ -1,0 +1,27 @@
+flowchart TD
+    A[API Consumer / Agent 12] -->|POST /scenarios/stress-test| B[Agent 06\nScenario Simulation\nport 8006]
+    A -->|POST /scenarios/income-projection| B
+    A -->|POST /scenarios/vulnerability| B
+    A -->|GET /scenarios/library| B
+
+    B --> C[ScenarioLibrary\nscenario_library.py]
+    B --> D[StressEngine\nstress_engine.py]
+    B --> E[IncomeProjector\nMonte Carlo N=1000\nincome_projector.py]
+    B --> F[PortfolioReader\nasyncpg\nportfolio_reader.py]
+
+    C -->|predefined shocks| D
+    C -->|custom shocks| D
+    F -->|positions + asset_classes| D
+    F -->|positions + annual_income| E
+
+    D -->|StressResult| G{save: true?}
+    G -->|yes| H[(platform_shared\nscenario_results)]
+    G -->|no| I[Return response only]
+
+    F -->|asyncpg| J[(platform_shared\npositions)]
+    F -->|asyncpg| K[(platform_shared\nasset_classifications)]
+
+    style B fill:#2d6a4f,color:#fff
+    style H fill:#1e3a5f,color:#fff
+    style J fill:#1e3a5f,color:#fff
+    style K fill:#1e3a5f,color:#fff

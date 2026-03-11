@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+sqlalchemy
+psycopg2-binary
+asyncpg==0.30.0
+numpy
+python-dateutil

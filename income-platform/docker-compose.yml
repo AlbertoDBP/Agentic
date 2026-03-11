@@ -107,7 +107,6 @@ services:
       start_period: 30s
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent 05 — Tax Optimization Service
-# Add this service block inside the `services:` section of docker-compose.yml
 # ─────────────────────────────────────────────────────────────────────────────
 
   tax-optimization-service:
@@ -132,6 +131,19 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
+
+agent-06-scenario-simulation:
+    build:
+      context: src/scenario-simulation-service
+      dockerfile: Dockerfile
+    container_name: agent-06-scenario-simulation
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SERVICE_PORT=8006
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    ports:
+      - "8006:8006"
     restart: unless-stopped
 
 networks:
