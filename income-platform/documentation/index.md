@@ -1,152 +1,208 @@
-# Income Fortress Platform — Documentation Index
+# Income Fortress Platform — Master Index
 
-**Version:** 1.3.0
-**Last Updated:** 2026-03-09
-**Status:** Active Development — Agents 01–05 Deployed
+**Version:** 1.4.0
+**Last Updated:** 2026-03-11
+**Repository:** `AlbertoDBP/Agentic` → `income-platform/`
+**Production:** `legatoinvest.com` | `138.197.78.238`
 
 ---
 
 ## Platform Overview
 
-The Income Fortress Platform is a 24-agent AI-powered financial technology system
-focused on income-generating investments. Core principles:
+The Income Fortress Platform is a production-grade, tax-efficient income investment
+platform built on a multi-agent microservices architecture. Core principles:
 
-- **Capital preservation first** — 70% safety threshold with veto power
-- **Yield trap avoidance** — NAV erosion detection, Monte Carlo simulation
-- **User control** — proposal-based workflows, never auto-execution
-- **Unit of analysis** — `Asset × Position × Portfolio` (joint context required)
-
-Infrastructure: DigitalOcean droplet (2 vCPU/4 GB RAM), managed PostgreSQL,
-Valkey cache, Nginx + SSL, Docker Compose microservices at legatoinvest.com.
+- **Capital Safety First** — 70% quality threshold with VETO power
+- **Income over Growth** — yield sustainability and consistency prioritized
+- **Yield Trap Avoidance** — NAV erosion detection, Chowder signal, quality gates
+- **Proposal-Based Workflow** — platform never auto-executes; always proposes
+- **Tax Efficiency** — parallel output, never a blocking gate
 
 ---
 
-## Documentation Structure
+## Deployed Agents (6 of 24)
+
+| Agent | Service Name | Port | Status | Version |
+|-------|-------------|------|--------|---------|
+| 01 | Market Data Service | 8001 | ✅ Deployed | v1.1.0 |
+| 02 | Newsletter Ingestion | 8002 | ✅ Deployed | v1.0.0 |
+| 03 | Income Scoring | 8003 | ✅ Deployed | v1.1.0 |
+| 04 | Asset Classification | 8004 | ✅ Deployed | v1.0.0 |
+| 05 | Tax Optimization | 8005 | ✅ Deployed | v1.0.0 |
+| 06 | Scenario Simulation | 8006 | ✅ Deployed | v1.0.0 |
+
+---
+
+## Agent Descriptions
+
+### Agent 01 — Market Data Service (port 8001)
+Multi-provider market data hub. Fetches price, dividends, fundamentals, ETF
+holdings, and credit ratings. Writes to `platform_shared.securities` and
+`platform_shared.features_historical` via `/sync` endpoint.
+
+**Providers:** Polygon.io (price), FMP (fundamentals/dividends), yfinance (ETF
+holdings fallback), Finnhub (credit ratings)
+**Key endpoint:** `POST /stocks/{symbol}/sync`
+
+---
+
+### Agent 02 — Newsletter Ingestion Service (port 8002)
+"The Dividend Detective" — ingests Seeking Alpha articles via APIDojo, extracts
+income signals using Claude Haiku, implements S-curve staleness decay and
+SHA-256 deduplication.
+
+**Key capability:** Analyst signal extraction → `platform_shared.analyst_articles`
+
+---
+
+### Agent 03 — Income Scoring Service (port 8003)
+Quality gate + weighted scoring engine. Capital safety first — a 70% threshold
+with VETO power. Includes NAV erosion Monte Carlo for covered call ETFs.
+
+**Score weights:** Valuation/Yield 40%, Financial Durability 35%, Technical 25%
+**Chowder Number:** Computed from `features_historical`, 0% weight, informational
+**Key endpoint:** `POST /scores/evaluate`
+
+---
+
+### Agent 04 — Asset Classification Service (port 8004)
+Classifies securities into 7 asset classes using rule-based detection. Shared
+utility available at `src/shared/asset_class_detector/` for direct import.
+
+**Asset classes:** DIVIDEND_STOCK, COVERED_CALL_ETF, BOND, EQUITY_REIT,
+MORTGAGE_REIT, BDC, PREFERRED_STOCK
+
+---
+
+### Agent 05 — Tax Optimization Service (port 8005)
+Read-only tax analysis covering 2024 IRS brackets (4 filing statuses), 51 state
+tax rates, NIIT, Section 1256 60/40 treatment, asset-class-specific logic.
+Tax efficiency = parallel output only — 0% score weight.
+
+**Key capability:** Tax harvesting proposals (never executes trades)
+
+---
+
+### Agent 06 — Scenario Simulation Service (port 8006)
+Portfolio stress testing and income projection. Asset-class shock tables across
+5 predefined scenarios. Monte Carlo P10/P50/P90 income projection. Custom
+scenario support for NL/LLM-driven what-if analysis.
+
+**Scenarios:** RATE_HIKE_200BPS, MARKET_CORRECTION_20, RECESSION_MILD,
+INFLATION_SPIKE, CREDIT_STRESS, CUSTOM
+**Key endpoint:** `POST /scenarios/stress-test`
+
+---
+
+## Agents Roadmap (7–24)
+
+| Agent | Name | Description | Priority |
+|-------|------|-------------|----------|
+| 07 | Opportunity Scanner | Screens universe for new income candidates | P1 |
+| 08 | Rebalancing | Portfolio optimization proposals | P1 |
+| 09 | Income Projection | Forward 12-month income forecast (position-level) | P1 |
+| 10 | NAV Monitor | ETF NAV erosion tracking over time | P1 |
+| 11 | Alert Classification | Smart alert generation and prioritization | P2 |
+| 12 | Proposal Agent | Synthesizes all agent outputs into actionable proposals | P0 |
+| 13–24 | TBD | Additional agents per platform roadmap | P2–P3 |
+
+**Agent 12 is a priority gate** — all agents 07–11 feed into Agent 12.
+ADR-P11 (Chowder thresholds) and ADR-P12 (GLM model) both require review
+before Agent 12 DESIGN.
+
+---
+
+## Data Flow Overview
 
 ```
-documentation/
-├── index.md                          ← this file
-├── CHANGELOG.md
-├── architecture/
-│   ├── reference-architecture.md
-│   ├── system-diagram.mmd
-│   ├── data-model.mmd
-│   └── agent-rw-matrix.md
-├── functional/
-│   ├── agent-01-market-data.md
-│   ├── agent-02-newsletter-ingestion.md
-│   ├── agent-03-income-scoring.md
-│   ├── agent-04-asset-classification.md
-│   ├── agent-05-tax-optimizer.md
-│   ├── portfolio-schema.md           ← NEW v1.3
-│   └── asset-gem-amendments.md       ← NEW v1.3
-├── implementation/
-│   ├── agent-01-impl.md
-│   ├── agent-02-impl.md
-│   ├── agent-03-impl.md
-│   ├── agent-04-impl.md
-│   ├── agent-05-impl.md
-│   └── portfolio-schema-impl.md      ← NEW v1.3
-├── diagrams/
-│   ├── portfolio-erd.mmd             ← NEW v1.3
-│   └── trigger-flows.mmd             ← NEW v1.3
-└── decisions/
-    ├── decisions-log.md              ← ADRs P01–P10
-    └── adrs-p09-p10.md              ← NEW v1.3
+External Data                Platform Agents              Storage
+─────────────                ───────────────              ───────
+Polygon.io ──┐               
+FMP ─────────┤──→ Agent 01 ──→ securities
+Finnhub ─────┘    (Market     features_historical
+yfinance ─────    Data)
+                              
+Seeking Alpha ──→ Agent 02 ──→ analyst_articles
+(APIDojo)         (Newsletter)  analyst_recommendations
+
+                  Agent 04 ──→ asset_classifications
+                  (Classifier)
+
+Agent 01 ───────→ Agent 03 ──→ income_scores
+Agent 04 ───────→ (Scorer)     quality_gate_results
+
+Agent 03 ───────→ Agent 05     [read-only, no writes]
+Agent 04 ───────→ (Tax)
+
+platform_shared → Agent 06 ──→ scenario_results (on save)
+                  (Simulation)
+
+[All agents] ───→ Agent 12 ──→ proposals  [PLANNED]
+                  (Proposal)
 ```
 
 ---
 
-## Agent Status
+## Infrastructure
 
-| Agent | Name | Port | Status | Notes |
-|-------|------|------|--------|-------|
-| 01 | Market Data Service | 8001 | ✅ Deployed | Finnhub credit ratings pending |
-| 02 | Newsletter Ingestion | 8002 | ✅ Deployed | Seeking Alpha signals |
-| 03 | Income Scoring | 8003 | ✅ Deployed | Chowder signal output pending |
-| 04 | Asset Classification | 8004 | ✅ Deployed | Entry signal flags pending |
-| 05 | Tax Optimizer | 8005 | ✅ Deployed | Position-level v1 |
-| 06 | Scenario Simulation | 8006 | 🔲 Not started | ElasticNet GLM, stress tests |
-| 07 | Income Gap Detector | 8007 | 🔲 Not started | Triggered by income_gap_annual < 0 |
-| 08 | Portfolio Constructor | 8008 | 🔲 Not started | Greenfield + ACTIVE construction modes |
-| 09 | Income Metrics | 8009 | 🔲 Not started | Portfolio income rollup |
-| 10 | NAV Monitor | 8010 | 🔲 Not started | nav_snapshots owner |
-| 11 | Portfolio Health | 8011 | 🔲 Not started | health_score owner |
-| 12 | Proposal Agent | 8012 | 🔲 Not started | Dual-lens synthesis |
-| 13–24 | Future agents | — | 🔲 Not started | Roadmap |
+| Component | Detail |
+|-----------|--------|
+| Server | DigitalOcean Ubuntu droplet, 2 vCPU / 4GB RAM |
+| IP | 138.197.78.238 |
+| Domain | legatoinvest.com |
+| Database | DigitalOcean managed PostgreSQL (`platform_shared` schema) |
+| Cache | Valkey (Redis-compatible) |
+| Reverse Proxy | Nginx + SSL |
+| Container Runtime | Docker + docker-compose |
+| CI | GitHub Actions |
 
----
-
-## Schema Status
-
-| Layer | Tables | Status |
-|-------|--------|--------|
-| Phase 0 — Foundation | securities, features_historical, user_preferences | 🔲 Migration ready |
-| Phase 1 — Asset | nav_snapshots | 🔲 Migration ready |
-| Phase 2 — Portfolio | accounts, portfolios, portfolio_constraints | 🔲 Migration ready |
-| Phase 3 — Position | positions, transactions, dividend_events | 🔲 Migration ready |
-| Phase 4 — Metrics | portfolio_income_metrics, portfolio_health_scores | 🔲 Migration ready |
-
-Migration script: `src/portfolio-positions-schema/scripts/migrate.py`
+### DB Users
+- `doadmin` — container runtime user (private network URL)
+- `dbpmanager` — migration user (public URL, used from Mac)
 
 ---
 
-## Key Design Decisions (ADR Summary)
+## Nginx Route Map
 
-| ADR | Title | Status |
-|-----|-------|--------|
-| P01 | Monte Carlo NAV Erosion in Agent 03 | Accepted |
-| P02 | Asset Classification Shared Detector | Accepted |
-| P03 | Tax Efficiency as Parallel Output (0% weight) | Accepted |
-| P04 | Proposal-Only Architecture (no auto-execution) | Accepted |
-| P05 | Analyst Signal Storage Schema | Accepted |
-| P06 | Portfolio Health Score TTL Strategy | Accepted |
-| P07 | Finnhub as 4th Credit Rating Provider | Accepted |
-| P08 | Income Gap as Autonomous Agent 07 Trigger | Accepted |
-| P09 | Symbol TEXT PK v1, UUID Migration Path v2 | Accepted |
-| P10 | Average Cost Basis v1, Tax Lot v2 | Accepted |
-
-Full ADR details: [decisions/decisions-log.md](decisions/decisions-log.md)
+| Agent | Nginx Prefix |
+|-------|-------------|
+| Agent 01 | `/api/market-data/` |
+| Agent 02 | `/api/newsletter/` |
+| Agent 03 | `/api/nav-erosion/` |
+| Agent 04 | `/api/asset-classification/` |
+| Agent 05 | `/api/tax-optimization/` |
+| Agent 06 | `/api/scenario-simulation/` |
 
 ---
 
-## Quick Reference
+## Documentation Index
 
-**Infrastructure:**
-- Production: `root@legatoinvest.com` via `~/.ssh/id_ed25519`
-- App path: `/opt/Agentic/income-platform`
-- Monorepo: `/Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform`
+### Functional Specifications
+- [Agent 01 — Market Data](functional/agent-01-market-data.md)
+- [Agent 03 — Income Scoring](functional/agent-03-income-scoring.md)
+- [Agent 06 — Scenario Simulation](functional/agent-06-scenario-simulation.md)
 
-**Docker patterns:**
-- No `db` depends_on — use `python3 urllib` healthcheck
-- No `networks` block
-- `--only-binary :all:` for pydantic-core and asyncpg
-- DB SSL: strip `?sslmode=require`, pass `connect_args={"ssl": "require"}`
+### Implementation Specifications
+- [Agent 01 — Implementation](implementation/agent-01-impl.md)
+- [Agent 03 — Implementation](implementation/agent-03-impl.md)
+- [Agent 06 — Implementation](implementation/agent-06-impl.md)
 
-**File layout per agent:**
-```
-src/[service-name]/
-├── app/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── database.py
-│   ├── main.py
-│   └── api/
-└── scripts/
-    └── migrate.py
-```
+### Architecture Diagrams
+- [System Diagram](diagrams/system-diagram.mmd)
+- [Agent 01 Provider Flow](diagrams/agent-01-provider-flow.mmd)
+- [Agent 06 Architecture](diagrams/agent-06-architecture.mmd)
+- [Portfolio ERD](diagrams/portfolio-erd.mmd)
 
----
+### Decision Records
+- [Decisions Log — ADRs P01–P10](decisions/decisions-log.md)
+- [ADR-P11 — Chowder Threshold Management](decisions/adr-p11-chowder-thresholds.md)
+- [ADR-P12 — Scenario Simulation Model](decisions/adr-p12-scenario-model.md)
 
-## What Changed in v1.3 (2026-03-09)
+### Changelogs
+- [Agent 01 Changelog](CHANGELOG-agent-01.md)
+- [Agent 03 Changelog](CHANGELOG-agent-03.md)
+- [Agent 06 Changelog](CHANGELOG-agent-06.md)
+- [Platform Changelog](CHANGELOG.md)
 
-- **Portfolio & Positions Schema** — 12-table foundation + portfolio layer designed
-  and migration-ready (ADRs P01–P10)
-- **Asset-Gem Amendments** — Chowder Number, 5yr avg yield, named entry signal
-  flags, DCA schedule on proposals (Amendments A1–A4)
-- **Foundation discovery** — `securities`, `features_historical`, `user_preferences`
-  found missing from prod; created fresh in migration
-- **FK strategy** — symbol TEXT PK throughout v1 (ADR-P09); UUID migration path
-  documented for v2
-- **Trigger flows** — 4 formal trigger patterns defined (Portfolio Review, Analyst
-  Signal, Circuit Breaker, Portfolio Construction)
+### Roadmap
+- [Platform Roadmap v2](roadmap-v2.md)

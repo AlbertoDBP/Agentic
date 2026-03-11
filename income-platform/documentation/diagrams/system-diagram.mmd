@@ -1,66 +1,66 @@
-flowchart TB
+flowchart TD
     subgraph External["External Data Providers"]
-        POL[Polygon.io\nPrice Data]
-        FMP[Financial Modeling Prep\nFundamentals]
-        YFI[yfinance\nFallback]
-        FIN[Finnhub\nCredit Ratings]
-        API[APIDojo\nSeeking Alpha]
-        SEC[SEC EDGAR\nCoverage Proxy]
+        P[Polygon.io\nPrice & Corporate Actions]
+        F[FMP\nFundamentals & Dividends]
+        FH[Finnhub\nCredit Ratings]
+        YF[yfinance\nETF Holdings Fallback]
+        SA[Seeking Alpha\nvia APIDojo]
     end
 
-    subgraph Agents["Agent Microservices (Docker Compose)"]
+    subgraph Deployed["Deployed Agents (v1)"]
         A01[Agent 01\nMarket Data\n:8001]
         A02[Agent 02\nNewsletter Ingestion\n:8002]
         A03[Agent 03\nIncome Scoring\n:8003]
         A04[Agent 04\nAsset Classification\n:8004]
-        A05[Agent 05\nTax Optimizer\n:8005]
-        A07[Agent 07\nIncome Gap Detector\n:8007]
-        A08[Agent 08\nPortfolio Constructor\n:8008]
-        A09[Agent 09\nIncome Metrics\n:8009]
-        A10[Agent 10\nNAV Monitor\n:8010]
-        A11[Agent 11\nPortfolio Health\n:8011]
-        A12[Agent 12\nProposal Agent\n:8012]
+        A05[Agent 05\nTax Optimization\n:8005]
+        A06[Agent 06\nScenario Simulation\n:8006]
     end
 
-    subgraph DB["PostgreSQL — platform_shared"]
-        SEC_T[(securities\nTEXT PK)]
-        FH[(features_historical)]
-        UP[(user_preferences)]
-        NAV[(nav_snapshots)]
-        IS[(income_scores)]
+    subgraph Planned["Planned Agents"]
+        A07[Agent 07\nOpportunity Scanner]
+        A08[Agent 08\nRebalancing]
+        A09[Agent 09\nIncome Projection]
+        A10[Agent 10\nNAV Monitor]
+        A11[Agent 11\nAlert Classification]
+        A12[Agent 12\nProposal Agent\nPriority Gate]
+    end
+
+    subgraph DB["platform_shared PostgreSQL"]
+        S[(securities\nfeatures_historical)]
         AC[(asset_classifications)]
-        AA[(analyst_articles\nrecommendations)]
-        PORT[(portfolios)]
-        POS[(positions\nsymbol FK + portfolio FK)]
-        TXN[(transactions)]
-        DIV[(dividend_events)]
-        PIM[(portfolio_income_metrics)]
-        PHS[(portfolio_health_scores)]
+        IS[(income_scores\nquality_gate_results)]
+        AA[(analyst_articles\nanalyst_recommendations)]
+        SR[(scenario_results)]
+        PF[(portfolios\npositions\ntransactions)]
     end
 
-    subgraph Cache["Valkey Cache"]
-        VC[Price Cache\nTTL = health_score_ttl_hours]
-    end
+    P & F & FH & YF --> A01
+    SA --> A02
 
-    subgraph User["User Interface"]
-        UI[Proposal Review\n& Approval]
-    end
-
-    POL & FMP & YFI & FIN & SEC --> A01
-    API --> A02
-    A01 --> SEC_T & FH & NAV & VC
+    A01 --> S
     A02 --> AA
-    A03 --> IS
     A04 --> AC
-    SEC_T & FH & AC --> A03
-    A01 --> A03
-    IS & POS & PORT --> A09
-    A09 --> PIM
-    PIM & POS & PORT --> A11
-    A11 --> PHS
-    PHS & AA & POS --> A12
-    A12 --> UI
-    UI -->|approval| POS
-    NAV --> A10
-    PIM --> A07
-    A07 --> A12
+
+    A01 -->|HTTP| A03
+    A04 -->|shared util| A03
+    A03 --> IS
+
+    A03 -->|read| A05
+    A04 -->|read| A05
+
+    S & AC & IS & PF --> A06
+    A06 --> SR
+
+    AA & IS & SR & PF --> A12
+
+    A07 & A08 & A09 & A10 & A11 --> A12
+    A12 -->|proposals| PF
+
+    style A01 fill:#2d6a4f,color:#fff
+    style A02 fill:#2d6a4f,color:#fff
+    style A03 fill:#2d6a4f,color:#fff
+    style A04 fill:#2d6a4f,color:#fff
+    style A05 fill:#2d6a4f,color:#fff
+    style A06 fill:#2d6a4f,color:#fff
+    style A12 fill:#8b1a1a,color:#fff
+    style DB fill:#1e3a5f,color:#fff

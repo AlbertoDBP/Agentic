@@ -1,84 +1,83 @@
-# CHANGELOG — Income Fortress Platform
+# Income Fortress Platform — CHANGELOG
 
-All notable changes to this platform are documented here.
-Format: [version] date — summary
+---
+
+## [1.4.0] — 2026-03-11
+
+### Added
+- **Agent 06** — Scenario Simulation Service (port 8006)
+  - 5 predefined scenarios × 7 asset classes (asset-class shock table)
+  - Custom scenario support (NL/LLM compatible)
+  - Monte Carlo income projection P10/P50/P90
+  - Cross-scenario vulnerability ranking
+  - Explicit save to `scenario_results` with label
+  - 33/33 tests passing
+- **ADR-P12** — ElasticNet GLM deferred to v2 (trigger: 24+ months features_historical)
+- **roadmap-v2.md** — Consolidated deferred decisions and v2 feature roadmap
+- **index.md** — Updated master index reflecting all 6 deployed agents
+
+### Infrastructure
+- docker-compose.yml: added `agent-06-scenario-simulation` entry
+- Nginx: `/api/scenario-simulation/` route (configured separately)
+
+---
+
+## [1.3.1] — 2026-03-11
+
+### Fixed
+- **Agent 03** — `quality_gate.py` evaluate_single() now persists gate result to DB
+- **Agent 03** — All ORM models set `schema="platform_shared"` (was None / missing)
+- **Agent 03** — `asyncpg` added to requirements for `get_features()` DB read
 
 ---
 
 ## [1.3.0] — 2026-03-09
 
 ### Added
-- **Portfolio & Positions Schema** (12 tables, 4 phases)
-  - Phase 0 — Foundation: `securities` (TEXT PK), `features_historical`, `user_preferences`
-  - Phase 1 — Asset: `nav_snapshots`
-  - Phase 2 — Portfolio: `accounts`, `portfolios`, `portfolio_constraints`
-  - Phase 3 — Position: `positions`, `transactions`, `dividend_events`
-  - Phase 4 — Metrics: `portfolio_income_metrics`, `portfolio_health_scores`
-- **Migration script** `portfolio-positions-v2` — phased asyncpg execution with full rollback
-- **ADR-P09** — Symbol TEXT PK v1, UUID migration path for v2
-- **ADR-P10** — Average cost basis v1, tax lot migration path for v2
-- **Asset-Gem Amendments A1–A4**:
-  - A1: `yield_5yr_avg` + `chowder_number` added to `features_historical`
-  - A2: Chowder signal added to Agent 03 output (0% score weight, informational)
-  - A3: Named boolean entry signal flags added to Agent 04 output
-  - A4: `dca_schedule` block added to Agent 12 BUY proposals
-- **Finnhub** added as 4th credit rating provider (ADR-P07) — resolves `credit_rating` NULL
-- **4 trigger flow definitions**: Portfolio Review, Analyst Signal, Circuit Breaker,
-  Portfolio Construction (Greenfield)
-- **`user_preferences` table** — per-tenant TTL and threshold configuration
-- **`features_historical` table** — created fresh (was not in production schema)
+- **Agent 03 v1.1.0** — Amendment A2: Chowder Number signal
+  - Chowder Number sourced from `features_historical` via asyncpg
+  - `chowder_signal`: ATTRACTIVE / BORDERLINE / UNATTRACTIVE / INSUFFICIENT_DATA
+  - Asset-class aware thresholds (DGI 12/8, ETF+BOND 8/5)
+  - 0% score weight — total_score/grade/recommendation unchanged
+  - 17 unit tests (test_chowder.py)
+- **ADR-P11** — Sector-aware Chowder threshold refinement deferred to v2
 
-### Changed
-- FK strategy: symbol TEXT throughout (ADR-P09) replaces UUID FK design
-- Migration phasing: Phase 0 foundation added before portfolio layer
+---
+
+## [1.2.0] — 2026-03-09
+
+### Added
+- **Agent 01 v1.1.0** — Finnhub credit ratings, securities upsert, features upsert
+  - `POST /stocks/{symbol}/sync` endpoint
+  - Writes to `platform_shared.securities` and `platform_shared.features_historical`
+  - Chowder Number computed and stored (`yield_trailing_12m + div_cagr_5y`)
+  - 76 tests passing
 
 ### Fixed
-- Discovered `securities`, `features_historical`, `user_preferences` absent from
-  production `platform_shared` schema — migration now creates all from scratch
-- No naming conflicts with existing 12 production tables confirmed
-
-### Agents Impacted (no breaking changes to deployed 01–05)
-| Agent | Change |
-|-------|--------|
-| 01 | Add Finnhub credit rating provider; write nav_snapshots + features_historical |
-| 03 | Add chowder_number + chowder_signal to output |
-| 04 | Add named entry signal flags to output |
-| 07 | income_gap_annual < 0 as autonomous trigger |
-| 08 | Add construction mode (greenfield portfolio) |
-| 09 | Primary owner of portfolio_income_metrics |
-| 11 | Primary owner of portfolio_health_scores |
-| 12 | Add dca_schedule to BUY proposals; three-FK proposal context |
+- `securities_repository.py`: `currency = currency or "USD"` before upsert (NOT NULL constraint)
+- DB grants: `doadmin` granted SELECT/INSERT/UPDATE on all 12 portfolio schema tables
 
 ---
 
-## [1.2.0] — 2026-02-XX
+## [1.1.0] — 2026-02-XX
 
 ### Added
-- Agent 05: Tax Optimizer Service (port 8005)
-- Asset classification shared detector (`src/shared/asset_class_detector/`)
-- Agent 03 auto-calls Agent 04 when asset_class missing
-- Tax efficiency parallel output (0% score weight)
+- **Portfolio schema migration** — 12 tables in `platform_shared`:
+  securities, features_historical, user_preferences, nav_snapshots,
+  accounts, portfolios, portfolio_constraints, positions, transactions,
+  dividend_events, portfolio_income_metrics, portfolio_health_scores
+- **ADR-P09** — Symbol TEXT PK v1 (UUID migration path documented for v2)
+- **ADR-P10** — Average cost basis v1 (tax lot migration path documented for v2)
 
 ---
 
-## [1.1.0] — 2026-01-XX
+## [1.0.0] — 2026-01-XX
 
 ### Added
-- Agent 03: Income Scoring Service (port 8003)
-  - NAV erosion analysis
-  - Monte Carlo simulation
-  - Dividend safety scoring
-- Agent 04: Asset Classification Service (port 8004)
-
----
-
-## [1.0.0] — 2025-12-XX
-
-### Added
-- Agent 01: Market Data Service (port 8001)
-  - Multi-provider: Polygon.io, Financial Modeling Prep, yfinance fallback
-- Agent 02: Newsletter Ingestion "The Dividend Detective" (port 8002)
-  - Seeking Alpha analyst signal extraction via APIDojo + Claude
-- Production infrastructure on DigitalOcean
-  - Managed PostgreSQL, Valkey cache, Nginx + SSL
-  - Docker Compose microservices
+- Agent 01 — Market Data Service (Polygon.io, FMP, yfinance)
+- Agent 02 — Newsletter Ingestion (Seeking Alpha, Claude Haiku, S-curve decay)
+- Agent 03 — Income Scoring (quality gate, weighted scoring, NAV erosion Monte Carlo)
+- Agent 04 — Asset Classification (7 asset classes, shared utility)
+- Agent 05 — Tax Optimization (2024 IRS brackets, 51 states, Section 1256)
+- DigitalOcean infrastructure (Ubuntu droplet, managed PostgreSQL, Valkey, Nginx+SSL)
+- GitHub Actions CI
