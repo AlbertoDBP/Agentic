@@ -133,7 +133,7 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-agent-06-scenario-simulation:
+  agent-06-scenario-simulation:
     build:
       context: src/scenario-simulation-service
       dockerfile: Dockerfile
@@ -142,10 +142,13 @@ agent-06-scenario-simulation:
       - DATABASE_URL=${DATABASE_URL}
       - SERVICE_PORT=8006
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
     ports:
       - "8006:8006"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
-
-networks:
-  default:
-    name: income-fortress-network
