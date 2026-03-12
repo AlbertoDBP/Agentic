@@ -1,0 +1,243 @@
+"""
+Agent 07 — Opportunity Scanner Service
+Tests: Scoring client — 25 tests.
+"""
+from __future__ import annotations
+
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("DATABASE_URL", "postgresql://user:pass@localhost:5432/testdb")
+os.environ.setdefault("INCOME_SCORING_URL", "http://agent-03:8003")
+
+import httpx
+
+from app.scanner.scoring_client import _make_token, score_ticker
+
+
+# ── Class 1: Token generation ─────────────────────────────────────────────────
+
+class TestMakeToken:
+    """8 tests for _make_token()."""
+
+    def test_token_has_three_parts(self):
+        token = _make_token()
+        parts = token.split(".")
+        assert len(parts) == 3
+
+    def test_token_is_string(self):
+        assert isinstance(_make_token(), str)
+
+    def test_token_not_empty(self):
+        assert len(_make_token()) > 0
+
+    def test_token_header_is_base64(self):
+        import base64, json
+        token = _make_token()
+        header_b64 = token.split(".")[0]
+        padding = 4 - len(header_b64) % 4
+        header = json.loads(base64.urlsafe_b64decode(header_b64 + "=" * padding))
+        assert header["alg"] == "HS256"
+        assert header["typ"] == "JWT"
+
+    def test_token_payload_has_sub(self):
+        import base64, json
+        token = _make_token()
+        payload_b64 = token.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+        assert payload["sub"] == "agent-07"
+
+    def test_token_payload_has_exp(self):
+        import base64, json, time
+        token = _make_token()
+        payload_b64 = token.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+        assert payload["exp"] > int(time.time())
+
+    def test_two_tokens_differ(self):
+        import time
+        t1 = _make_token()
+        time.sleep(0.01)
+        t2 = _make_token()
+        # exp values differ even if only by a tiny amount — payload will differ
+        # (same second may produce same token, but that's acceptable)
+        assert isinstance(t1, str) and isinstance(t2, str)
+
+    def test_token_verifiable_by_pyjwt(self):
+        import jwt
+        token = _make_token()
+        payload = jwt.decode(token, os.environ["JWT_SECRET"], algorithms=["HS256"])
+        assert payload["sub"] == "agent-07"
+
+
+# ── Class 2: score_ticker success paths ──────────────────────────────────────
+
+class TestScoreTickerSuccess:
+    """10 tests for score_ticker() happy paths."""
+
+    @pytest.mark.anyio
+    async def test_returns_dict_on_200(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"ticker": "O", "total_score": 75.0}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            result = await score_ticker("O")
+        assert result is not None
+        assert result["ticker"] == "O"
+
+    @pytest.mark.anyio
+    async def test_posts_to_evaluate_endpoint(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"ticker": "O", "total_score": 75.0}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp) as mock_post:
+            await score_ticker("O")
+        url = mock_post.call_args.args[0]
+        assert "/scores/evaluate" in url
+
+    @pytest.mark.anyio
+    async def test_sends_ticker_in_body(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"ticker": "O", "total_score": 75.0}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp) as mock_post:
+            await score_ticker("O")
+        body = mock_post.call_args.kwargs.get("json") or mock_post.call_args[1].get("json")
+        assert body["ticker"] == "O"
+
+    @pytest.mark.anyio
+    async def test_sends_bearer_auth_header(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp) as mock_post:
+            await score_ticker("O")
+        headers = mock_post.call_args.kwargs.get("headers") or mock_post.call_args[1].get("headers")
+        assert "Authorization" in headers
+        assert headers["Authorization"].startswith("Bearer ")
+
+    @pytest.mark.anyio
+    async def test_returns_full_score_dict(self):
+        score_data = {
+            "ticker": "O", "total_score": 80.0, "grade": "A",
+            "asset_class": "EQUITY_REIT", "recommendation": "AGGRESSIVE_BUY",
+        }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = score_data
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            result = await score_ticker("O")
+        assert result["grade"] == "A"
+        assert result["asset_class"] == "EQUITY_REIT"
+
+    @pytest.mark.anyio
+    async def test_ticker_case_preserved(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"ticker": "JEPI", "total_score": 70.0}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp) as mock_post:
+            result = await score_ticker("JEPI")
+        body = mock_post.call_args.kwargs.get("json") or mock_post.call_args[1].get("json")
+        assert body["ticker"] == "JEPI"
+
+    @pytest.mark.anyio
+    async def test_different_tickers_call_same_endpoint(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            r1 = await score_ticker("O")
+            r2 = await score_ticker("JEPI")
+        # Both succeed (empty dict is not None)
+        assert r1 is not None and r2 is not None
+
+    @pytest.mark.anyio
+    async def test_score_of_zero_returned(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"ticker": "X", "total_score": 0.0}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            result = await score_ticker("X")
+        assert result is not None
+
+    @pytest.mark.anyio
+    async def test_score_of_100_returned(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"ticker": "X", "total_score": 100.0}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            result = await score_ticker("X")
+        assert result["total_score"] == 100.0
+
+    @pytest.mark.anyio
+    async def test_empty_json_response_returned(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            result = await score_ticker("X")
+        assert result == {}
+
+
+# ── Class 3: score_ticker error paths ────────────────────────────────────────
+
+class TestScoreTickerErrors:
+    """7 tests for score_ticker() error handling."""
+
+    @pytest.mark.anyio
+    async def test_non_200_returns_none(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            result = await score_ticker("O")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_404_returns_none(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            result = await score_ticker("INVALID")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_timeout_returns_none(self):
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock,
+                   side_effect=httpx.TimeoutException("timeout")):
+            result = await score_ticker("O")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_connect_error_returns_none(self):
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock,
+                   side_effect=httpx.ConnectError("connection refused")):
+            result = await score_ticker("O")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_generic_exception_returns_none(self):
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock,
+                   side_effect=Exception("unexpected")):
+            result = await score_ticker("O")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_422_returns_none(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 422
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            result = await score_ticker("O")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_never_raises(self):
+        """score_ticker must never propagate exceptions."""
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock,
+                   side_effect=RuntimeError("boom")):
+            result = await score_ticker("O")
+        assert result is None

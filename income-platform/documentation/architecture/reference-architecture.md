@@ -1,7 +1,7 @@
 # Reference Architecture — Income Fortress Platform
 
-**Version:** 1.3.0
-**Date:** 2026-03-09
+**Version:** 1.4.0
+**Date:** 2026-03-12
 
 ---
 
@@ -31,7 +31,9 @@ legatoinvest.com (DigitalOcean, 2 vCPU / 4 GB RAM)
 │   ├── agent-03  :8003  Income Scoring
 │   ├── agent-04  :8004  Asset Classification
 │   ├── agent-05  :8005  Tax Optimizer
-│   └── [agents 06–24 pending]
+│   ├── agent-06  :8006  Scenario Simulation
+│   ├── agent-07  :8007  Opportunity Scanner
+│   └── [agents 08–24 planned]
 │
 ├── Managed PostgreSQL (DigitalOcean)
 │   └── schema: platform_shared

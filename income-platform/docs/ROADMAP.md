@@ -1,8 +1,8 @@
 # Income Fortress Platform — Product Roadmap
 
-**Document:** ROADMAP.md  
-**Location:** `income-platform/docs/ROADMAP.md`  
-**Last Updated:** 2026-02-26  
+**Document:** ROADMAP.md
+**Location:** `income-platform/docs/ROADMAP.md`
+**Last Updated:** 2026-03-12
 **Owner:** Platform Architecture
 
 ---
@@ -13,16 +13,16 @@ Each version groups related enhancements that form a coherent capability upgrade
 
 | Version | Theme | Status |
 |---|---|---|
-| v1.0 | Core Income Pipeline | ✅ In Progress |
-| v1.1 | Classification & Tax Foundation | 🔵 Planned |
-| v2.0 | Adaptive Intelligence | 🔵 Planned |
-| v2.1 | Portfolio Optimization Suite | 🔵 Planned |
+| v1.0 | Core Income Pipeline | ✅ Complete |
+| v1.1 | Classification & Tax Foundation | ✅ Complete |
+| v2.0 | Adaptive Intelligence | ✅ Complete (Agent 03) |
+| v2.1 | Portfolio Optimization Suite | 🟡 In Progress |
 | v3.0 | Predictive & Explainable AI | 🔵 Planned |
 | v3.1 | Multi-Tenant & Scale | 🔵 Planned |
 
 ---
 
-## v1.0 — Core Income Pipeline ✅ In Progress
+## v1.0 — Core Income Pipeline ✅ Complete
 
 **Theme:** Foundation agents live in production. Ticker evaluation pipeline operational end-to-end.
 
@@ -30,18 +30,21 @@ Each version groups related enhancements that form a coherent capability upgrade
 - ✅ Agent 01 — Market Data Service (Polygon + FMP + yfinance, port 8001)
 - ✅ Agent 02 — Newsletter Ingestion Service (Seeking Alpha, Claude Haiku extraction, port 8002)
 - ✅ Agent 03 — Income Scoring Service (Quality Gate + 8-component scorer + Monte Carlo NAV erosion, port 8003)
-
-### In Progress
-- 🔄 Agent 04 — Asset Classification Service (port 8004) — DESIGN complete, Develop pending
-
-### Deferred to v1.1
-- Agent 03: Inline quality gate currently requires `asset_class` from caller — will auto-resolve once Agent 04 is live
+- ✅ Agent 04 — Asset Classification Service (port 8004) — 7-class rule engine, shared detector, benchmarks, tax profiles, 201 tests (2026-03-12)
 
 ---
 
-## v1.1 — Classification & Tax Foundation 🔵 Planned
+## v1.1 — Classification & Tax Foundation ✅ Complete
 
 **Theme:** Complete the classification layer and establish tax efficiency as a platform-wide output. Agent 03 becomes fully autonomous (no caller-provided asset_class required).
+
+### Completed
+
+Agent 03 enhancements now in production:
+- ✅ Auto-classification integration: Agent 03 calls Agent 04 if no `asset_class` provided
+- ✅ Inline fallback: imports shared detector directly if Agent 04 unavailable
+- ✅ `tax_efficiency` field added to ScoreResponse (parallel output, 0% composite weight)
+- ✅ `classification_verify_overrides` config flag: when True, calls Agent 04 even for manual overrides to detect mismatches
 
 ### Agent 04 — Asset Classification Service (port 8004)
 - Full rule engine with 4 rule types (ticker pattern, sector, feature, metadata)
@@ -51,73 +54,137 @@ Each version groups related enhancements that form a coherent capability upgrade
 - `tax_efficiency` parallel output (income_type, tax_drag_pct, preferred_account)
 - Manual override API with audit trail
 - Shared utility: `src/shared/asset_class_detector/` importable by all agents
+- Status: ✅ Complete (v1.0, 2026-03-12)
 
-### Agent 03 Integration
-- Auto-classification: Agent 03 calls Agent 04 if no `asset_class` provided
-- Inline fallback: imports shared detector directly if Agent 04 unavailable
-- `tax_efficiency` field added to ScoreResponse (parallel, 0% composite weight)
-
-### Agent 05 — Tax Optimization Service (port 8005)
-- Consumes `tax_efficiency` output from Agent 04
-- After-tax yield scenarios (taxable vs. Roth/IRA)
-- Account placement optimization
-- Florida-specific: no state tax calculations required
-- Tax harvesting batch jobs (not real-time)
-- Multi-account optimization across portfolio
+### Agent 05 — Tax Optimization Service (port 8005) ✅ Complete
+- Consumes `asset_class` from Agent 04 (HTTP, 3s timeout, graceful fallback)
+- After-tax yield calculation: 2024 IRS brackets, all 4 filing statuses, all 50 states + DC
+- Account placement optimization: heuristic engine recommends IRA vs TAXABLE
+- Tax-loss harvesting: wash-sale-aware opportunity identification (proposals only)
+- Asset class reference endpoint: GET /tax/asset-classes
+- 135 tests, 8 API endpoints
+- Status: ✅ Complete (v1.0, 2026-03-12)
 
 ---
 
-## v2.0 — Adaptive Intelligence 🔵 Planned
+## v2.0 — Adaptive Intelligence ✅ Complete (Agent 03)
 
 **Theme:** The platform begins learning from outcomes. Scoring weights adapt quarterly. Agent 02 signals influence scoring dynamically.
 
-### Agent 03 Enhancements
-- **Newsletter signal integration (Agent 02 → Agent 03):** Negative analyst signals apply penalty layer to composite score. Risk flag architecture — signals reduce score, never inflate it. Source: ADR from Agent 03 brainstorm session (Decision #11).
-- **Scoring weight framework — class-specific full replacement sets:** Each asset class gets its own complete weight profile (e.g., mREIT = yield 30 / durability 45 / technical 25). Replaces universal weights applied in v1.0.
-- **Technical scoring — class-specific factors via Preference Table:** Different technical indicators weighted differently per class. Source: Decision #9.
+### Agent 03 — Completed (2026-03-12)
 
-### Learning Loop — Quarterly Adaptive Weight Tuning
-- Shadow portfolio tracking activated: every ACCUMULATE/AGGRESSIVE_BUY recommendation tracked against actual income outcomes (12-month window)
-- Quarterly weight review: statistical analysis of which sub-components predicted actual dividend cuts, NAV erosion, coverage failures
-- Weight adjustments bounded (±5% per quarter) to prevent overfitting
-- Full audit trail — every weight change logged with rationale and supporting data
-- Source: Decision #13 from Agent 03/04 brainstorm.
+**Phase 0 — DB Foundation & Dynamic Weights** ✅ Complete
+- New ORM tables: `scoring_weight_profiles`, `weight_change_audit`
+- Weight profile loader with in-process cache
+- 7 seed profiles per asset class (MORTGAGE_REIT 30/45/25, BDC 35/40/25, etc.)
+- GET/POST /weights/* API endpoints
+- IncomeScorer uses profile ceilings instead of hardcoded universals
 
-### Asset Class Detector — Confidence Learning
-- Confidence scores updated based on classification accuracy vs. actual outcomes
-- New hybrid patterns promoted to rule engine via DB insert (no redeploy)
-- Source: Agent 04 design — DB-driven rule engine pattern.
+**Phase 2 — Signal Penalty Layer** ✅ Complete
+- Agent 02 signal integration: BEARISH (strong/moderate/weak) = -8/-5/-2 points
+- Architecture constraint: bullish signals NEVER inflate scores (cap = 0.0)
+- Eligibility gates: min analysts, min decay weight, consensus thresholds
+- Score floor enforcement: penalty cannot reduce score below 0.0
+- GET /signal-config/ returns active penalty configuration
+- 60 tests covering all scenarios
+
+**Phase 3 — Learning Loop** ✅ Complete
+- Shadow portfolio tracking: AGGRESSIVE_BUY/ACCUMULATE recommendations tracked 90 days
+- Outcome labeling: CORRECT (+5% return), INCORRECT (-5% return), NEUTRAL
+- Quarterly weight review engine: proposes ±5pt max adjustments per pillar
+- Weight sum=100 invariant enforcement
+- GET/POST /learning-loop/* API endpoints
+- 74 tests covering tuner logic and API contracts
+
+**Phase 4 — Detector Confidence Learning** ✅ Complete
+- Classification feedback tracking: records AGENT04 vs MANUAL_OVERRIDE per scoring call
+- Mismatch detection when `CLASSIFICATION_VERIFY_OVERRIDES=True`
+- Monthly accuracy rollup: computes accuracy_rate, override_rate, mismatch_rate
+- GET/POST /classification-accuracy/* API endpoints
+- 47 tests covering feedback capture and rollup logic
+
+**Overall v2.0 metrics:**
+- 438 total tests (all passing)
+- 11 new tables in platform_shared schema
+- 12 new API endpoints
+- Full audit trail for all weight changes
+
+### Future Phases (Not Yet Scheduled)
+
+Agent 04 — Asset Classification Service (port 8004)
+- Full rule engine with 4 rule types (ticker pattern, sector, feature, metadata)
+- 7 MVP asset classes: DIVIDEND_STOCK, COVERED_CALL_ETF, BOND, EQUITY_REIT, MORTGAGE_REIT, BDC, PREFERRED_STOCK
+- Hybrid class detection (mREIT, PREFERRED_CEF, BDC_CEF)
+- Benchmark comparison + class sub-scores
+- Status: DESIGN complete, Develop pending
+
+Agent 05 — Tax Optimization Service (port 8005)
+- Consumes `tax_efficiency` output from Agent 04
+- After-tax yield scenarios (taxable vs. Roth/IRA)
+- Account placement optimization
+- Status: Planned
 
 ---
 
-## v2.1 — Portfolio Optimization Suite 🔵 Planned
+## v2.1 — Portfolio Optimization Suite 🟡 In Progress
 
 **Theme:** From individual ticker evaluation to full portfolio management. Rebalancing, income projection, NAV monitoring.
 
-### Agent 07 — Opportunity Scanner (port 8007)
-- Composite scoring across universe of income tickers
-- Filters: yield threshold, asset class, quality gate status
-- Output: ranked candidate list for proposal generator
+### Foundation — Agent 06 Housekeeping ✅ Complete (2026-03-12)
 
-### Agent 08 — Rebalancing Service (port 8008)
-- CVXPY optimization engine
-- Constraints: income target, concentration limits, asset class allocation
+- Fixed `class Config:` → `model_config = ConfigDict(...)` Pydantic v2 deprecation in scenario-simulation-service
+- 135 tests passing, 0 deprecation warnings
+
+### Foundation — Portfolio Schema ✅ Deployed (2026-03-12)
+
+- 12 tables created in `platform_shared` via `src/portfolio-positions-schema/scripts/migrate.py`
+- Phase 0: `securities`, `features_historical`, `user_preferences`
+- Phase 1: `nav_snapshots`
+- Phase 2: `accounts`, `portfolios`, `portfolio_constraints`
+- Phase 3: `positions`, `transactions`, `dividend_events`
+- Phase 4: `portfolio_income_metrics`, `portfolio_health_scores`
+
+### Agent 06 — Scenario Simulation Service (port 8006) ✅ Complete (2026-03-12)
+
+- 5 predefined stress scenarios (RATE_HIKE_200BPS, MARKET_CORRECTION_20, RECESSION_MILD, INFLATION_SPIKE, CREDIT_STRESS)
+- Monte Carlo N=1000 log-normal GBM income projection, P10/P50/P90 bands
+- Vulnerability ranking, asyncpg direct reads from platform_shared
+- 135 tests
+
+### Agent 07 — Opportunity Scanner (port 8007) ✅ Complete (2026-03-12)
+
+- `POST /scan` — score up to 200 tickers via Agent 03, apply filters, rank results
+- `GET /scan/{scan_id}` — retrieve persisted scan result
+- `GET /universe` — list tracked securities from `platform_shared.securities`
+- VETO gate: tickers with score < 70 flagged (`veto_flag: true`); excluded when `quality_gate_only: true`
+- Concurrent scoring: asyncio semaphore (10 parallel Agent 03 calls)
+- Graceful degradation: Agent 03 failures skip ticker, scan continues
+- Results persisted to `platform_shared.scan_results`
+- 100 tests (40 engine, 25 client, 35 API)
+
+### Agent 08 — Rebalancing Service (port 8008) 🔵 Planned
+
+- Greedy heuristic optimizer (sort by after-tax yield, enforce concentration limits)
+- VETO gate: all buy proposals require score ≥ 70
 - Output: rebalancing proposals (never auto-executed — user approval required)
 
-### Agent 09 — Income Projection Service (port 8009)
-- Forward 12-month income forecast per portfolio
-- Dividend schedule modeling
-- Scenario analysis: dividend cut, yield change, reinvestment
+### Agent 09 — Income Projection Service (port 8009) 🔵 Planned
 
-### Agent 10 — NAV Monitor Service (port 8010)
+- Runs in parallel with Agent 06 (not a replacement)
+- Dividend-calendar-aware projection using actual ex-div dates from `dividend_events` table
+- Reuses Agent 06 GBM engine for Monte Carlo uncertainty bands
+
+### Agent 10 — NAV Monitor Service (port 8010) 🔵 Planned
+
 - Real-time NAV trend tracking for ETF holdings
-- Erosion alerts: configurable threshold triggers
+- Erosion alerts: configurable threshold triggers (default -5% over 90d)
 - Feeds circuit breaker patterns in Agent 11
 
-### Agent 11 — Alert Service (port 8011)
+### Agent 11 — Alert Service (port 8011) 🔵 Planned
+
 - Circuit breaker patterns: Capital safety / Yield sustainability / Growth trajectory
 - Multi-day confirmation before alert fires (reduces false positives)
-- Notification hybrid: in-app + email
+- Delivery: in-app (DB record) + SMTP email (configurable)
 - User-configurable thresholds per portfolio
 
 ---
