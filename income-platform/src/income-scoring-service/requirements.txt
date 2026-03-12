@@ -23,6 +23,7 @@ pytest-mock==3.12.0
 
 # Auth
 PyJWT==2.8.0
+python-multipart==0.0.12
 
 # Scoring engine
 numpy==1.26.3
