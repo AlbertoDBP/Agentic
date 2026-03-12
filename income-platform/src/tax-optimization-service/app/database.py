@@ -23,8 +23,10 @@ settings = get_settings()
 
 def _build_url(raw_url: str) -> str:
     url = raw_url
+    # Normalise to a plain postgresql:// base, then force asyncpg driver
     url = url.replace("postgresql+psycopg2://", "postgresql://")
     url = url.replace("postgresql+asyncpg://", "postgresql://")
+    url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
     if "?" in url:
         url = url.split("?")[0]
     return url
