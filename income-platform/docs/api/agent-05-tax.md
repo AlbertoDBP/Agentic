@@ -45,9 +45,9 @@ Return the tax treatment profile for a symbol without calculating specific distr
 | Param | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | asset_class | enum | No | Auto-detect (Agent 04) | DIVIDEND_STOCK, COVERED_CALL_ETF, BOND |
-| filing_status | enum | No | SINGLE | SINGLE, MARRIED_FILING_JOINTLY, MARRIED_FILING_SEPARATELY, HEAD_OF_HOUSEHOLD |
+| filing_status | enum | No | SINGLE | SINGLE, MARRIED_JOINT, MARRIED_SEPARATE, HEAD_OF_HOUSEHOLD |
 | state_code | string | No | None | Two-letter state abbreviation |
-| account_type | enum | No | TAXABLE | TAXABLE, TRADITIONAL_IRA, ROTH_IRA, 401K |
+| account_type | enum | No | TAXABLE | TAXABLE, TRAD_IRA, ROTH_IRA, 401K |
 | annual_income | float | No | 0 | Estimated annual income (for tax bracket calculation) |
 
 **Response 200:**
@@ -55,32 +55,31 @@ Return the tax treatment profile for a symbol without calculating specific distr
 {
   "symbol": "JNJ",
   "asset_class": "DIVIDEND_STOCK",
-  "account_type": "TAXABLE",
-  "filing_status": "SINGLE",
-  "state_code": "CA",
-  "annual_income": 150000,
-  "primary_treatment": "QUALIFIED_DIVIDEND",
-  "federal_tax_rate": 0.15,
-  "state_tax_rate": 0.093,
-  "fica_tax_rate": 0.0,
-  "effective_combined_rate": 0.243,
-  "section_199a_eligible": true,
+  "asset_class_fallback": false,
+  "primary_tax_treatment": "QUALIFIED_DIVIDEND",
+  "secondary_treatments": ["ORDINARY_INCOME"],
+  "qualified_dividend_eligible": true,
+  "section_199a_eligible": false,
   "section_1256_eligible": false,
   "k1_required": false,
-  "notes": "Qualified dividend treatment applies if held >60 days around ex-dividend"
+  "notes": [
+    "Qualified dividends require 61-day holding period around ex-dividend date.",
+    "Foreign dividends may not qualify; confirm treaty status."
+  ]
 }
 ```
 
 | Field | Description |
 |-------|-------------|
-| primary_treatment | QUALIFIED_DIVIDEND, ORDINARY_INCOME, INTEREST, CAPITAL_GAIN, etc. |
-| federal_tax_rate | Federal rate for this income bracket (15%, 20%, or 37% for qualified dividends) |
-| state_tax_rate | State-level tax rate (varies by state) |
-| fica_tax_rate | FICA (Social Security + Medicare) — typically 0 for dividends, may apply in RMD scenarios |
-| effective_combined_rate | Total tax rate (federal + state + FICA) |
-| section_199a_eligible | Eligible for Section 199A (20% pass-through deduction) — not typically applicable to dividends |
-| section_1256_eligible | Subject to Section 1256 treatment (60% long-term + 40% short-term capital gains) |
-| k1_required | K-1 form required for tax filing |
+| asset_class | Resolved asset class (from request, Agent 04, or fallback) |
+| asset_class_fallback | True if Agent 04 was unavailable and ORDINARY_INCOME was used |
+| primary_tax_treatment | QUALIFIED_DIVIDEND, ORDINARY_INCOME, REIT_DISTRIBUTION, MLP_DISTRIBUTION, SECTION_1256_60_40, RETURN_OF_CAPITAL, or TAX_EXEMPT |
+| secondary_treatments | List of possible alternative treatments for this asset class |
+| qualified_dividend_eligible | True if distributions qualify for preferential tax rates |
+| section_199a_eligible | True for REITs and MLPs (20% pass-through deduction) |
+| section_1256_eligible | True for futures-based ETFs (60/40 blended rate) |
+| k1_required | True for MLPs and some partnerships |
+| notes | Plain-language tax guidance for this asset class |
 
 ---
 
@@ -96,7 +95,7 @@ POST version for complex tax profile requests.
 {
   "symbol": "JEPI",
   "asset_class": "COVERED_CALL_ETF",
-  "filing_status": "MARRIED_FILING_JOINTLY",
+  "filing_status": "MARRIED_JOINT",
   "state_code": "TX",
   "account_type": "TAXABLE",
   "annual_income": 300000
@@ -143,19 +142,39 @@ Calculate after-tax net distribution and effective tax rate for a specific distr
 ```json
 {
   "symbol": "JNJ",
-  "distribution_amount": 50.0,
-  "asset_class": "DIVIDEND_STOCK",
-  "tax_treatment": "QUALIFIED_DIVIDEND",
-  "federal_tax": 7.5,
-  "state_tax": 4.65,
-  "total_tax": 12.15,
-  "after_tax_distribution": 37.85,
+  "gross_distribution": 50.0,
+  "federal_tax_owed": 7.5,
+  "state_tax_owed": 4.65,
+  "niit_owed": 0.0,
+  "total_tax_owed": 12.15,
+  "net_distribution": 37.85,
   "effective_tax_rate": 0.243,
-  "account_type": "TAXABLE",
-  "filing_status": "SINGLE",
-  "state_code": "CA"
+  "after_tax_yield_uplift": 0.0,
+  "bracket_detail": [
+    {
+      "income_type": "QUALIFIED_DIVIDEND",
+      "rate_federal": 0.15,
+      "rate_state": 0.093,
+      "rate_combined": 0.243,
+      "niit_applicable": false
+    }
+  ],
+  "notes": []
 }
 ```
+
+| Field | Description |
+|-------|-------------|
+| gross_distribution | Input distribution amount before tax |
+| federal_tax_owed | Federal tax on this distribution |
+| state_tax_owed | State tax (0.0 if no state_code or no-tax state) |
+| niit_owed | Net Investment Income Tax (3.8% if income above threshold) |
+| total_tax_owed | Sum of federal + state + NIIT |
+| net_distribution | After-tax distribution (gross - total_tax_owed) |
+| effective_tax_rate | total_tax_owed / gross_distribution |
+| after_tax_yield_uplift | Tax savings vs treating entire distribution as ordinary income |
+| bracket_detail | Per-income-type breakdown with individual rates |
+| notes | Explanatory notes (e.g., "Section 1256 60/40 blended rate applied") |
 
 ---
 
@@ -204,64 +223,44 @@ Analyze a portfolio of holdings and recommend optimal account placement to minim
 {
   "holdings": [
     {
-      "symbol": "JNJ",
-      "asset_class": "DIVIDEND_STOCK",
-      "quantity": 100,
-      "annual_income_per_share": 3.25,
-      "current_price": 182.50
-    },
-    {
       "symbol": "JEPI",
       "asset_class": "COVERED_CALL_ETF",
-      "quantity": 50,
-      "annual_income_per_share": 1.80,
-      "current_price": 55.00
-    }
-  ],
-  "accounts": [
-    {
-      "name": "Taxable Brokerage",
       "account_type": "TAXABLE",
-      "capacity": 500000
+      "current_value": 50000.0,
+      "annual_yield": 0.09
     },
     {
-      "name": "Traditional IRA",
-      "account_type": "TRADITIONAL_IRA",
-      "capacity": 7000
+      "symbol": "JNJ",
+      "asset_class": "DIVIDEND_STOCK",
+      "account_type": "TAXABLE",
+      "current_value": 25000.0,
+      "annual_yield": 0.03
     }
   ],
-  "filing_status": "MARRIED_FILING_JOINTLY",
-  "state_code": "CA",
-  "annual_income": 300000
+  "annual_income": 200000,
+  "filing_status": "SINGLE",
+  "state_code": "FL"
 }
 ```
 
 **Response 200:**
 ```json
 {
-  "portfolio_value": 27275,
-  "annual_tax_burden_current": 3140,
-  "annual_tax_burden_optimized": 2680,
-  "tax_savings": 460,
-  "recommendations": [
+  "total_portfolio_value": 75000.0,
+  "current_annual_tax_burden": 1350.0,
+  "optimized_annual_tax_burden": 675.0,
+  "estimated_annual_savings": 675.0,
+  "placement_recommendations": [
     {
-      "symbol": "JNJ",
-      "asset_class": "DIVIDEND_STOCK",
-      "quantity": 100,
-      "current_location": "TAXABLE",
-      "recommended_location": "TRADITIONAL_IRA",
-      "tax_impact": "Defer income tax; subject to RMD rules",
-      "priority": 1
+      "symbol": "JEPI",
+      "current_account": "TAXABLE",
+      "recommended_account": "TRAD_IRA",
+      "reason": "Ordinary income taxed at 32%; shelter in IRA to defer tax.",
+      "estimated_annual_tax_savings": 675.0
     }
   ],
-  "account_placement_plan": [
-    {
-      "account_name": "Taxable Brokerage",
-      "holdings": [
-        {"symbol": "JEPI", "quantity": 50}
-      ]
-    }
-  ]
+  "summary": "Moving 1 holding to tax-advantaged accounts saves ~$675/year.",
+  "notes": []
 }
 ```
 
@@ -289,58 +288,58 @@ Identify tax-loss harvesting opportunities across a set of positions. Returns pr
   "candidates": [
     {
       "symbol": "AAPL",
-      "quantity": 100,
-      "purchase_price": 185.00,
-      "current_price": 165.00,
-      "purchase_date": "2024-06-15"
+      "current_value": 16500.0,
+      "cost_basis": 18500.0,
+      "holding_period_days": 270,
+      "account_type": "TAXABLE"
     },
     {
       "symbol": "JNJ",
-      "quantity": 50,
-      "purchase_price": 160.00,
-      "current_price": 182.50,
-      "purchase_date": "2025-01-10"
+      "current_value": 28000.0,
+      "cost_basis": 25000.0,
+      "holding_period_days": 400,
+      "account_type": "TAXABLE"
     }
   ],
-  "realized_gains_ytd": 25000,
-  "filing_status": "MARRIED_FILING_JOINTLY",
-  "state_code": "CA"
+  "annual_income": 150000,
+  "filing_status": "SINGLE",
+  "state_code": "FL",
+  "wash_sale_check": true
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| candidates | array | Yes | List of positions to analyze |
-| realized_gains_ytd | float | No | Capital gains already realized this tax year |
+| candidates | array | Yes | Positions to analyze |
+| candidates[].symbol | string | Yes | Ticker symbol |
+| candidates[].current_value | float | Yes | Current market value of position (≥0) |
+| candidates[].cost_basis | float | Yes | Total cost basis of position (≥0) |
+| candidates[].holding_period_days | int | Yes | Days position has been held (≥0) |
+| candidates[].account_type | enum | No | Default: TAXABLE |
+| annual_income | float | Yes | Taxpayer's annual income (≥0) |
 | filing_status | enum | No | Default: SINGLE |
 | state_code | string | No | Two-letter state code |
+| wash_sale_check | bool | No | Default: true — flag wash-sale risks |
 
 **Response 200:**
 ```json
 {
-  "total_unrealized_losses": 2000,
+  "total_harvestable_losses": 2000.0,
+  "total_estimated_tax_savings": 300.0,
   "opportunities": [
     {
       "symbol": "AAPL",
-      "quantity": 100,
-      "unrealized_loss": 2000,
-      "tax_savings": 520,
-      "wash_sale_risk": {
-        "risky": false,
-        "reason": null,
-        "recovery_date": null
-      },
-      "replacement_suggestions": [
-        {
-          "symbol": "MSFT",
-          "correlation": 0.92,
-          "reason": "Similar tech exposure, low wash-sale risk"
-        }
-      ]
+      "unrealized_loss": 2000.0,
+      "tax_savings_estimated": 300.0,
+      "holding_period_days": 270,
+      "long_term": false,
+      "wash_sale_risk": false,
+      "action": "HARVEST_NOW",
+      "rationale": "Short-term loss; harvest before 365-day mark to offset gains."
     }
   ],
-  "total_potential_tax_savings": 520,
-  "wash_sale_warnings": []
+  "wash_sale_warnings": [],
+  "notes": []
 }
 ```
 
@@ -363,6 +362,13 @@ Return a reference summary of tax treatment for each supported asset class.
 **Response 200:**
 ```json
 {
+  "COVERED_CALL_ETF": {
+    "primary_treatment": "ORDINARY_INCOME",
+    "qualified_dividend_eligible": false,
+    "section_199a_eligible": false,
+    "section_1256_eligible": true,
+    "k1_required": false
+  },
   "DIVIDEND_STOCK": {
     "primary_treatment": "QUALIFIED_DIVIDEND",
     "qualified_dividend_eligible": true,
@@ -370,15 +376,43 @@ Return a reference summary of tax treatment for each supported asset class.
     "section_1256_eligible": false,
     "k1_required": false
   },
-  "COVERED_CALL_ETF": {
+  "REIT": {
+    "primary_treatment": "REIT_DISTRIBUTION",
+    "qualified_dividend_eligible": false,
+    "section_199a_eligible": true,
+    "section_1256_eligible": false,
+    "k1_required": false
+  },
+  "BOND_ETF": {
+    "primary_treatment": "ORDINARY_INCOME",
+    "qualified_dividend_eligible": false,
+    "section_199a_eligible": false,
+    "section_1256_eligible": false,
+    "k1_required": false
+  },
+  "PREFERRED_STOCK": {
     "primary_treatment": "QUALIFIED_DIVIDEND",
     "qualified_dividend_eligible": true,
     "section_199a_eligible": false,
-    "section_1256_eligible": true,
+    "section_1256_eligible": false,
     "k1_required": false
   },
-  "BOND": {
-    "primary_treatment": "ORDINARY_INTEREST",
+  "MLP": {
+    "primary_treatment": "MLP_DISTRIBUTION",
+    "qualified_dividend_eligible": false,
+    "section_199a_eligible": true,
+    "section_1256_eligible": false,
+    "k1_required": true
+  },
+  "BDC": {
+    "primary_treatment": "ORDINARY_INCOME",
+    "qualified_dividend_eligible": false,
+    "section_199a_eligible": false,
+    "section_1256_eligible": false,
+    "k1_required": false
+  },
+  "CLOSED_END_FUND": {
+    "primary_treatment": "ORDINARY_INCOME",
     "qualified_dividend_eligible": false,
     "section_199a_eligible": false,
     "section_1256_eligible": false,
@@ -389,7 +423,7 @@ Return a reference summary of tax treatment for each supported asset class.
 
 ---
 
-## Tax Rates (2026)
+## Tax Rates (2024)
 
 ### Federal Qualified Dividend Rates
 - 0% rate: ~$47,000 (single) / ~$94,000 (MFJ)
@@ -404,7 +438,7 @@ Vary by state from 0% (Alaska, Florida, Texas, Wyoming) to 13.3% (California)
 | Type | Tax on Distributions | Tax on Growth | Best For |
 |------|---|---|---|
 | TAXABLE | Immediate | Annual | Maximum flexibility |
-| TRADITIONAL_IRA | Deferred (RMD at 73) | Tax-deferred | Income deferral |
+| TRAD_IRA | Deferred (RMD at 73) | Tax-deferred | Income deferral |
 | ROTH_IRA | None | Tax-free | Long-term growth |
 | 401K | Deferred (RMD at 73) | Tax-deferred | Employer match |
 

@@ -1,6 +1,6 @@
 """Agent 04 — SQLAlchemy ORM Models"""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import String, Float, Boolean, DateTime, JSON, Text, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID
@@ -24,7 +24,7 @@ class AssetClassification(Base):
     matched_rules: Mapped[dict] = mapped_column(JSON, nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="rule_engine_v1")
     is_override: Mapped[bool] = mapped_column(Boolean, default=False)
-    classified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    classified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -39,7 +39,7 @@ class AssetClassRule(Base):
     priority: Mapped[int] = mapped_column(Integer, default=100)
     confidence_weight: Mapped[float] = mapped_column(Float, default=1.0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class ClassificationOverride(Base):
@@ -51,6 +51,6 @@ class ClassificationOverride(Base):
     asset_class: Mapped[str] = mapped_column(String(50), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(String(100), nullable=True)
-    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     effective_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

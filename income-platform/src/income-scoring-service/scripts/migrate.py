@@ -3,8 +3,11 @@ Agent 03 — Income Scoring Service
 Migration: Create all tables in platform_shared schema.
 
 v1.0: scoring_runs, quality_gate_results, income_scores
-v2.0: scoring_weight_profiles, weight_change_audit, signal_penalty_config
-      + new columns on income_scores (weight_profile_id, signal_penalty)
+v2.0: scoring_weight_profiles, weight_change_audit, signal_penalty_config,
+      signal_penalty_log, shadow_portfolio_entries, weight_review_runs
+      + new columns on income_scores (weight_profile_id, signal_penalty,
+        signal_penalty_details)
+v2.0 Phase 4: classification_feedback, classifier_accuracy_runs
 """
 import sys
 import argparse
@@ -37,6 +40,11 @@ def run_migration(drop_first: bool = False):
         logger.warning("Dropping all Agent 03 tables...")
         with engine.connect() as conn:
             conn.execute(text("""
+                DROP TABLE IF EXISTS platform_shared.classifier_accuracy_runs CASCADE;
+                DROP TABLE IF EXISTS platform_shared.classification_feedback CASCADE;
+                DROP TABLE IF EXISTS platform_shared.weight_review_runs CASCADE;
+                DROP TABLE IF EXISTS platform_shared.shadow_portfolio_entries CASCADE;
+                DROP TABLE IF EXISTS platform_shared.signal_penalty_log CASCADE;
                 DROP TABLE IF EXISTS platform_shared.weight_change_audit CASCADE;
                 DROP TABLE IF EXISTS platform_shared.signal_penalty_config CASCADE;
                 DROP TABLE IF EXISTS platform_shared.income_scores CASCADE;
@@ -150,6 +158,110 @@ def run_migration(drop_first: bool = False):
         """))
 
         conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS platform_shared.signal_penalty_log (
+                id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                income_score_id     UUID REFERENCES platform_shared.income_scores(id),
+                ticker              VARCHAR(20)  NOT NULL,
+                asset_class         VARCHAR(50)  NOT NULL,
+                signal_type         VARCHAR(20)  NOT NULL,
+                signal_strength     VARCHAR(20),
+                consensus_score     NUMERIC(5,3),
+                n_analysts          INTEGER,
+                decay_weight        NUMERIC(5,4),
+                penalty_applied     NUMERIC(4,1) NOT NULL DEFAULT 0.0,
+                score_before        FLOAT        NOT NULL,
+                score_after         FLOAT        NOT NULL,
+                eligible            BOOLEAN      NOT NULL DEFAULT false,
+                config_version      INTEGER,
+                agent02_available   BOOLEAN      NOT NULL DEFAULT true,
+                logged_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS platform_shared.shadow_portfolio_entries (
+                id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                income_score_id             UUID REFERENCES platform_shared.income_scores(id),
+                ticker                      VARCHAR(20)  NOT NULL,
+                asset_class                 VARCHAR(50)  NOT NULL,
+                weight_profile_id           UUID REFERENCES platform_shared.scoring_weight_profiles(id),
+                entry_score                 FLOAT        NOT NULL,
+                entry_grade                 VARCHAR(5)   NOT NULL,
+                entry_recommendation        VARCHAR(20)  NOT NULL,
+                valuation_yield_score       FLOAT        NOT NULL,
+                financial_durability_score  FLOAT        NOT NULL,
+                technical_entry_score       FLOAT        NOT NULL,
+                entry_price                 FLOAT,
+                entry_date                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                hold_period_days            INTEGER      NOT NULL DEFAULT 90,
+                exit_price                  FLOAT,
+                exit_date                   TIMESTAMPTZ,
+                actual_return_pct           FLOAT,
+                outcome_label               VARCHAR(20)  NOT NULL DEFAULT 'PENDING',
+                outcome_populated_at        TIMESTAMPTZ
+            )
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS platform_shared.weight_review_runs (
+                id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                asset_class             VARCHAR(50)  NOT NULL,
+                triggered_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                triggered_by            VARCHAR(100),
+                status                  VARCHAR(20)  NOT NULL DEFAULT 'RUNNING',
+                outcomes_analyzed       INTEGER      NOT NULL DEFAULT 0,
+                correct_count           INTEGER      NOT NULL DEFAULT 0,
+                incorrect_count         INTEGER      NOT NULL DEFAULT 0,
+                neutral_count           INTEGER      NOT NULL DEFAULT 0,
+                profile_before_id       UUID REFERENCES platform_shared.scoring_weight_profiles(id),
+                weight_yield_before     SMALLINT,
+                weight_durability_before SMALLINT,
+                weight_technical_before SMALLINT,
+                profile_after_id        UUID REFERENCES platform_shared.scoring_weight_profiles(id),
+                weight_yield_after      SMALLINT,
+                weight_durability_after SMALLINT,
+                weight_technical_after  SMALLINT,
+                delta_yield             SMALLINT,
+                delta_durability        SMALLINT,
+                delta_technical         SMALLINT,
+                skip_reason             VARCHAR(100),
+                notes                   TEXT,
+                completed_at            TIMESTAMPTZ
+            )
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS platform_shared.classification_feedback (
+                id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                income_score_id     UUID REFERENCES platform_shared.income_scores(id),
+                ticker              VARCHAR(20)  NOT NULL,
+                asset_class_used    VARCHAR(50)  NOT NULL,
+                source              VARCHAR(20)  NOT NULL,
+                agent04_class       VARCHAR(50),
+                agent04_confidence  FLOAT,
+                is_mismatch         BOOLEAN,
+                captured_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS platform_shared.classifier_accuracy_runs (
+                id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                period_month        VARCHAR(7)   NOT NULL,
+                asset_class         VARCHAR(50),
+                total_calls         INTEGER      NOT NULL DEFAULT 0,
+                agent04_trusted     INTEGER      NOT NULL DEFAULT 0,
+                manual_overrides    INTEGER      NOT NULL DEFAULT 0,
+                mismatches          INTEGER      NOT NULL DEFAULT 0,
+                accuracy_rate       FLOAT,
+                override_rate       FLOAT,
+                mismatch_rate       FLOAT,
+                computed_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                computed_by         VARCHAR(100)
+            )
+        """))
+
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS platform_shared.weight_change_audit (
                 id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 asset_class         VARCHAR(50)  NOT NULL,
@@ -186,7 +298,7 @@ def run_migration(drop_first: bool = False):
 
         conn.commit()
 
-    # ── ADD columns to income_scores if upgrading from v1.0 ──────────────────
+    # ── ADD columns to income_scores if upgrading from v1.0/v2.0-early ────────
     logger.info("Applying v2.0 column additions (idempotent)...")
     with engine.connect() as conn:
         for col_sql in [
@@ -195,6 +307,8 @@ def run_migration(drop_first: bool = False):
                REFERENCES platform_shared.scoring_weight_profiles(id)""",
             """ALTER TABLE platform_shared.income_scores
                ADD COLUMN IF NOT EXISTS signal_penalty FLOAT NOT NULL DEFAULT 0.0""",
+            """ALTER TABLE platform_shared.income_scores
+               ADD COLUMN IF NOT EXISTS signal_penalty_details JSONB""",
         ]:
             conn.execute(text(col_sql))
         conn.commit()
@@ -211,6 +325,14 @@ def run_migration(drop_first: bool = False):
             "CREATE INDEX IF NOT EXISTS ix_swp_asset_class_history ON platform_shared.scoring_weight_profiles(asset_class, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS ix_wca_asset_class_changed ON platform_shared.weight_change_audit(asset_class, changed_at DESC)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uix_spc_active ON platform_shared.signal_penalty_config(is_active) WHERE is_active = true",
+            "CREATE INDEX IF NOT EXISTS ix_spl_ticker_logged ON platform_shared.signal_penalty_log(ticker, logged_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_spe_ticker_entry ON platform_shared.shadow_portfolio_entries(ticker, entry_date DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_spe_outcome_label ON platform_shared.shadow_portfolio_entries(outcome_label)",
+            "CREATE INDEX IF NOT EXISTS ix_spe_asset_class ON platform_shared.shadow_portfolio_entries(asset_class)",
+            "CREATE INDEX IF NOT EXISTS ix_wrr_asset_class_triggered ON platform_shared.weight_review_runs(asset_class, triggered_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_cf_ticker_captured ON platform_shared.classification_feedback(ticker, captured_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_cf_source ON platform_shared.classification_feedback(source)",
+            "CREATE INDEX IF NOT EXISTS ix_car_period_asset ON platform_shared.classifier_accuracy_runs(period_month, asset_class)",
         ]:
             conn.execute(text(idx))
         conn.commit()

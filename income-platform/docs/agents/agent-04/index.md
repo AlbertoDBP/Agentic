@@ -4,7 +4,7 @@
 **Service:** `asset-classification-service`  
 **Port:** 8004  
 **Status:** ✅ Production Ready  
-**Last Updated:** 2026-02-27  
+**Last Updated:** 2026-03-12  
 **Version:** 1.0.0
 
 ---
@@ -38,7 +38,7 @@ Agent 04 classifies income-generating securities into one of 7 asset classes usi
 | [Classification Engine](functional/classification-engine.md) | Core pipeline functional spec |
 | [Shared Detector](functional/shared-detector.md) | Shared utility functional spec |
 | [Tax Profile](functional/tax-profile.md) | Tax efficiency output spec |
-| [Test Matrix](testing/test-matrix.md) | 55 tests across 7 asset classes |
+| [Test Matrix](testing/test-matrix.md) | 201 tests across 6 files |
 | [Decisions Log](decisions/decisions-log.md) | 6 ADRs |
 | [CHANGELOG](CHANGELOG.md) | Version history |
 

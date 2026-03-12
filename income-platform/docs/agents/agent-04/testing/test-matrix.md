@@ -1,16 +1,29 @@
 # Test Matrix — Agent 04 Asset Classification Service
 
-**Total Tests:** 55  
-**Pass Rate:** 55/55 (100%)  
-**Runtime:** ~0.30s  
-**Last Run:** 2026-02-27  
-**File:** `tests/test_detector.py`
+**Total Tests:** 201
+**Pass Rate:** 201/201 (100%)
+**Runtime:** ~0.25s
+**Last Run:** 2026-03-12
 
 ---
 
-## Test Coverage by Asset Class
+## Test Files
 
-### COVERED_CALL_ETF (10 tests)
+| File | Classes | Tests |
+|---|---|---|
+| `tests/test_detector.py` | 7 | 55 |
+| `tests/test_tax_profile.py` | 4 | 48 |
+| `tests/test_benchmarks.py` | 3 | 28 |
+| `tests/test_classify_api.py` | 3 | 22 |
+| `tests/test_rules_api.py` | 4 | 27 |
+| `tests/test_engine.py` | 6 | 21 |
+| **Total** | **27** | **201** |
+
+---
+
+## test_detector.py (55 tests)
+
+### TestCoveredCallETF (10 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -25,7 +38,7 @@
 | test_covered_call_nav_erosion | nav_erosion_tracking=True | True |
 | test_covered_call_confidence | confidence >= 0.90 | >= 0.90 |
 
-### PREFERRED_STOCK (6 tests)
+### TestPreferredStock (6 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -36,7 +49,7 @@
 | test_preferred_tax_treatment | tax_treatment=qualified | qualified |
 | test_preferred_account | preferred_account=TAXABLE | TAXABLE |
 
-### MORTGAGE_REIT (6 tests)
+### TestMortgageREIT (6 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -47,7 +60,7 @@
 | test_mreit_valuation | valuation_method=P/BV | P/BV |
 | test_mreit_rate_sensitivity | rate_sensitivity=high | high |
 
-### EQUITY_REIT (3 tests)
+### TestEquityREIT (3 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -55,7 +68,7 @@
 | test_equity_reit_valuation | valuation_method=P/FFO | P/FFO |
 | test_equity_reit_account | preferred_account=IRA | IRA |
 
-### BDC (5 tests)
+### TestBDC (5 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -65,7 +78,7 @@
 | test_bdc_coverage_ratio | coverage_ratio_required=True | True |
 | test_bdc_valuation | valuation_method=P/NAV | P/NAV |
 
-### BOND (5 tests)
+### TestBond (5 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -75,7 +88,7 @@
 | test_bond_tax_treatment | tax_treatment=ordinary | ordinary |
 | test_bond_account | preferred_account=IRA | IRA |
 
-### DIVIDEND_STOCK (3 tests)
+### TestDividendStock (3 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -83,9 +96,7 @@
 | test_dividend_stock_tax | tax_treatment=qualified | qualified |
 | test_dividend_stock_account | preferred_account=TAXABLE | TAXABLE |
 
----
-
-## Fallback & Edge Cases (13 tests)
+### TestFallbackAndEdgeCases (13 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -103,9 +114,7 @@
 | test_parent_class_equity | DIVIDEND_STOCK parent=EQUITY | EQUITY |
 | test_parent_class_alternative | BDC parent=ALTERNATIVE | ALTERNATIVE |
 
----
-
-## Seed Rule Completeness (4 tests)
+### TestSeedRules (4 tests)
 
 | Test | Description | Expected |
 |---|---|---|
@@ -116,27 +125,92 @@
 
 ---
 
+## test_tax_profile.py (48 tests)
+
+### TestTaxProfileStructure (35 tests)
+Verifies `build_tax_profile()` returns all required fields for each asset class with correct types, values, and non-empty notes.
+
+### TestTaxDrag (6 tests)
+Verifies `estimated_tax_drag_pct` correct for qualified_dividend (15%), option_premium (37%), interest (37%), reit_distribution (37%), fixed_dividend (15%), roc (0%).
+
+### TestTaxNotes (4 tests)
+Verifies tax notes are non-empty strings for COVERED_CALL_ETF, MORTGAGE_REIT, BDC, BOND.
+
+### TestTaxDragTable (3 tests)
+Verifies TAX_DRAG_BY_INCOME_TYPE table structure: all 8 entries, values 0.0–1.0, unknown key present.
+
+---
+
+## test_benchmarks.py (28 tests)
+
+### TestGetBenchmark (10 tests)
+Verifies `get_benchmark()` returns non-None for all 7 asset classes; returns None for unknown class.
+
+### TestBenchmarkToDict (10 tests)
+Verifies `benchmark_to_dict()` includes all 7 required keys for each class.
+
+### TestBenchmarkValues (8 tests)
+Spot-checks benchmark data: yield thresholds, peer group membership, expense ratios.
+
+### TestBenchmarksDict (2 tests)
+Verifies BENCHMARKS dict covers all 7 MVP asset classes.
+
+---
+
+## test_classify_api.py (22 tests)
+
+### TestClassifySingle (10 tests)
+Tests `POST /classify` — 401 without auth, 422 on empty ticker, successful classification shape (all required fields present), `is_override=False` for rule-classified tickers.
+
+### TestClassifyBatch (8 tests)
+Tests `POST /classify/batch` — 401 without auth, 422 on batch > 100, response shape (total/classified/errors/results/error_details), partial failure handling.
+
+### TestGetClassification (4 tests)
+Tests `GET /classify/{ticker}` — 401 without auth, successful response shape.
+
+---
+
+## test_rules_api.py (27 tests)
+
+### TestListRules (5 tests)
+Tests `GET /rules` — 401 without auth, returns total + rules list, rules include all required fields.
+
+### TestCreateRule (9 tests)
+Tests `POST /rules` — 401 without auth, 422 on invalid rule_type, 422 on confidence_weight out of range, successful creation returns id + message, all 4 valid rule_types accepted.
+
+### TestSetOverride (7 tests)
+Tests `PUT /overrides/{ticker}` — 401 without auth, creates new override, updates existing override, stores asset_class uppercased, optional reason/created_by fields.
+
+### TestRemoveOverride (6 tests)
+Tests `DELETE /overrides/{ticker}` — 401 without auth, 404 when not found, successful removal returns message.
+
+---
+
+## test_engine.py (21 tests)
+
+### TestGetDetector (2 tests)
+Verifies detector is lazily instantiated and reused across calls.
+
+### TestGetCached (3 tests)
+Verifies cache hit returns existing record, cache miss returns None, expired records not returned.
+
+### TestGetOverride (2 tests)
+Verifies active override returned, expired/future override not returned.
+
+### TestLoadDbRules (5 tests)
+Verifies DB rules loaded and passed to detector; falls back to seed rules on DB error.
+
+### TestClassifyPipeline (3 tests)
+End-to-end engine test: override path (confidence=1.0), rule path (persist + return), enrichment path (needs_enrichment=True triggers data_client).
+
+### TestSerialise (4 tests)
+Verifies `_serialise()` returns all expected keys with correct types; handles None valid_until.
+
+---
+
 ## Running Tests
 
 ```bash
 cd src/asset-classification-service
-
-PYTHONPATH=/path/to/income-platform/src:/path/to/income-platform/src/asset-classification-service \
-python3 -m pytest tests/test_detector.py -v
-
-# Quick pass/fail
-python3 -m pytest tests/test_detector.py -q
+python -m pytest tests/ -q
 ```
-
----
-
-## Integration Test Scenarios (Manual)
-
-| Scenario | Command | Expected |
-|---|---|---|
-| Health check | `GET /health` | `{"status":"healthy","database":"connected"}` |
-| JEPI classify | `POST /classify {"ticker":"JEPI"}` | `COVERED_CALL_ETF, confidence=0.95` |
-| AGNC classify | `POST /classify {"ticker":"AGNC"}` | `MORTGAGE_REIT, is_hybrid=true` |
-| ARCC classify | `POST /classify {"ticker":"ARCC"}` | `BDC, coverage_ratio_required=true` |
-| Cache hit | Second call for same ticker | `classified_at` same timestamp |
-| Batch classify | `POST /classify/batch {"tickers":["JEPI","AGNC","ARCC"]}` | 3 results |

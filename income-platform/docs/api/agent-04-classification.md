@@ -60,33 +60,57 @@ Classify a single ticker to determine its asset class.
 {
   "ticker": "JEPI",
   "asset_class": "COVERED_CALL_ETF",
-  "confidence": 0.98,
-  "matching_rules": [
-    {
-      "rule_type": "ticker_pattern",
-      "rule_config": {"pattern": "JPMorgan.*Premium.*Income"},
-      "confidence_weight": 0.95,
-      "priority": 50
-    }
-  ],
-  "benchmark": "NASDAQ-100",
-  "tax_profile": {
-    "primary_treatment": "QUALIFIED_DIVIDEND",
-    "section_199a_eligible": true,
-    "qualified_dividend_eligible": true,
-    "k1_required": false
+  "parent_class": "FUND",
+  "confidence": 0.95,
+  "is_hybrid": false,
+  "characteristics": {
+    "income_type": "option_premium",
+    "tax_treatment": "ordinary",
+    "valuation_method": "yield + nav_trend",
+    "rate_sensitivity": "low",
+    "principal_at_risk": true,
+    "nav_erosion_tracking": true,
+    "coverage_ratio_required": false,
+    "preferred_account": "IRA"
   },
-  "classified_at": "2026-03-12T09:59:35Z"
+  "benchmarks": {
+    "peer_group": ["JEPI", "JEPQ", "QYLD", "XYLD", "DIVO"],
+    "yield_benchmark_pct": 8.0,
+    "expense_ratio_benchmark_pct": 0.45,
+    "nav_stability_benchmark": "moderate",
+    "pe_benchmark": null,
+    "debt_equity_benchmark": null,
+    "payout_ratio_benchmark": null
+  },
+  "sub_scores": null,
+  "tax_efficiency": {
+    "income_type": "option_premium",
+    "tax_treatment": "ordinary",
+    "estimated_tax_drag_pct": 37.0,
+    "preferred_account": "IRA",
+    "notes": "Option premium taxed as ordinary income. Hold in IRA/Roth to shelter high distributions."
+  },
+  "source": "rule_engine_v1",
+  "is_override": false,
+  "classified_at": "2026-03-12T10:00:00+00:00",
+  "valid_until": "2026-03-13T10:00:00+00:00"
 }
 ```
 
 | Field | Description |
 |-------|-------------|
-| asset_class | DIVIDEND_STOCK, COVERED_CALL_ETF, BOND, or NULL_CLASS |
-| confidence | 0.0-1.0, combines all matching rule weights |
-| matching_rules | Rules that matched, ordered by match strength |
-| benchmark | Relevant index for performance comparison |
-| tax_profile | Tax treatment summary for the asset class |
+| asset_class | DIVIDEND_STOCK, COVERED_CALL_ETF, BOND, EQUITY_REIT, MORTGAGE_REIT, BDC, PREFERRED_STOCK, or UNKNOWN |
+| parent_class | EQUITY, FIXED_INCOME, ALTERNATIVE, FUND, or OVERRIDE |
+| confidence | 0.0–1.0 — aggregated confidence from matched rules |
+| is_hybrid | True for MORTGAGE_REIT and other hybrid classes |
+| characteristics | Class-specific traits: income_type, tax_treatment, valuation_method, rate_sensitivity, preferred_account, etc. |
+| benchmarks | Peer group and benchmark values for the asset class; null if class not in benchmarks table |
+| sub_scores | Reserved for future sub-scorer phase; always null in v1.0 |
+| tax_efficiency | Tax drag estimate (% of income), preferred account, and plain-language notes for Agent 05 |
+| source | `rule_engine_v1` for auto-classified; `override` for manual overrides |
+| is_override | True when result came from a manual ClassificationOverride record |
+| classified_at | UTC timestamp of classification |
+| valid_until | Cache expiry (classified_at + 24h); null for overrides (never expire) |
 
 **Errors:**
 - 422: Ticker is required
@@ -327,40 +351,41 @@ Remove manual override. Ticker will be re-classified by rules on next request.
 
 ### Asset Classes
 
-| Class | Description | Tax Treatment |
-|-------|-------------|---|
-| DIVIDEND_STOCK | Equity with regular dividends | Qualified dividend (if held >60 days) |
-| COVERED_CALL_ETF | Option-writing ETF | Qualified dividend + Section 1256 |
-| BOND | Fixed income | Interest (ordinary income) |
-| NULL_CLASS | Unknown/non-classifiable | Ordinary income (default) |
+| Class | Parent | Income Type | Tax Treatment | Account |
+|-------|--------|-------------|---------------|---------|
+| DIVIDEND_STOCK | EQUITY | qualified_dividend | qualified | TAXABLE |
+| COVERED_CALL_ETF | FUND | option_premium | ordinary | IRA |
+| BOND | FIXED_INCOME | interest | ordinary | IRA |
+| EQUITY_REIT | EQUITY | reit_distribution | ordinary | IRA |
+| MORTGAGE_REIT | EQUITY | reit_distribution | ordinary | IRA |
+| BDC | ALTERNATIVE | ordinary_dividend | ordinary | IRA |
+| PREFERRED_STOCK | EQUITY | fixed_dividend | qualified | TAXABLE |
+| UNKNOWN | EQUITY | unknown | unknown | TAXABLE |
 
 ### Tax Treatment by Asset Class
 
-**DIVIDEND_STOCK:**
-- Primary: Qualified dividend
-- Section 199A eligible: Yes
-- Section 1256 eligible: No
-- K-1 required: No
+Tax efficiency details are computed by `app/classification/tax_profile.py` and returned in the `tax_efficiency` field of every classification response. Each class has:
 
-**COVERED_CALL_ETF:**
-- Primary: Qualified dividend
-- Section 199A eligible: Yes
-- Section 1256 eligible: Yes (options portion)
-- K-1 required: No
+- `income_type` — primary income category
+- `estimated_tax_drag_pct` — approximate federal tax drag (Florida — no state tax)
+- `preferred_account` — TAXABLE or IRA
+- `notes` — plain-language guidance for account placement
 
-**BOND:**
-- Primary: Ordinary interest
-- Section 199A eligible: No (except municipal bond interest)
-- Section 1256 eligible: No
-- K-1 required: Depends on bond structure
+See [Tax Profile spec](../agents/agent-04/functional/tax-profile.md) for full details.
 
 ### Benchmarks
 
-Each classification is mapped to a relevant market benchmark:
-- DIVIDEND_STOCK → S&P 500 or sector index
-- COVERED_CALL_ETF → S&P 500 or Russell 2000
-- BOND → Bloomberg Aggregate Bond Index
-- NULL_CLASS → No benchmark
+Each asset class has a benchmark profile in `app/classification/benchmarks.py` with peer group, yield benchmark, and valuation reference values. Returned as the `benchmarks` object in the classification response. Classes without a matching profile return `null`.
+
+| Class | Peer Group | Yield Benchmark |
+|-------|-----------|-----------------|
+| COVERED_CALL_ETF | JEPI, JEPQ, QYLD, XYLD, DIVO | 8.0% |
+| DIVIDEND_STOCK | JNJ, PG, KO, MMM, T | 3.0% |
+| EQUITY_REIT | O, VICI, AMT, CCI, SPG | 4.5% |
+| MORTGAGE_REIT | AGNC, NLY, RITM, MFA, PMT | 10.0% |
+| BDC | ARCC, MAIN, BXSL, OBDC, HTGC | 9.0% |
+| BOND | AGG, BND, LQD, TLT, IEF | 4.0% |
+| PREFERRED_STOCK | *(no peer group)* | 6.0% |
 
 ### Confidence Scoring
 

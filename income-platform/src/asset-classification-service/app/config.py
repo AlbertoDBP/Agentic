@@ -1,8 +1,14 @@
 """Agent 04 — Asset Classification Service Configuration"""
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(
+        env_file=("../../.env", ".env"),
+        extra="ignore",
+    )
+
     # Service identity — defaults baked in, no .env needed for these
     service_name: str = "agent-04-asset-classification"
     service_port: int = 8004
@@ -28,11 +34,6 @@ class Settings(BaseSettings):
     # Classification
     enrichment_confidence_threshold: float = 0.70
     classification_cache_ttl_hours: int = 24
-
-    class Config:
-        # Root .env first (shared credentials), local .env second (overrides)
-        env_file = ("../../.env", ".env")
-        extra = "ignore"
 
 
 settings = Settings()

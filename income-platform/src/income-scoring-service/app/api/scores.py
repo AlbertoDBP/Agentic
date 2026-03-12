@@ -18,11 +18,19 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models import IncomeScore, QualityGateResult
+from app.models import IncomeScore, QualityGateResult, SignalPenaltyConfig, SignalPenaltyLog
+from app.scoring import newsletter_client
 from app.scoring.classification_client import get_asset_class as _classify_ticker
+from app.scoring.shadow_portfolio import shadow_portfolio_manager
+from app.scoring.classification_feedback import (
+    classification_feedback_tracker,
+    SOURCE_AGENT04,
+    SOURCE_MANUAL,
+)
 from app.scoring.data_client import MarketDataClient
 from app.scoring.income_scorer import IncomeScorer, ScoreResult
 from app.scoring.nav_erosion import NAVErosionAnalyzer
+from app.scoring.signal_penalty import SignalPenaltyEngine
 from app.scoring.weight_profile_loader import weight_profile_loader
 from app.scoring.quality_gate import (
     AssetClass,
@@ -34,11 +42,12 @@ from app.scoring.quality_gate import (
 
 logger = logging.getLogger(__name__)
 
-router   = APIRouter()
-_scorer   = IncomeScorer()
-_analyzer = NAVErosionAnalyzer()
-_gate     = QualityGateEngine()
-_client   = MarketDataClient()
+router          = APIRouter()
+_scorer          = IncomeScorer()
+_analyzer        = NAVErosionAnalyzer()
+_gate            = QualityGateEngine()
+_client          = MarketDataClient()
+_penalty_engine  = SignalPenaltyEngine()
 
 
 # ── Pydantic request / response models ────────────────────────────────────────
@@ -83,6 +92,9 @@ class ScoreResponse(BaseModel):
     # v2.0: weight profile provenance
     weight_profile_version: Optional[int] = None
     weight_profile_id: Optional[str] = None
+    # v2.0: signal penalty layer
+    signal_penalty: float = 0.0
+    signal_penalty_details: Optional[dict] = None
 
 
 class ScoreListItem(BaseModel):
@@ -118,6 +130,8 @@ def _orm_to_response(score: IncomeScore, tax_efficiency: Optional[dict] = None) 
         tax_efficiency=tax_efficiency,
         weight_profile_version=None,   # not stored on ORM row in v2.0 (captured via FK)
         weight_profile_id=str(score.weight_profile_id) if score.weight_profile_id else None,
+        signal_penalty=score.signal_penalty or 0.0,
+        signal_penalty_details=score.signal_penalty_details,
     )
 
 
@@ -126,6 +140,8 @@ def _result_to_response(
     nav_erosion_details: Optional[dict],
     scored_at: datetime,
     tax_efficiency: Optional[dict] = None,
+    signal_penalty: float = 0.0,
+    signal_penalty_details: Optional[dict] = None,
 ) -> ScoreResponse:
     return ScoreResponse(
         ticker=result.ticker,
@@ -148,6 +164,8 @@ def _result_to_response(
         tax_efficiency=tax_efficiency,
         weight_profile_version=result.weight_profile_version,
         weight_profile_id=result.weight_profile_id,
+        signal_penalty=signal_penalty,
+        signal_penalty_details=signal_penalty_details,
     )
 
 
@@ -296,6 +314,8 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
 
     # 0. Auto-classify via Agent 04 if asset_class not provided
     tax_efficiency: Optional[dict] = None
+    _feedback_source: str = SOURCE_AGENT04
+    _feedback_agent04_class: Optional[str] = None
     if req.asset_class is None:
         resolved_class, tax_efficiency = await _classify_ticker(ticker)
         if resolved_class is None:
@@ -308,9 +328,18 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
                 ),
             )
         asset_class = resolved_class.upper()
+        _feedback_agent04_class = asset_class
         logger.info("Auto-classified %s → %s via Agent 04", ticker, asset_class)
     else:
         asset_class = req.asset_class.upper()
+        _feedback_source = SOURCE_MANUAL
+        # Optionally verify with Agent 04 to detect mismatches
+        if settings.classification_verify_overrides:
+            try:
+                check_class, _ = await _classify_ticker(ticker)
+                _feedback_agent04_class = check_class.upper() if check_class else None
+            except Exception as _verify_exc:
+                logger.debug("Agent 04 verify call failed for %s: %s", ticker, _verify_exc)
 
     # 1. Latest passing gate result from DB
     gate_db = (
@@ -400,6 +429,35 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         except Exception as e:
             logger.warning("NAV erosion analysis failed for %s: %s", ticker, e)
 
+    # 5b. Signal penalty layer (v2.0 Phase 2) — non-blocking
+    signal_penalty_amt = 0.0
+    signal_penalty_details: Optional[dict] = None
+    signal_config = None
+    try:
+        signal_config = (
+            db.query(SignalPenaltyConfig)
+            .filter(SignalPenaltyConfig.is_active.is_(True))
+            .first()
+        )
+        if signal_config is not None:
+            signal_response = await newsletter_client.fetch_signal(ticker)
+            pr = _penalty_engine.compute(result.total_score, signal_response, signal_config)
+            signal_penalty_amt = pr.penalty
+            signal_penalty_details = pr.details
+            if signal_penalty_amt > 0:
+                result.total_score    = pr.score_after
+                result.grade          = IncomeScorer._grade(result.total_score)
+                result.recommendation = IncomeScorer._recommendation(result.total_score)
+                logger.info(
+                    "Signal penalty for %s: %s %s → %.1f pts deducted (%.1f → %.1f)",
+                    ticker, pr.signal_type, pr.signal_strength,
+                    signal_penalty_amt, pr.score_before, pr.score_after,
+                )
+        else:
+            logger.warning("No active signal penalty config found — skipping signal layer for %s", ticker)
+    except Exception as exc:
+        logger.warning("Signal penalty layer error for %s: %s", ticker, exc)
+
     # 6. Persist to DB
     now        = datetime.now(timezone.utc)
     valid_until = now + timedelta(seconds=settings.cache_ttl_score)
@@ -434,10 +492,76 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         valid_until=valid_until,
         quality_gate_id=quality_gate_id,
         weight_profile_id=weight_profile_id,
-        signal_penalty=0.0,   # v2.0: populated by signal layer (Phase 2)
+        signal_penalty=signal_penalty_amt,
+        signal_penalty_details=signal_penalty_details,
     )
     try:
         db.add(db_score)
+        db.flush()  # get db_score.id before writing the penalty log
+
+        # 6b. Write signal_penalty_log row (one per evaluate call)
+        if signal_config is not None:
+            try:
+                # Reconstruct PenaltyResult fields from details dict (or defaults)
+                d = signal_penalty_details or {}
+                spl = SignalPenaltyLog(
+                    income_score_id=db_score.id,
+                    ticker=ticker,
+                    asset_class=asset_class,
+                    signal_type=d.get("signal_type", "UNAVAILABLE"),
+                    signal_strength=d.get("signal_strength"),
+                    consensus_score=d.get("consensus_score"),
+                    n_analysts=d.get("n_analysts", 0),
+                    decay_weight=d.get("decay_weight"),
+                    penalty_applied=signal_penalty_amt,
+                    score_before=d.get("score_before", result.total_score),
+                    score_after=d.get("score_after", result.total_score),
+                    eligible=d.get("eligible", False),
+                    config_version=signal_config.version,
+                    agent02_available=d.get("signal_type") != "UNAVAILABLE",
+                    logged_at=now,
+                )
+                db.add(spl)
+            except Exception as log_exc:
+                logger.warning("Failed to create signal_penalty_log for %s: %s", ticker, log_exc)
+
+        # 6c. Shadow portfolio entry (v2.0 Phase 3 — non-blocking)
+        try:
+            entry_price = (
+                (market_data.get("current_price") or {}).get("price")
+                if market_data else None
+            )
+            shadow_portfolio_manager.maybe_record_entry(
+                db,
+                income_score_id=db_score.id,
+                ticker=ticker,
+                asset_class=asset_class,
+                entry_score=result.total_score,
+                entry_grade=result.grade,
+                entry_recommendation=result.recommendation,
+                valuation_yield_score=result.valuation_yield_score,
+                financial_durability_score=result.financial_durability_score,
+                technical_entry_score=result.technical_entry_score,
+                weight_profile_id=weight_profile_id,
+                entry_price=entry_price,
+            )
+        except Exception as spe:
+            logger.warning("Shadow portfolio entry failed for %s: %s", ticker, spe)
+
+        # 6d. Classification feedback (v2.0 Phase 4 — non-blocking)
+        try:
+            classification_feedback_tracker.record(
+                db,
+                income_score_id=db_score.id,
+                ticker=ticker,
+                asset_class_used=asset_class,
+                source=_feedback_source,
+                agent04_class=_feedback_agent04_class,
+                agent04_confidence=None,  # confidence not exposed by get_asset_class currently
+            )
+        except Exception as cfe:
+            logger.warning("Classification feedback recording failed for %s: %s", ticker, cfe)
+
         db.commit()
         db.refresh(db_score)
         try:
@@ -459,7 +583,10 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         logger.error("Failed to persist score for %s: %s", ticker, e)
         # Return the in-memory result so the caller still gets a useful response
         try:
-            return _result_to_response(result, nav_erosion_details, now, tax_efficiency=tax_efficiency)
+            return _result_to_response(
+                result, nav_erosion_details, now, tax_efficiency=tax_efficiency,
+                signal_penalty=signal_penalty_amt, signal_penalty_details=signal_penalty_details,
+            )
         except Exception as ser_err:
             logger.error(
                 "Response serialization error for %s (in-memory path): %s | "

@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import check_database_connection, engine
 from app.models import Base
-from app.api import health, scores, quality_gate, weights
+from app.api import health, scores, quality_gate, weights, signal_config, learning_loop, classification_accuracy
 from app.api import auth as auth_router_module
 from app.auth import verify_token
 from app.scoring import data_client
@@ -99,6 +99,9 @@ app.include_router(auth_router_module.router)
 app.include_router(scores.router, prefix="/scores", tags=["Scores"], dependencies=[Depends(verify_token)])
 app.include_router(quality_gate.router, prefix="/quality-gate", tags=["Quality Gate"], dependencies=[Depends(verify_token)])
 app.include_router(weights.router, prefix="/weights", tags=["Weight Profiles"], dependencies=[Depends(verify_token)])
+app.include_router(signal_config.router, prefix="/signal-config", tags=["Signal Config"], dependencies=[Depends(verify_token)])
+app.include_router(learning_loop.router, prefix="/learning-loop", tags=["Learning Loop"], dependencies=[Depends(verify_token)])
+app.include_router(classification_accuracy.router, prefix="/classification-accuracy", tags=["Classification Accuracy"], dependencies=[Depends(verify_token)])
 
 
 # ── Root ──────────────────────────────────────────────────────────────────────

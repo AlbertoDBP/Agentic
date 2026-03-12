@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     nav_erosion_prob_threshold_med: float = 0.50
     nav_erosion_prob_threshold_high: float = 0.70
 
+    # ── Phase 4: Detector Confidence Learning ────────────────────────────────
+    # When True, Agent 04 is called even for manual overrides to detect mismatches
+    classification_verify_overrides: bool = False
+
     # ── Auth ──────────────────────────────────────────────────────────────────
     jwt_secret: str                            # required — fail loudly if missing
     admin_username: str = "admin"

@@ -9,6 +9,11 @@ Tables:
   - scoring_weight_profiles    — versioned class-specific pillar weights (v2.0)
   - weight_change_audit        — immutable log of weight changes (v2.0)
   - signal_penalty_config      — configurable signal penalty rules (v2.0)
+  - signal_penalty_log         — audit log of per-score signal penalties (v2.0)
+  - shadow_portfolio_entries   — learning loop: forward outcomes per scored ticker (v2.0)
+  - weight_review_runs         — learning loop: quarterly weight adjustment log (v2.0)
+  - classification_feedback    — detector confidence: Agent 04 accuracy tracking (v2.0 Phase 4)
+  - classifier_accuracy_runs   — detector confidence: monthly rollup stats (v2.0 Phase 4)
 """
 from datetime import datetime, timezone
 from sqlalchemy import (
@@ -145,7 +150,8 @@ class IncomeScore(Base):
 
     # ── v2.0 Adaptive Intelligence fields ────────────────────────────────────
     weight_profile_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_weight_profiles.id"), nullable=True)
-    signal_penalty = Column(Float, nullable=False, default=0.0)  # points deducted by signal layer
+    signal_penalty = Column(Float, nullable=False, default=0.0)          # points deducted
+    signal_penalty_details = Column(JSONB, nullable=True)                # signal context dict
 
     __table_args__ = (
         Index("ix_income_scores_ticker_scored", "ticker", "scored_at"),
@@ -344,4 +350,267 @@ class SignalPenaltyConfig(Base):
         return (
             f"<SignalPenaltyConfig v{self.version} [{status}] "
             f"bearish_strong={self.bearish_strong_penalty}>"
+        )
+
+
+# ── v2.0: Signal Penalty Log ──────────────────────────────────────────────────
+
+class SignalPenaltyLog(Base):
+    """
+    Immutable audit record for each signal penalty applied (or not) per score.
+
+    One row is written per POST /scores/evaluate call — even when penalty=0.0.
+    This allows analysis of how often signals are BEARISH, how often eligibility
+    fails, and how much Agent 02 availability affects scoring.
+    """
+    __tablename__ = "signal_penalty_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    income_score_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.income_scores.id"), nullable=True)
+    ticker = Column(String(20), nullable=False, index=True)
+    asset_class = Column(String(50), nullable=False)
+
+    # Signal data from Agent 02 (null when agent02_available=False)
+    signal_type = Column(String(20), nullable=False)        # BEARISH | NEUTRAL | BULLISH | INSUFFICIENT | UNAVAILABLE
+    signal_strength = Column(String(20), nullable=True)     # strong | moderate | weak | insufficient
+    consensus_score = Column(Numeric(5, 3), nullable=True)  # -1.000 to +1.000
+    n_analysts = Column(Integer, nullable=True)
+    decay_weight = Column(Numeric(5, 4), nullable=True)
+
+    # Penalty computation
+    penalty_applied = Column(Numeric(4, 1), nullable=False, default=0.0)
+    score_before = Column(Float, nullable=False)
+    score_after = Column(Float, nullable=False)
+    eligible = Column(Boolean, nullable=False, default=False)
+
+    # Context
+    config_version = Column(Integer, nullable=True)         # SignalPenaltyConfig.version used
+    agent02_available = Column(Boolean, nullable=False, default=True)
+
+    logged_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_spl_ticker_logged", "ticker", "logged_at"),
+        {"schema": "platform_shared"},
+    )
+
+    def __repr__(self):
+        return (
+            f"<SignalPenaltyLog {self.ticker} [{self.signal_type}] "
+            f"penalty={self.penalty_applied} {self.score_before:.1f}→{self.score_after:.1f}>"
+        )
+
+
+# ── v2.0: Shadow Portfolio Entries ────────────────────────────────────────────
+
+class ShadowPortfolioEntry(Base):
+    """
+    One entry per scored ticker where recommendation >= ACCUMULATE.
+
+    The learning loop uses these to assess prediction accuracy after the hold
+    period (default 90 days). Outcome label is populated by the
+    populate-outcomes job once exit_date passes.
+
+    Outcome labels:
+      PENDING   — hold period not yet elapsed
+      CORRECT   — actual_return_pct >= +5.0 (bullish call was right)
+      INCORRECT — actual_return_pct <= -5.0 (bullish call was wrong)
+      NEUTRAL   — return between -5% and +5% (inconclusive)
+    """
+    __tablename__ = "shadow_portfolio_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    income_score_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.income_scores.id"), nullable=True)
+    ticker = Column(String(20), nullable=False, index=True)
+    asset_class = Column(String(50), nullable=False)
+    weight_profile_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_weight_profiles.id"), nullable=True)
+
+    # Score snapshot at entry
+    entry_score = Column(Float, nullable=False)
+    entry_grade = Column(String(5), nullable=False)
+    entry_recommendation = Column(String(20), nullable=False)
+    valuation_yield_score = Column(Float, nullable=False)
+    financial_durability_score = Column(Float, nullable=False)
+    technical_entry_score = Column(Float, nullable=False)
+
+    # Entry price (from market data at scoring time)
+    entry_price = Column(Float, nullable=True)
+    entry_date = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    hold_period_days = Column(Integer, nullable=False, default=90)
+
+    # Outcome (populated after hold period)
+    exit_price = Column(Float, nullable=True)
+    exit_date = Column(DateTime, nullable=True)
+    actual_return_pct = Column(Float, nullable=True)
+    outcome_label = Column(String(20), nullable=False, default="PENDING")
+    # PENDING | CORRECT | INCORRECT | NEUTRAL
+    outcome_populated_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_spe_ticker_entry", "ticker", "entry_date"),
+        Index("ix_spe_outcome_label", "outcome_label"),
+        Index("ix_spe_asset_class", "asset_class"),
+        {"schema": "platform_shared"},
+    )
+
+    def __repr__(self):
+        return (
+            f"<ShadowPortfolioEntry {self.ticker} [{self.asset_class}] "
+            f"score={self.entry_score:.1f} outcome={self.outcome_label}>"
+        )
+
+
+# ── v2.0: Weight Review Runs ──────────────────────────────────────────────────
+
+class WeightReviewRun(Base):
+    """
+    Audit record for each quarterly weight review attempt.
+
+    Records whether weights were adjusted, how many outcomes were analyzed,
+    what the proposed changes were, and why if the review was skipped.
+    """
+    __tablename__ = "weight_review_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_class = Column(String(50), nullable=False, index=True)
+
+    triggered_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    triggered_by = Column(String(100), nullable=True)
+
+    status = Column(String(20), nullable=False, default="RUNNING")
+    # RUNNING | COMPLETE | SKIPPED | FAILED
+
+    # Inputs
+    outcomes_analyzed = Column(Integer, nullable=False, default=0)
+    correct_count = Column(Integer, nullable=False, default=0)
+    incorrect_count = Column(Integer, nullable=False, default=0)
+    neutral_count = Column(Integer, nullable=False, default=0)
+
+    # Before profile
+    profile_before_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_weight_profiles.id"), nullable=True)
+    weight_yield_before = Column(SmallInteger, nullable=True)
+    weight_durability_before = Column(SmallInteger, nullable=True)
+    weight_technical_before = Column(SmallInteger, nullable=True)
+
+    # After profile (null if no change applied)
+    profile_after_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_weight_profiles.id"), nullable=True)
+    weight_yield_after = Column(SmallInteger, nullable=True)
+    weight_durability_after = Column(SmallInteger, nullable=True)
+    weight_technical_after = Column(SmallInteger, nullable=True)
+
+    # Deltas (after - before)
+    delta_yield = Column(SmallInteger, nullable=True)
+    delta_durability = Column(SmallInteger, nullable=True)
+    delta_technical = Column(SmallInteger, nullable=True)
+
+    skip_reason = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_wrr_asset_class_triggered", "asset_class", "triggered_at"),
+        {"schema": "platform_shared"},
+    )
+
+    def __repr__(self):
+        return (
+            f"<WeightReviewRun {self.asset_class} [{self.status}] "
+            f"outcomes={self.outcomes_analyzed} dY={self.delta_yield}>"
+        )
+
+
+# ── v2.0 Phase 4: Classification Feedback ─────────────────────────────────────
+
+class ClassificationFeedback(Base):
+    """
+    One row per POST /scores/evaluate call capturing how the asset class was
+    determined — by Agent 04 auto-classify or by caller manual override.
+
+    When classification_verify_overrides=True and source=MANUAL_OVERRIDE, the
+    scoring service also calls Agent 04 to see what it would have said, allowing
+    mismatch detection (is_mismatch=True when Agent 04 disagrees with the override).
+
+    This data feeds monthly classifier accuracy rollups.
+    """
+    __tablename__ = "classification_feedback"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    income_score_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.income_scores.id"), nullable=True)
+    ticker = Column(String(20), nullable=False, index=True)
+
+    # What was actually used for scoring
+    asset_class_used = Column(String(50), nullable=False)
+    # How it was determined: AGENT04 (auto-classified) | MANUAL_OVERRIDE (caller provided)
+    source = Column(String(20), nullable=False)
+
+    # What Agent 04 said (null when not called — e.g. manual override without verify)
+    agent04_class = Column(String(50), nullable=True)
+    agent04_confidence = Column(Float, nullable=True)
+
+    # Mismatch flag (populated when source=MANUAL_OVERRIDE and agent04_class is available)
+    # True = Agent 04 disagreed with the manual override
+    is_mismatch = Column(Boolean, nullable=True)
+
+    captured_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_cf_ticker_captured", "ticker", "captured_at"),
+        Index("ix_cf_source", "source"),
+        {"schema": "platform_shared"},
+    )
+
+    def __repr__(self):
+        mismatch = f" MISMATCH({self.agent04_class})" if self.is_mismatch else ""
+        return (
+            f"<ClassificationFeedback {self.ticker} [{self.source}] "
+            f"{self.asset_class_used}{mismatch}>"
+        )
+
+
+# ── v2.0 Phase 4: Classifier Accuracy Runs ────────────────────────────────────
+
+class ClassifierAccuracyRun(Base):
+    """
+    Monthly rollup of Agent 04 classification accuracy per asset class.
+
+    One row per (period_month, asset_class) computed by the monthly rollup job.
+    Also includes an aggregate row where asset_class IS NULL covering all classes.
+
+    Metrics:
+      - agent04_trusted:   calls where source=AGENT04 (no override)
+      - manual_overrides:  calls where source=MANUAL_OVERRIDE
+      - mismatches:        overrides where Agent 04 disagreed (is_mismatch=True)
+      - accuracy_rate:     agent04_trusted / total_calls
+      - override_rate:     manual_overrides / total_calls
+    """
+    __tablename__ = "classifier_accuracy_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    period_month = Column(String(7), nullable=False)    # "YYYY-MM"
+    asset_class = Column(String(50), nullable=True)     # null = all-classes aggregate
+
+    total_calls = Column(Integer, nullable=False, default=0)
+    agent04_trusted = Column(Integer, nullable=False, default=0)
+    manual_overrides = Column(Integer, nullable=False, default=0)
+    mismatches = Column(Integer, nullable=False, default=0)
+
+    accuracy_rate = Column(Float, nullable=True)    # agent04_trusted / total_calls
+    override_rate = Column(Float, nullable=True)    # manual_overrides / total_calls
+    mismatch_rate = Column(Float, nullable=True)    # mismatches / manual_overrides
+
+    computed_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    computed_by = Column(String(100), nullable=True)
+
+    __table_args__ = (
+        Index("ix_car_period_asset", "period_month", "asset_class"),
+        {"schema": "platform_shared"},
+    )
+
+    def __repr__(self):
+        return (
+            f"<ClassifierAccuracyRun {self.period_month} [{self.asset_class or 'ALL'}] "
+            f"trusted={self.agent04_trusted} overrides={self.manual_overrides} "
+            f"accuracy={self.accuracy_rate:.2%}>"
+            if self.accuracy_rate is not None
+            else f"<ClassifierAccuracyRun {self.period_month} [{self.asset_class or 'ALL'}]>"
         )

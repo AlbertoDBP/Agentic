@@ -4,6 +4,17 @@ All notable changes to the Asset Classification Service.
 
 ---
 
+## [1.0.1] — 2026-03-12
+
+### Fixed
+- `app/models.py`: replaced `datetime.utcnow` (deprecated) with `lambda: datetime.now(timezone.utc)` on all 4 DateTime column defaults
+- `app/config.py`: replaced Pydantic v2 deprecated `class Config` with `model_config = ConfigDict(env_file=..., extra="ignore")`
+
+### Tests
+- 201 tests passing (6 files) — no new tests added, no regressions
+
+---
+
 ## [1.0.0] — 2026-02-27
 
 ### Added
