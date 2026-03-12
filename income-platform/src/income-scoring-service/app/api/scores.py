@@ -23,6 +23,7 @@ from app.scoring.classification_client import get_asset_class as _classify_ticke
 from app.scoring.data_client import MarketDataClient
 from app.scoring.income_scorer import IncomeScorer, ScoreResult
 from app.scoring.nav_erosion import NAVErosionAnalyzer
+from app.scoring.weight_profile_loader import weight_profile_loader
 from app.scoring.quality_gate import (
     AssetClass,
     BondGateInput,
@@ -79,6 +80,9 @@ class ScoreResponse(BaseModel):
     data_completeness_pct: float
     scored_at: datetime
     tax_efficiency: Optional[dict] = None   # populated by Agent 04; 0% composite weight
+    # v2.0: weight profile provenance
+    weight_profile_version: Optional[int] = None
+    weight_profile_id: Optional[str] = None
 
 
 class ScoreListItem(BaseModel):
@@ -112,6 +116,8 @@ def _orm_to_response(score: IncomeScore, tax_efficiency: Optional[dict] = None) 
         data_completeness_pct=score.data_completeness_pct or 0.0,
         scored_at=score.scored_at,
         tax_efficiency=tax_efficiency,
+        weight_profile_version=None,   # not stored on ORM row in v2.0 (captured via FK)
+        weight_profile_id=str(score.weight_profile_id) if score.weight_profile_id else None,
     )
 
 
@@ -140,6 +146,8 @@ def _result_to_response(
         data_completeness_pct=result.data_completeness_pct,
         scored_at=scored_at,
         tax_efficiency=tax_efficiency,
+        weight_profile_version=result.weight_profile_version,
+        weight_profile_id=result.weight_profile_id,
     )
 
 
@@ -354,9 +362,22 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         gate_db = _persist_gate_result(db, inline_result, asset_class)
         gate_proxy = inline_result
 
-    # 4. Score
+    # 4. Load class-specific weight profile (v2.0) then score
+    weight_profile = weight_profile_loader.get_active_profile(asset_class, db)
+    logger.debug(
+        "Weight profile for %s: v%s source=%s (Y=%s/D=%s/T=%s)",
+        asset_class,
+        weight_profile.get("version"),
+        weight_profile.get("source"),
+        weight_profile.get("weight_yield"),
+        weight_profile.get("weight_durability"),
+        weight_profile.get("weight_technical"),
+    )
+
     try:
-        result: ScoreResult = _scorer.score(ticker, asset_class, gate_proxy, market_data)
+        result: ScoreResult = _scorer.score(
+            ticker, asset_class, gate_proxy, market_data, weight_profile=weight_profile
+        )
     except Exception as e:
         logger.error("Scoring engine error for %s: %s", ticker, e)
         raise HTTPException(status_code=500, detail=f"Scoring engine error: {e}")
@@ -384,6 +405,16 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
     valid_until = now + timedelta(seconds=settings.cache_ttl_score)
     quality_gate_id = getattr(gate_db, "id", None)
 
+    # Resolve weight_profile_id UUID (only present when loaded from DB, not fallback)
+    import uuid as _uuid
+    _wp_id_raw = weight_profile.get("id")
+    weight_profile_id = None
+    if _wp_id_raw:
+        try:
+            weight_profile_id = _uuid.UUID(str(_wp_id_raw))
+        except (ValueError, AttributeError):
+            pass
+
     db_score = IncomeScore(
         ticker=ticker,
         asset_class=asset_class,
@@ -402,6 +433,8 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         scored_at=now,
         valid_until=valid_until,
         quality_gate_id=quality_gate_id,
+        weight_profile_id=weight_profile_id,
+        signal_penalty=0.0,   # v2.0: populated by signal layer (Phase 2)
     )
     try:
         db.add(db_score)
