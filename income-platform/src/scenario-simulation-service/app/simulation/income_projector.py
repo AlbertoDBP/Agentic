@@ -3,7 +3,7 @@ Agent 06 — Scenario Simulation Service
 Income Projector: Monte Carlo projection of portfolio income.
 """
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from math import sqrt
 from typing import Optional
 
@@ -83,5 +83,5 @@ class IncomeProjector:
             projected_income_p50=round(p50, 2),
             projected_income_p90=round(p90, 2),
             by_position=by_position,
-            computed_at=datetime.utcnow(),
+            computed_at=datetime.now(timezone.utc),
         )

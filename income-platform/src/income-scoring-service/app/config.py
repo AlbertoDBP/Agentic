@@ -76,12 +76,18 @@ class Settings(BaseSettings):
     nav_erosion_prob_threshold_med: float = 0.50
     nav_erosion_prob_threshold_high: float = 0.70
 
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    jwt_secret: str                            # required — fail loudly if missing
+    admin_username: str = "admin"
+    admin_password: str = ""                   # empty = auth endpoint disabled
+
     # ── Rate Limiting ─────────────────────────────────────────────────────────
     max_batch_size: int = 50                   # max tickers per batch request
     scoring_timeout_seconds: int = 60          # per-ticker timeout
 
     class Config:
         env_file = ("../../.env", ".env")
+        extra = "ignore"
         case_sensitive = False
 
 

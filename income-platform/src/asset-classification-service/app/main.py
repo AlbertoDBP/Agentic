@@ -2,12 +2,13 @@
 import logging
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import verify_connection
 from app.api import health, classify, rules
+from app.auth import verify_token
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -52,5 +53,5 @@ async def timing_middleware(request: Request, call_next):
 
 
 app.include_router(health.router, tags=["health"])
-app.include_router(classify.router, tags=["classification"])
-app.include_router(rules.router, tags=["rules"])
+app.include_router(classify.router, tags=["classification"], dependencies=[Depends(verify_token)])
+app.include_router(rules.router, tags=["rules"], dependencies=[Depends(verify_token)])

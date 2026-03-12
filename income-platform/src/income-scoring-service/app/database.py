@@ -18,17 +18,21 @@ logger = logging.getLogger(__name__)
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
+def _build_url(raw_url: str) -> str:
+    if "?" in raw_url:
+        return raw_url.split("?")[0]
+    return raw_url
+
+
 engine = create_engine(
-    settings.database_url,
+    _build_url(settings.database_url),
     poolclass=QueuePool,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_pre_ping=True,
     pool_recycle=3600,
     echo=(settings.log_level == "DEBUG"),
-    connect_args={
-        "options": f"-csearch_path={settings.db_schema},public"
-    }
+    connect_args={"sslmode": "require"},
 )
 
 
@@ -91,18 +95,18 @@ def check_database_connection() -> dict:
 
             schema_result = conn.execute(
                 text(
-                    f"SELECT schema_name FROM information_schema.schemata "
-                    f"WHERE schema_name = '{settings.db_schema}'"
-                )
+                    "SELECT schema_name FROM information_schema.schemata "
+                    "WHERE schema_name = :schema"
+                ),
+                {"schema": settings.db_schema},
             ).fetchone()
 
             # Check Agent 01 market data tables exist (upstream dependency)
             market_data_table = conn.execute(
                 text(
                     "SELECT table_name FROM information_schema.tables "
-                    "WHERE table_schema = :schema AND table_name = 'market_data_cache'",
+                    "WHERE table_schema = 'public' AND table_name = 'market_data_daily'"
                 ),
-                {"schema": settings.db_schema},
             ).fetchone()
 
         return {

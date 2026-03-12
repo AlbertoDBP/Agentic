@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     harvester_cron: str = "0 7 * * 2,5"        # Tue + Fri 7AM ET
     intelligence_cron: str = "0 6 * * 1"       # Monday 6AM ET
 
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    jwt_secret: str                            # required — fail loudly if missing
+
     # ── Rate Limiting ─────────────────────────────────────────────────────────
     sa_calls_per_minute: int = 10
     fmp_calls_per_minute: int = 30

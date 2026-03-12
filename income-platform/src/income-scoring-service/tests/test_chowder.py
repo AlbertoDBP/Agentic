@@ -2,31 +2,16 @@
 Tests for Chowder Rule — Amendment A2.
 Covers _compute_chowder() and chowder field propagation through ScoreResult / ScoreResponse.
 """
-import sys
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# ── Inject mocks for heavy app deps before importing app.api.scores ────────────
-# app.config.Settings() fails in test environments that have extra .env keys.
-# We inject lightweight mocks so the Pydantic model definitions still load.
-for _dep in [
-    "app.config",
-    "app.database",
-    "app.models",
-    # app.scoring.data_client is loaded for real (app.config mock satisfies its import)
-    "app.scoring.nav_erosion",
-    "app.scoring.quality_gate",
-]:
-    if _dep not in sys.modules:
-        sys.modules[_dep] = MagicMock()
-
-from app.scoring.income_scorer import (  # noqa: E402
+from app.scoring.income_scorer import (
     _compute_chowder,
     _chowder_signal_from_number,
     IncomeScorer,
 )
-from app.api.scores import ScoreResponse  # noqa: E402
-from app.scoring.data_client import MarketDataClient  # noqa: E402
+from app.api.scores import ScoreResponse
+from app.scoring.data_client import MarketDataClient
 
 
 # ── _compute_chowder unit tests ────────────────────────────────────────────────
@@ -196,15 +181,17 @@ def _run(coro):
 
 
 def test_get_features_returns_empty_dict_on_db_error():
-    """asyncpg.connect raises → get_features swallows and returns {}."""
-    with patch("asyncpg.connect", new_callable=AsyncMock, side_effect=Exception("conn refused")):
+    """Pool raises → get_features swallows and returns {}."""
+    mock_pool = MagicMock()
+    mock_pool.acquire.side_effect = Exception("conn refused")
+    with patch("app.scoring.data_client._pool", mock_pool):
         client = MarketDataClient(base_url="http://localhost:8001", timeout=5)
         result = _run(client.get_features("AAPL"))
     assert result == {}
 
 
 def test_get_features_returns_correct_keys_on_success():
-    """asyncpg returns a row → get_features returns a dict with the expected keys."""
+    """Pool returns a row → get_features returns a dict with the expected keys."""
     fake_row = {
         "yield_trailing_12m": 3.5,
         "div_cagr_5y": 8.2,
@@ -215,9 +202,11 @@ def test_get_features_returns_correct_keys_on_success():
     }
     mock_conn = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value=fake_row)
-    mock_conn.close = AsyncMock()
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("asyncpg.connect", new_callable=AsyncMock, return_value=mock_conn):
+    with patch("app.scoring.data_client._pool", mock_pool):
         client = MarketDataClient(base_url="http://localhost:8001", timeout=5)
         result = _run(client.get_features("AAPL"))
 

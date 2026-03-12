@@ -2,7 +2,6 @@
 Agent 05 — Tax Optimization Service
 Configuration via environment variables
 """
-import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 
@@ -16,22 +15,19 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Database — read-only access to platform DB
-    database_url: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql://income_platform_user:password@db:5432/income_platform"
-    )
+    database_url: str = "postgresql://income_platform_user:password@db:5432/income_platform"
     db_pool_size: int = 3
     db_max_overflow: int = 5
     db_echo: bool = False
 
     # Agent 04 base URL (for asset class fallback)
-    asset_classification_url: str = os.getenv(
-        "ASSET_CLASSIFICATION_URL",
-        "http://asset-classification-service:8004"
-    )
+    asset_classification_url: str = "http://asset-classification-service:8004"
     agent04_timeout_seconds: float = 3.0
 
     # Tax data — no external API keys required (rule-based engine)
+
+    # Auth
+    jwt_secret: str
 
     # Logging
     log_level: str = "INFO"

@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
 
 # ---------------------------------------------------------------------------
 # Load service modules by file path (no relative imports needed)
@@ -53,8 +53,10 @@ _srep     = _load("repositories.securities_repository",    _DIR / "repositories"
 _frep     = _load("repositories.features_repository",      _DIR / "repositories" / "features_repository.py")
 _svc      = _load("services.price_service",       _DIR / "services" / "price_service.py")
 _mds      = _load("services.market_data_service", _DIR / "services" / "market_data_service.py")
+_auth     = _load("auth",                         _DIR / "auth.py")
 
 settings                  = _config.settings
+verify_token              = _auth.verify_token
 PriceData                 = _models.PriceData
 HealthResponse            = _models.HealthResponse
 StockHistoryResponse      = _models.StockHistoryResponse
@@ -208,7 +210,7 @@ async def health_check():
     )
 
 
-@app.get("/stocks/{symbol}/price", response_model=PriceData)
+@app.get("/stocks/{symbol}/price", response_model=PriceData, dependencies=[Depends(verify_token)])
 async def get_stock_price(symbol: str):
     """
     Get the current price for a stock symbol.
@@ -233,6 +235,7 @@ async def get_stock_price(symbol: str):
 @app.get(
     "/stocks/{symbol}/history",
     response_model=StockHistoryResponse,
+    dependencies=[Depends(verify_token)],
 )
 async def get_stock_history(
     symbol: str,
@@ -271,6 +274,7 @@ async def get_stock_history(
 @app.get(
     "/stocks/{symbol}/history/stats",
     response_model=StockHistoryStatsResponse,
+    dependencies=[Depends(verify_token)],
 )
 async def get_stock_history_stats(
     symbol: str,
@@ -322,6 +326,7 @@ async def get_stock_history_stats(
 @app.post(
     "/stocks/{symbol}/history/refresh",
     response_model=StockHistoryRefreshResponse,
+    dependencies=[Depends(verify_token)],
 )
 async def refresh_stock_history(
     symbol: str,
@@ -356,6 +361,7 @@ async def refresh_stock_history(
 @app.get(
     "/stocks/{symbol}/dividends",
     response_model=StockDividendResponse,
+    dependencies=[Depends(verify_token)],
 )
 async def get_stock_dividends(symbol: str):
     """
@@ -385,6 +391,7 @@ async def get_stock_dividends(symbol: str):
 @app.get(
     "/stocks/{symbol}/fundamentals",
     response_model=StockFundamentalsResponse,
+    dependencies=[Depends(verify_token)],
 )
 async def get_stock_fundamentals(symbol: str):
     """
@@ -433,6 +440,7 @@ async def get_stock_fundamentals(symbol: str):
 @app.get(
     "/stocks/{symbol}/etf",
     response_model=StockETFResponse,
+    dependencies=[Depends(verify_token)],
 )
 async def get_etf_data(symbol: str):
     """
@@ -482,6 +490,7 @@ async def get_etf_data(symbol: str):
 @app.get(
     "/api/v1/providers/status",
     response_model=ProvidersStatusResponse,
+    dependencies=[Depends(verify_token)],
 )
 async def get_providers_status():
     """
@@ -529,6 +538,7 @@ async def get_providers_status():
 @app.post(
     "/stocks/{symbol}/sync",
     response_model=SyncResponse,
+    dependencies=[Depends(verify_token)],
 )
 async def sync_stock(symbol: str):
     """
@@ -547,7 +557,7 @@ async def sync_stock(symbol: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/v1/cache/stats")
+@app.get("/api/v1/cache/stats", dependencies=[Depends(verify_token)])
 async def get_cache_stats():
     if not cache_manager:
         return {"error": "Cache not initialized"}

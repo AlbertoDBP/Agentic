@@ -6,11 +6,10 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import SessionLocal
 from app.models import ScenarioResult
 from app.simulation.scenario_library import (
     get_scenario,
@@ -106,7 +105,7 @@ async def _load_positions_and_classes(portfolio_id: str, as_of_date: Optional[da
 
 
 @router.post("/scenarios/stress-test", response_model=StressTestResponse)
-async def stress_test(req: StressTestRequest, db: Session = Depends(get_db)):
+async def stress_test(req: StressTestRequest):
     positions, asset_classes = await _load_positions_and_classes(
         req.portfolio_id, req.as_of_date
     )
@@ -177,9 +176,13 @@ async def stress_test(req: StressTestRequest, db: Session = Depends(get_db)):
             vulnerability_ranking=vulnerability_ranking,
             label=req.label,
         )
-        db.add(record)
-        db.commit()
-        db.refresh(record)
+        db = SessionLocal()
+        try:
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+        finally:
+            db.close()
         saved = True
         result_id = str(record.id)
 

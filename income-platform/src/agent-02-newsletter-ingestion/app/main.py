@@ -15,11 +15,12 @@ Endpoints registered here — implementations built phase by phase:
 import logging
 import sys
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api.health import router as health_router
+from app.auth import verify_token
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -96,29 +97,19 @@ app.include_router(health_router)
 
 # Phase 2 — Harvester Flow API
 from app.api.flows import router as flows_router
-app.include_router(flows_router)
+app.include_router(flows_router, dependencies=[Depends(verify_token)])
 
 # Phase 4 — Full API layer
 from app.api.analysts import router as analysts_router
 from app.api.recommendations import router as recommendations_router
 from app.api.consensus import router as consensus_router
 from app.api.signal import router as signal_router
-app.include_router(analysts_router, prefix="/analysts", tags=["Analysts"])
-app.include_router(recommendations_router, prefix="/recommendations", tags=["Recommendations"])
-app.include_router(consensus_router, prefix="/consensus", tags=["Consensus"])
-app.include_router(signal_router, prefix="/signal", tags=["Signal"])
+app.include_router(analysts_router, prefix="/analysts", tags=["Analysts"], dependencies=[Depends(verify_token)])
+app.include_router(recommendations_router, prefix="/recommendations", tags=["Recommendations"], dependencies=[Depends(verify_token)])
+app.include_router(consensus_router, prefix="/consensus", tags=["Consensus"], dependencies=[Depends(verify_token)])
+app.include_router(signal_router, prefix="/signal", tags=["Signal"], dependencies=[Depends(verify_token)])
 # from app.api.intelligence import router as intelligence_router
 # app.include_router(intelligence_router, prefix="/intelligence", tags=["Intelligence"])
-
-# Phase 4 — Full API layer (added in Phase 4)
-# from app.api.analysts import router as analysts_router
-# from app.api.recommendations import router as recommendations_router
-# from app.api.consensus import router as consensus_router
-# from app.api.signal import router as signal_router
-# app.include_router(analysts_router, prefix="/analysts", tags=["Analysts"])
-# app.include_router(recommendations_router, prefix="/recommendations", tags=["Recommendations"])
-# app.include_router(consensus_router, prefix="/consensus", tags=["Consensus"])
-# app.include_router(signal_router, prefix="/signal", tags=["Signal"])
 
 
 # ── Root ──────────────────────────────────────────────────────────────────────

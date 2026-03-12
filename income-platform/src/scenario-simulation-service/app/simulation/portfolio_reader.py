@@ -13,6 +13,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+_pool: Optional[asyncpg.Pool] = None
+
 
 def _build_dsn() -> str:
     """Strip ?sslmode=require from URL; ssl= is passed via connect kwarg."""
@@ -25,14 +27,30 @@ def _build_dsn() -> str:
     return url
 
 
+async def init_pool() -> None:
+    global _pool
+    _pool = await asyncpg.create_pool(
+        _build_dsn(),
+        ssl="require",
+        min_size=2,
+        max_size=10,
+    )
+
+
+async def close_pool() -> None:
+    global _pool
+    if _pool:
+        await _pool.close()
+        _pool = None
+
+
 async def get_positions(
     portfolio_id: str,
     as_of_date: Optional[date] = None,
 ) -> list:
     """Return open positions for portfolio_id. Returns [] on any error."""
     try:
-        conn = await asyncpg.connect(_build_dsn(), ssl="require")
-        try:
+        async with _pool.acquire() as conn:
             if as_of_date is not None:
                 rows = await conn.fetch(
                     """
@@ -59,8 +77,6 @@ async def get_positions(
                     portfolio_id,
                 )
             return [dict(r) for r in rows]
-        finally:
-            await conn.close()
     except Exception as exc:
         logger.error("get_positions error for portfolio %s: %s", portfolio_id, exc)
         return []
@@ -71,8 +87,7 @@ async def get_asset_classes(symbols: list) -> dict:
     if not symbols:
         return {}
     try:
-        conn = await asyncpg.connect(_build_dsn(), ssl="require")
-        try:
+        async with _pool.acquire() as conn:
             rows = await conn.fetch(
                 """
                 SELECT symbol, asset_class
@@ -87,8 +102,6 @@ async def get_asset_classes(symbols: list) -> dict:
                 if s not in result:
                     result[s] = "DIVIDEND_STOCK"
             return result
-        finally:
-            await conn.close()
     except Exception as exc:
         logger.error("get_asset_classes error for symbols %s: %s", symbols, exc)
         return {s: "DIVIDEND_STOCK" for s in symbols}

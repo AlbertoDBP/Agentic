@@ -2,11 +2,22 @@
 Agent 06 — Scenario Simulation Service
 Tests: API endpoints — 6 tests.
 """
+import os
 from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
+import jwt
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+os.environ.setdefault("JWT_SECRET", "test-secret-for-tests")
+
+_TEST_TOKEN = jwt.encode(
+    {"sub": "test"},
+    os.environ["JWT_SECRET"],
+    algorithm="HS256",
+)
+AUTH = {"Authorization": f"Bearer {_TEST_TOKEN}"}
 
 client = TestClient(app)
 
@@ -39,7 +50,7 @@ def test_health_returns_200():
 
 # 2. GET /scenarios/library returns 5 scenarios
 def test_library_returns_5_scenarios():
-    resp = client.get("/scenarios/library")
+    resp = client.get("/scenarios/library", headers=AUTH)
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["scenarios"]) == 5
@@ -51,7 +62,7 @@ def test_library_returns_5_scenarios():
 def test_stress_test_empty_portfolio_422(mock_ac, mock_pos):
     mock_pos.return_value = []
     mock_ac.return_value = {}
-    resp = client.post("/scenarios/stress-test", json={
+    resp = client.post("/scenarios/stress-test", headers=AUTH, json={
         "portfolio_id": "00000000-0000-0000-0000-000000000001",
         "scenario_type": "RATE_HIKE_200BPS",
     })
@@ -62,7 +73,7 @@ def test_stress_test_empty_portfolio_422(mock_ac, mock_pos):
 @patch("app.api.scenarios.portfolio_reader.get_positions", new_callable=AsyncMock)
 def test_income_projection_empty_portfolio_422(mock_pos):
     mock_pos.return_value = []
-    resp = client.post("/scenarios/income-projection", json={
+    resp = client.post("/scenarios/income-projection", headers=AUTH, json={
         "portfolio_id": "00000000-0000-0000-0000-000000000001",
         "horizon_months": 12,
     })
@@ -75,7 +86,7 @@ def test_income_projection_empty_portfolio_422(mock_pos):
 def test_stress_test_unknown_scenario_422(mock_ac, mock_pos):
     mock_pos.return_value = SAMPLE_POSITIONS
     mock_ac.return_value = SAMPLE_ASSET_CLASSES
-    resp = client.post("/scenarios/stress-test", json={
+    resp = client.post("/scenarios/stress-test", headers=AUTH, json={
         "portfolio_id": "00000000-0000-0000-0000-000000000001",
         "scenario_type": "NONEXISTENT_SCENARIO",
     })
@@ -88,7 +99,7 @@ def test_stress_test_unknown_scenario_422(mock_ac, mock_pos):
 def test_vulnerability_returns_rankings(mock_ac, mock_pos):
     mock_pos.return_value = SAMPLE_POSITIONS
     mock_ac.return_value = SAMPLE_ASSET_CLASSES
-    resp = client.post("/scenarios/vulnerability", json={
+    resp = client.post("/scenarios/vulnerability", headers=AUTH, json={
         "portfolio_id": "00000000-0000-0000-0000-000000000001",
         "scenario_types": ["RATE_HIKE_200BPS", "MARKET_CORRECTION_20"],
     })

@@ -9,16 +9,14 @@ from typing import Generator
 from app.config import settings
 
 
-def _build_url() -> str:
-    """Strip ?sslmode=require query param; SSL is passed via connect_args."""
-    url = settings.database_url
-    if "?" in url:
-        url = url.split("?")[0]
-    return url
+def _build_url(raw_url: str) -> str:
+    if "?" in raw_url:
+        return raw_url.split("?")[0]
+    return raw_url
 
 
 engine = create_engine(
-    _build_url(),
+    _build_url(settings.database_url),
     pool_pre_ping=True,
     connect_args={"sslmode": "require"},
 )

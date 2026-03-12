@@ -2,7 +2,7 @@
 Agent 03 — Income Scoring Service
 API: Quality Gate endpoints.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -150,5 +150,5 @@ def evaluate_batch(req: BatchQualityGateRequest, db: Session = Depends(get_db)):
         failed=failed,
         insufficient_data=insufficient,
         results=results,
-        evaluated_at=datetime.utcnow(),
+        evaluated_at=datetime.now(timezone.utc),
     )

@@ -9,7 +9,7 @@ Endpoints:
 """
 import asyncio
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -358,7 +358,7 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
             logger.warning("NAV erosion analysis failed for %s: %s", ticker, e)
 
     # 6. Persist to DB
-    now        = datetime.utcnow()
+    now        = datetime.now(timezone.utc)
     valid_until = now + timedelta(seconds=settings.cache_ttl_score)
     quality_gate_id = getattr(gate_db, "id", None)
 

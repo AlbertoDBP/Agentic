@@ -6,7 +6,7 @@ All methods use httpx.AsyncClient with timeout and base URL from settings.
 On any connection error or non-200 response: log warning and return {} or [].
 """
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import asyncpg
 import httpx
@@ -14,6 +14,34 @@ import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+_pool: Optional[asyncpg.Pool] = None
+
+
+def _build_dsn() -> str:
+    url = settings.database_url
+    url = url.replace("postgresql+psycopg2://", "postgresql://")
+    url = url.replace("postgresql+asyncpg://", "postgresql://")
+    if "?" in url:
+        url = url.split("?")[0]
+    return url
+
+
+async def init_pool() -> None:
+    global _pool
+    _pool = await asyncpg.create_pool(
+        _build_dsn(),
+        ssl="require",
+        min_size=2,
+        max_size=10,
+    )
+
+
+async def close_pool() -> None:
+    global _pool
+    if _pool:
+        await _pool.close()
+        _pool = None
 
 
 class MarketDataClient:
@@ -85,18 +113,7 @@ class MarketDataClient:
         Returns empty dict on any error — never raises.
         """
         try:
-            db_url = settings.database_url
-            # Strip query-string params (e.g. ?sslmode=require) — asyncpg takes ssl= separately
-            if "?" in db_url:
-                db_url = db_url.split("?")[0]
-            # Normalize to plain postgresql:// for asyncpg
-            db_url = (
-                db_url
-                .replace("postgresql+psycopg2://", "postgresql://")
-                .replace("postgresql+asyncpg://", "postgresql://")
-            )
-            conn = await asyncpg.connect(db_url, ssl="require")
-            try:
+            async with _pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
                     SELECT yield_trailing_12m, div_cagr_5y, chowder_number,
@@ -108,8 +125,6 @@ class MarketDataClient:
                     """,
                     ticker,
                 )
-            finally:
-                await conn.close()
             return dict(row) if row is not None else {}
         except Exception as e:
             logger.warning("get_features failed for %s: %s", ticker, e)

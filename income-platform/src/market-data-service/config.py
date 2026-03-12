@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     fmp_api_key: str = ""             # Financial Modeling Prep
     finnhub_api_key: str = ""         # Finnhub (credit ratings)
     
+    # Auth
+    jwt_secret: str = ""
+
     # Sync
     sync_interval: int = 300
     

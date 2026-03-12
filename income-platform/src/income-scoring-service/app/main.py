@@ -9,7 +9,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -17,6 +17,9 @@ from app.config import settings
 from app.database import check_database_connection, engine
 from app.models import Base
 from app.api import health, scores, quality_gate
+from app.api import auth as auth_router_module
+from app.auth import verify_token
+from app.scoring import data_client
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -38,8 +41,12 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables verified")
 
+    await data_client.init_pool()
+    logger.info("asyncpg connection pool initialised")
+
     yield
 
+    await data_client.close_pool()
     logger.info(f"Shutting down {settings.service_name}")
 
 
@@ -58,7 +65,6 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -89,8 +95,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ── Routers ───────────────────────────────────────────────────────────────────
 
 app.include_router(health.router, tags=["Health"])
-app.include_router(scores.router, prefix="/scores", tags=["Scores"])
-app.include_router(quality_gate.router, prefix="/quality-gate", tags=["Quality Gate"])
+app.include_router(auth_router_module.router)
+app.include_router(scores.router, prefix="/scores", tags=["Scores"], dependencies=[Depends(verify_token)])
+app.include_router(quality_gate.router, prefix="/quality-gate", tags=["Quality Gate"], dependencies=[Depends(verify_token)])
 
 
 # ── Root ──────────────────────────────────────────────────────────────────────

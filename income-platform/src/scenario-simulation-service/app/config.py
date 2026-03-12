@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     service_version: str = "1.0.0"
     port: int = 8006
     database_url: str
+    jwt_secret: str
     log_level: str = "INFO"
 
     class Config:

@@ -12,7 +12,7 @@ Asset classes supported:
 """
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
 
@@ -109,7 +109,7 @@ class GateResult:
 
     # Metadata
     data_quality_score: float = 100.0      # drops when fields are missing
-    evaluated_at: datetime = field(default_factory=datetime.utcnow)
+    evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     valid_until: datetime = None
 
     def __post_init__(self):

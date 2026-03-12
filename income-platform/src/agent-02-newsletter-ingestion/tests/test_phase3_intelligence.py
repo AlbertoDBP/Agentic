@@ -10,12 +10,18 @@ Organized by component:
   - TestConsensus          Weighted score computation
   - TestIntelligenceAPI    /flows/intelligence/trigger endpoint
 """
+import os
 import pytest
+import jwt
 from unittest.mock import patch, MagicMock, call
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from fastapi.testclient import TestClient
 from app.models.schemas import FlowStatus
+
+os.environ.setdefault("JWT_SECRET", "test-secret-for-tests")
+_TEST_TOKEN = jwt.encode({"sub": "test"}, os.environ["JWT_SECRET"], algorithm="HS256")
+_AUTH_HEADERS = {"Authorization": f"Bearer {_TEST_TOKEN}"}
 
 
 # ── FMP Client Tests ──────────────────────────────────────────────────────────
@@ -681,7 +687,7 @@ class TestIntelligenceAPI:
                                            next_scheduled=None,
                                            articles_processed_last_run=None)):
             from app.main import app
-            yield TestClient(app)
+            yield TestClient(app, headers=_AUTH_HEADERS)
 
     def test_trigger_intelligence_returns_200(self, client):
         with patch("app.api.flows._run_intelligence"):

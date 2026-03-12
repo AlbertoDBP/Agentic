@@ -9,11 +9,17 @@ Tests are organized by component:
   - TestArticleStore      DB persistence logic (mocked session)
   - TestHarvesterAPI      /flows/harvester/trigger endpoint
 """
+import os
 import pytest
+import jwt
 from unittest.mock import patch, MagicMock, call
 from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from app.models.schemas import FlowStatus
+
+os.environ.setdefault("JWT_SECRET", "test-secret-for-tests")
+_TEST_TOKEN = jwt.encode({"sub": "test"}, os.environ["JWT_SECRET"], algorithm="HS256")
+_AUTH_HEADERS = {"Authorization": f"Bearer {_TEST_TOKEN}"}
 
 
 # ── Deduplicator Tests ────────────────────────────────────────────────────────
@@ -297,7 +303,7 @@ class TestFlowAPI:
                                            next_scheduled=None,
                                            articles_processed_last_run=None)):
             from app.main import app
-            yield TestClient(app)
+            yield TestClient(app, headers=_AUTH_HEADERS)
 
     def test_trigger_harvester_returns_200(self, client):
         with patch("app.api.flows._run_harvester"):

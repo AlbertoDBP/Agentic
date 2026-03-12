@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     market_data_service_url: str = "http://localhost:8001"
     market_data_timeout: int = 10
 
+    # Auth
+    jwt_secret: str
+
     # Classification
     enrichment_confidence_threshold: float = 0.70
     classification_cache_ttl_hours: int = 24

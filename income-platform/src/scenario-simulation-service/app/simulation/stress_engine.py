@@ -3,7 +3,7 @@ Agent 06 — Scenario Simulation Service
 Stress Engine: applies scenario shocks to portfolio positions.
 """
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.simulation.scenario_library import SCENARIO_LIBRARY
@@ -118,5 +118,5 @@ class StressEngine:
             annual_income_after=total_income_after,
             income_change_pct=portfolio_income_change_pct,
             position_impacts=sorted_impacts,
-            computed_at=datetime.utcnow(),
+            computed_at=datetime.now(timezone.utc),
         )

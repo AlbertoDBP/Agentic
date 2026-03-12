@@ -7,7 +7,7 @@ Tables:
   - quality_gate_results   — binary pass/fail gate checks
   - scoring_runs           — audit log of each scoring batch
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, DateTime,
     Text, JSON, ForeignKey, UniqueConstraint, Index,
@@ -61,7 +61,7 @@ class QualityGateResult(Base):
 
     # Metadata
     data_quality_score = Column(Float, nullable=True)  # 0-100 confidence
-    evaluated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    evaluated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     valid_until = Column(DateTime, nullable=True)       # cache expiry
     scoring_run_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_runs.id"), nullable=True)
 
@@ -135,7 +135,7 @@ class IncomeScore(Base):
     data_completeness_pct = Column(Float, nullable=True) # % of features populated
 
     # ── Metadata ──────────────────────────────────────────────────────────────
-    scored_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    scored_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     valid_until = Column(DateTime, nullable=True)
     scoring_run_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_runs.id"), nullable=True)
     quality_gate_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.quality_gate_results.id"), nullable=True)
@@ -174,7 +174,7 @@ class ScoringRun(Base):
     tickers_errored = Column(Integer, nullable=False, default=0)
 
     # Timing
-    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
     duration_seconds = Column(Float, nullable=True)
 

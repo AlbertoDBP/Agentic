@@ -3,7 +3,7 @@ Classification Engine
 Orchestrates: detect → enrich (if needed) → benchmarks → tax_profile → persist
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
@@ -40,7 +40,7 @@ class ClassificationEngine:
 
     def _load_db_rules(self) -> List[dict]:
         try:
-            rows = self.db.query(AssetClassRule).filter(AssetClassRule.active == True).all()
+            rows = self.db.query(AssetClassRule).filter(AssetClassRule.active.is_(True)).all()
             return [
                 {
                     "asset_class": r.asset_class,
@@ -61,7 +61,7 @@ class ClassificationEngine:
             self.db.query(AssetClassification)
             .filter(
                 AssetClassification.ticker == ticker.upper(),
-                AssetClassification.valid_until > datetime.utcnow(),
+                AssetClassification.valid_until > datetime.now(timezone.utc),
             )
             .order_by(AssetClassification.classified_at.desc())
             .first()
@@ -69,7 +69,7 @@ class ClassificationEngine:
 
     def get_override(self, ticker: str) -> Optional[ClassificationOverride]:
         """Return active manual override for ticker."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         return (
             self.db.query(ClassificationOverride)
             .filter(
@@ -152,8 +152,8 @@ class ClassificationEngine:
             matched_rules=result.matched_rules,
             source=result.source,
             is_override=False,
-            classified_at=datetime.utcnow(),
-            valid_until=datetime.utcnow() + timedelta(hours=settings.classification_cache_ttl_hours),
+            classified_at=datetime.now(timezone.utc),
+            valid_until=datetime.now(timezone.utc) + timedelta(hours=settings.classification_cache_ttl_hours),
         )
         self.db.add(record)
         self.db.commit()
@@ -174,7 +174,7 @@ class ClassificationEngine:
             matched_rules=[],
             source="override",
             is_override=True,
-            classified_at=datetime.utcnow(),
+            classified_at=datetime.now(timezone.utc),
             valid_until=None,  # overrides never expire from cache
         )
         self.db.add(record)

@@ -21,21 +21,22 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Convert sync postgres URL to async
-# asyncpg does not support ?sslmode=require — strip it and pass ssl via connect_args
-_db_url = settings.database_url.replace(
-    "postgresql://", "postgresql+asyncpg://"
-).replace("?sslmode=require", "").replace("&sslmode=require", "")
+def _build_url(raw_url: str) -> str:
+    url = raw_url
+    url = url.replace("postgresql+psycopg2://", "postgresql://")
+    url = url.replace("postgresql+asyncpg://", "postgresql://")
+    if "?" in url:
+        url = url.split("?")[0]
+    return url
 
-_connect_args = {"ssl": "require"} if "sslmode=require" in settings.database_url else {}
 
 engine = create_async_engine(
-    _db_url,
+    _build_url(settings.database_url),
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     echo=settings.db_echo,
     future=True,
-    connect_args=_connect_args,
+    connect_args={"ssl": "require"},
 )
 
 AsyncSessionLocal = async_sessionmaker(

@@ -28,11 +28,12 @@ from app.tax.harvester import identify_harvesting_opportunities
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+health_router = APIRouter()
 
 
 # ─── Health ──────────────────────────────────────────────────────────────────
 
-@router.get("/health")
+@health_router.get("/health")
 async def health_check():
     db_ok = await check_db_health()
     return {

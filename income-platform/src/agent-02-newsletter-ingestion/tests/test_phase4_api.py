@@ -8,11 +8,17 @@ Tests are organized by endpoint:
   - TestConsensusAPI        /consensus/{ticker}
   - TestSignalAPI           /signal/{ticker} — Agent 12 contract
 """
+import os
 import pytest
+import jwt
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
 from decimal import Decimal
 from fastapi.testclient import TestClient
+
+os.environ.setdefault("JWT_SECRET", "test-secret-for-tests")
+_TEST_TOKEN = jwt.encode({"sub": "test"}, os.environ["JWT_SECRET"], algorithm="HS256")
+_AUTH_HEADERS = {"Authorization": f"Bearer {_TEST_TOKEN}"}
 
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -92,7 +98,7 @@ def client():
                                       next_scheduled=None,
                                       articles_processed_last_run=None)):
         from app.main import app
-        yield TestClient(app)
+        yield TestClient(app, headers=_AUTH_HEADERS)
 
 
 # ── Analysts API Tests ────────────────────────────────────────────────────────
