@@ -22,7 +22,7 @@ jobs:
         env:
           JWT_SECRET: test-secret-for-ci
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
-        run: pytest tests/ --tb=short
+        run: python -m pytest tests/ --tb=short
 
   test-newsletter:
     runs-on: ubuntu-latest
@@ -39,7 +39,7 @@ jobs:
         env:
           JWT_SECRET: test-secret-for-ci
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
-        run: pytest tests/ --tb=short
+        run: python -m pytest tests/ --tb=short
 
   test-income-scoring:
     runs-on: ubuntu-latest
@@ -56,7 +56,7 @@ jobs:
         env:
           JWT_SECRET: test-secret-for-ci
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
-        run: pytest tests/ --tb=short
+        run: python -m pytest tests/ --tb=short
 
   test-asset-classification:
     runs-on: ubuntu-latest
@@ -73,7 +73,7 @@ jobs:
         env:
           JWT_SECRET: test-secret-for-ci
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
-        run: pytest tests/ --tb=short
+        run: python -m pytest tests/ --tb=short
 
   test-tax-optimization:
     runs-on: ubuntu-latest
@@ -90,7 +90,7 @@ jobs:
         env:
           JWT_SECRET: test-secret-for-ci
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
-        run: pytest tests/ --tb=short
+        run: python -m pytest tests/ --tb=short
 
   test-scenario-simulation:
     runs-on: ubuntu-latest
@@ -107,4 +107,4 @@ jobs:
         env:
           JWT_SECRET: test-secret-for-ci
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
-        run: pytest tests/ --tb=short
+        run: python -m pytest tests/ --tb=short
