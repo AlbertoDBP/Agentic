@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models import IncomeScore, QualityGateResult
+from app.scoring.classification_client import get_asset_class as _classify_ticker
 from app.scoring.data_client import MarketDataClient
 from app.scoring.income_scorer import IncomeScorer, ScoreResult
 from app.scoring.nav_erosion import NAVErosionAnalyzer
@@ -55,7 +56,7 @@ class GateData(BaseModel):
 
 class ScoreRequest(BaseModel):
     ticker: str
-    asset_class: str
+    asset_class: Optional[str] = None   # auto-resolved via Agent 04 if omitted
     gate_data: Optional[GateData] = None
 
 
@@ -77,6 +78,7 @@ class ScoreResponse(BaseModel):
     data_quality_score: float
     data_completeness_pct: float
     scored_at: datetime
+    tax_efficiency: Optional[dict] = None   # populated by Agent 04; 0% composite weight
 
 
 class ScoreListItem(BaseModel):
@@ -90,7 +92,7 @@ class ScoreListItem(BaseModel):
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
-def _orm_to_response(score: IncomeScore) -> ScoreResponse:
+def _orm_to_response(score: IncomeScore, tax_efficiency: Optional[dict] = None) -> ScoreResponse:
     return ScoreResponse(
         ticker=score.ticker,
         asset_class=score.asset_class,
@@ -109,6 +111,7 @@ def _orm_to_response(score: IncomeScore) -> ScoreResponse:
         data_quality_score=score.data_quality_score or 0.0,
         data_completeness_pct=score.data_completeness_pct or 0.0,
         scored_at=score.scored_at,
+        tax_efficiency=tax_efficiency,
     )
 
 
@@ -116,6 +119,7 @@ def _result_to_response(
     result: ScoreResult,
     nav_erosion_details: Optional[dict],
     scored_at: datetime,
+    tax_efficiency: Optional[dict] = None,
 ) -> ScoreResponse:
     return ScoreResponse(
         ticker=result.ticker,
@@ -135,6 +139,7 @@ def _result_to_response(
         data_quality_score=result.data_quality_score,
         data_completeness_pct=result.data_completeness_pct,
         scored_at=scored_at,
+        tax_efficiency=tax_efficiency,
     )
 
 
@@ -278,9 +283,26 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
     7. Return full score breakdown.
     """
     ticker     = req.ticker.upper()
-    asset_class = req.asset_class.upper()
     logger.debug("evaluate_score request: ticker=%s asset_class=%s gate_data=%s",
-                 ticker, asset_class, req.gate_data)
+                 ticker, req.asset_class, req.gate_data)
+
+    # 0. Auto-classify via Agent 04 if asset_class not provided
+    tax_efficiency: Optional[dict] = None
+    if req.asset_class is None:
+        resolved_class, tax_efficiency = await _classify_ticker(ticker)
+        if resolved_class is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"asset_class not provided and Agent 04 (Asset Classification Service) "
+                    f"could not classify {ticker}. Provide asset_class explicitly or ensure "
+                    "Agent 04 is running."
+                ),
+            )
+        asset_class = resolved_class.upper()
+        logger.info("Auto-classified %s → %s via Agent 04", ticker, asset_class)
+    else:
+        asset_class = req.asset_class.upper()
 
     # 1. Latest passing gate result from DB
     gate_db = (
@@ -386,7 +408,7 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(db_score)
         try:
-            return _orm_to_response(db_score)
+            return _orm_to_response(db_score, tax_efficiency=tax_efficiency)
         except Exception as ser_err:
             logger.error(
                 "Response serialization error for %s (ORM path): %s | "
@@ -404,7 +426,7 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         logger.error("Failed to persist score for %s: %s", ticker, e)
         # Return the in-memory result so the caller still gets a useful response
         try:
-            return _result_to_response(result, nav_erosion_details, now)
+            return _result_to_response(result, nav_erosion_details, now, tax_efficiency=tax_efficiency)
         except Exception as ser_err:
             logger.error(
                 "Response serialization error for %s (in-memory path): %s | "

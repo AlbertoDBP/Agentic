@@ -67,6 +67,7 @@ services:
       - FMP_API_KEY=${FMP_API_KEY}
       - MARKET_DATA_SERVICE_URL=http://market-data-service:8001
       - NEWSLETTER_SERVICE_URL=http://agent-02-newsletter-ingestion:8002
+      - ASSET_CLASSIFICATION_SERVICE_URL=http://agent-04-asset-classification:8004
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
@@ -78,6 +79,8 @@ services:
     restart: unless-stopped
     depends_on:
       market-data-service:
+        condition: service_healthy
+      agent-04-asset-classification:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8003
     healthcheck:

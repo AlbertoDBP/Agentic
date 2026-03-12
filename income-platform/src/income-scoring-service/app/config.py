@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     market_data_service_url: str = "http://localhost:8001"
     market_data_timeout: int = 30
 
+    # ── Asset Classification (Agent 04 dependency) ────────────────────────────
+    asset_classification_service_url: str = "http://localhost:8004"
+    asset_classification_timeout: int = 5
+
     # ── Newsletter (Agent 02 dependency — optional signals) ──────────────────
     newsletter_service_url: str = "http://localhost:8002"
     newsletter_service_enabled: bool = True
