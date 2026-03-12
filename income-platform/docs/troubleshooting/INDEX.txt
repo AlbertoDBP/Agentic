@@ -1,0 +1,296 @@
+INCOME FORTRESS PLATFORM - TROUBLESHOOTING GUIDE
+Comprehensive operational reference for DevOps, SRE, and Backend Engineers
+Last Updated: March 2026
+
+FILE STRUCTURE
+==============
+
+docs/troubleshooting/
+├── README.md                 (Master guide - start here)
+├── QUICK_REFERENCE.md        (Fast lookup for common commands)
+├── service-startup.md        (ModuleNotFoundError, port conflicts, JWT_SECRET, startup timeouts)
+├── database.md               (Connection strings, asyncpg dialect, pool exhaustion, schemas)
+├── authentication.md         (JWT tokens, 401/403 errors, token validation, CORS)
+├── docker-deployment.md      (Image caching, git pull blocked, health checks, env vars)
+├── tests.md                  (pytest, fixtures, mock ordering, async testing)
+└── INDEX.txt                 (This file)
+
+QUICK START BY SYMPTOM
+======================
+
+Service won't start?
+→ service-startup.md
+
+Container exits immediately with error?
+→ service-startup.md
+
+Database connection refused?
+→ database.md
+
+Port already in use?
+→ service-startup.md
+
+Old code running after update?
+→ docker-deployment.md
+
+Auth header missing / 401 Unauthorized?
+→ authentication.md
+
+JWT_SECRET not configured / 503 error?
+→ authentication.md, service-startup.md
+
+Test failure with ImportError?
+→ tests.md
+
+Need quick command?
+→ QUICK_REFERENCE.md
+
+KNOWN ISSUES COVERED
+====================
+
+1. asyncpg vs psycopg2 dialect
+   Location: database.md - "Connection string must be a string or URL instance"
+   Fix: DATABASE_URL must use postgresql+asyncpg:// prefix
+
+2. JWT_SECRET ordering
+   Location: service-startup.md, authentication.md, tests.md
+   Fix: Set JWT_SECRET before importing any app modules
+
+3. python-multipart missing
+   Location: service-startup.md
+   Fix: Add to requirements.txt, rebuild container
+
+4. Docker image caching
+   Location: docker-deployment.md
+   Fix: Use docker compose down --rmi local && docker compose up -d --build
+
+5. git pull blocked by untracked files
+   Location: docker-deployment.md
+   Fix: Use git clean -f <file> then git pull
+
+6. PyJWT not found in container
+   Location: service-startup.md
+   Fix: Dockerfile COPY order - requirements.txt to /tmp before COPY .
+
+SECTION DETAILS
+===============
+
+README.md (Master Guide)
+- Overview of all troubleshooting topics
+- Service architecture reference
+- Health check endpoints
+- Startup dependencies diagram
+- Common solutions (status, config, rebuild)
+- Investigation workflow (5-step process)
+- Document structure and format
+- Escalation criteria
+- Version compatibility table
+- Troubleshooting flowchart
+
+QUICK_REFERENCE.md (Fast Lookup)
+- Common Docker Compose commands
+- Environment variable inspection
+- Rebuild strategies
+- Health check commands
+- Database access
+- Network testing
+- Container introspection
+- Cleanup commands
+- Testing commands
+- Git operations
+- JWT token generation
+- One-liners for quick fixes
+- Port reference table
+- Environment variables checklist
+
+service-startup.md (25+ Issues)
+- ModuleNotFoundError: jwt
+- ModuleNotFoundError: psycopg2
+- ModuleNotFoundError: python_multipart
+- InvalidRequestError: asyncpg dialect
+- HTTPException 503: JWT_SECRET not configured
+- OperationalError: Connection refused
+- Address already in use
+- FileError: pymupdf
+- GLIBC version mismatch
+- Health check timeout
+- ImportError: verify_token
+- Debugging checklist
+
+database.md (15+ Issues)
+- Connection string format errors
+- Host name resolution failures
+- SSL/TLS certificate verification
+- Connection reset by server
+- Column doesn't exist in system tables
+- Password authentication failed
+- Pool exhaustion (size overflow)
+- Schema "platform_shared" not found
+- Missing tables (market_data_daily, etc.)
+- Timeout expired
+- Connection retry and recovery
+- Debugging checklist
+
+authentication.md (12+ Issues)
+- 401 Invalid token
+- 401 Invalid token (wrong algorithm)
+- 401 Token has expired
+- 403 Missing auth header
+- 503 JWT_SECRET not configured
+- Invalid token format
+- Token validation passes but claims missing
+- CORS blocked auth request
+- Bearer token format errors
+- Module auth not found
+- Test configuration (JWT_SECRET ordering)
+- Debugging checklist
+
+docker-deployment.md (18+ Issues)
+- Old code running after update
+- Untracked files block git pull
+- No space left on device
+- docker-compose command not found
+- Service health check failing
+- Environment variables not reaching container
+- Port already in use
+- Dockerfile COPY order causes errors
+- Container restarts in loop
+- Build context too large
+- Image not found after tagging
+- Redis connectivity issues
+- Debugging checklist
+
+tests.md (17+ Issues)
+- pytest: command not found
+- ImportError: verify_token (JWT_SECRET ordering)
+- sys.modules mock leakage
+- asyncpg pool mocking fails
+- Fixture 'client' not found
+- Timeout during test execution
+- Test database connection refused
+- Fixture dependency cycle
+- Test passes locally but fails in CI/CD
+- Mock side_effect raises immediately
+- Test modifies global state
+- Common test patterns
+- Debugging test failures
+- Debugging checklist
+
+INTEGRATION WITH DOCS
+======================
+
+The troubleshooting guide is integrated into:
+- docs/index.md - Referenced in "For Operations" section
+- docs/index.md - Listed in "Deployment & Operations" table
+- docs/index.md - Included in documentation hierarchy
+- docs/index.md - Added to "Getting Help" section
+
+CROSS-REFERENCES
+================
+
+Each section cross-references related issues:
+- service-startup.md ↔ database.md (DB connection at startup)
+- authentication.md ↔ service-startup.md (JWT_SECRET not set)
+- docker-deployment.md ↔ service-startup.md (image caching)
+- tests.md ↔ authentication.md (token testing)
+
+AUDIENCE & PURPOSE
+==================
+
+Primary Audiences:
+- DevOps Engineers - deployment and infrastructure issues
+- SRE (Site Reliability Engineers) - operational troubleshooting
+- Backend Engineers - development and debugging
+- QA/QE - test execution and environment issues
+
+Scope:
+- Six microservices (Market Data, Newsletter, Scoring, Classification, Tax, Scenario)
+- PostgreSQL database operations
+- Redis/Valkey cache
+- Docker/Docker Compose operations
+- Pytest test execution
+- JWT authentication
+
+USAGE PATTERNS
+==============
+
+Pattern 1: Start with symptom
+1. Read docs/troubleshooting/README.md
+2. Find symptom category
+3. Jump to relevant guide (service-startup.md, database.md, etc.)
+4. Apply fix
+5. Verify with health checks from QUICK_REFERENCE.md
+
+Pattern 2: Quick command lookup
+1. Go to QUICK_REFERENCE.md
+2. Find command in relevant section
+3. Copy and adapt to your situation
+4. Run command
+
+Pattern 3: Deep investigation
+1. Start with investigation workflow in README.md
+2. Follow 5-step process
+3. Reference specific issues in detailed guides
+4. Use debugging checklists
+
+Pattern 4: CI/CD failures
+1. Check test failures in tests.md
+2. Verify environment variables set (docker-deployment.md)
+3. Ensure dependencies running (database.md, service-startup.md)
+
+FORMAT & STYLE
+==============
+
+Each issue follows this structure:
+1. Error message or symptom (heading)
+2. Symptom description (what you see)
+3. Root cause explanation (why it happens)
+4. Immediate fix (step-by-step resolution)
+5. Prevention (how to avoid in future)
+6. Optional: Extra debugging steps
+
+Format features:
+- Exact bash commands (copy-paste ready)
+- Real error messages (easy grep/search)
+- Prevention with code examples
+- Cross-references to related guides
+- Debugging checklists
+
+VERSION & MAINTENANCE
+=====================
+
+Current Version: 1.0.0
+Last Updated: March 2026
+Maintenance: Keep in sync with:
+- docker-compose.yml service definitions
+- Service startup sequences
+- Environment variable requirements
+- Known issues from git history
+
+FILES UPDATED
+=============
+
+Created:
+/docs/troubleshooting/README.md
+/docs/troubleshooting/QUICK_REFERENCE.md
+/docs/troubleshooting/service-startup.md
+/docs/troubleshooting/database.md
+/docs/troubleshooting/authentication.md
+/docs/troubleshooting/docker-deployment.md
+/docs/troubleshooting/tests.md
+/docs/troubleshooting/INDEX.txt (this file)
+
+Modified:
+/docs/index.md - Added troubleshooting section, updated navigation
+
+NEXT STEPS
+==========
+
+1. Read docs/troubleshooting/README.md for complete overview
+2. Bookmark QUICK_REFERENCE.md for fast command lookup
+3. Add troubleshooting docs to team wiki/runbook
+4. Link from Slack commands/ChatOps
+5. Update as new issues discovered
+6. Reference in post-mortems for incident learnings
+
+END OF INDEX

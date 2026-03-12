@@ -25,6 +25,8 @@
 - **[Operational Runbook](deployment/operational-runbook.md)** — Daily operations and troubleshooting
 - **[Disaster Recovery](deployment/disaster-recovery.md)** — Recovery procedures for failures
 - **[Monitoring Guide](deployment/monitoring-guide.md)** — Prometheus/Grafana setup and alerts
+- **[Troubleshooting Guide](troubleshooting/README.md)** — Service startup, database, auth, Docker issues
+- **[Quick Reference](troubleshooting/QUICK_REFERENCE.md)** — Fast lookup for common commands
 
 ---
 
@@ -113,6 +115,14 @@ docs/
 │   ├── monitoring-guide.md
 │   ├── disaster-recovery.md
 │   └── ...
+├── troubleshooting/                  ← Troubleshooting Guides
+│   ├── README.md                     (index of all troubleshooting docs)
+│   ├── QUICK_REFERENCE.md            (common commands and fast lookup)
+│   ├── service-startup.md            (module errors, startup failures)
+│   ├── database.md                   (connection, pool, schema issues)
+│   ├── authentication.md             (JWT, auth, token problems)
+│   ├── docker-deployment.md          (image caching, git, env vars)
+│   └── tests.md                      (pytest, fixtures, test failures)
 ├── decisions/                        ← ADRs
 │   ├── README.md
 │   ├── decisions-log.md
@@ -148,7 +158,12 @@ docs/
 
 ## Getting Help
 
-- **Technical Issues**: Check [Operational Runbook](deployment/operational-runbook.md) troubleshooting section
+- **Service not starting?** → [Service Startup Failures](troubleshooting/service-startup.md)
+- **Database connection issue?** → [Database Errors](troubleshooting/database.md)
+- **Auth/JWT problem?** → [Authentication Errors](troubleshooting/authentication.md)
+- **Docker or deployment issue?** → [Docker & Deployment](troubleshooting/docker-deployment.md)
+- **Test failure?** → [Test Failures](troubleshooting/tests.md)
+- **Quick command lookup?** → [Quick Reference](troubleshooting/QUICK_REFERENCE.md)
 - **Architecture Questions**: Review relevant [ADRs](decisions/README.md)
 - **API Integration**: See [INTEGRATION_GUIDE.md](../INTEGRATION_GUIDE.md)
 - **Feature Request**: Submit issue to GitHub
