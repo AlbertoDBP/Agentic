@@ -28,6 +28,37 @@ Income Fortress is a sophisticated platform for analyzing income-generating inve
 
 ---
 
+## 📖 Documentation
+
+**Master Navigation:** [docs/index.md](docs/index.md)
+
+### Quick Links by Role
+
+**All Developers**: Start here →
+- [DEVELOPMENT-GUIDE.md](DEVELOPMENT-GUIDE.md) — Local environment setup
+- [docs/index.md](docs/index.md) — Complete documentation index
+- [DESIGN-SUMMARY.md](DESIGN-SUMMARY.md) — 100-page architecture spec
+
+**Operations & Deployment**:
+- [docs/deployment/deployment-guide.md](docs/deployment/deployment-guide.md) — Full deployment walkthrough
+- [docs/deployment/operational-runbook.md](docs/deployment/operational-runbook.md) — Daily operations
+- [docs/deployment/disaster-recovery.md](docs/deployment/disaster-recovery.md) — Emergency procedures
+
+**Per-Agent Documentation**:
+- [Agent 01: Market Data](docs/agents/agent-01/) — Real-time price and fundamental data
+- [Agent 03: Income Scoring](docs/agents/agent-03/) — Asset evaluation engine
+- [Agent 04: Asset Classification](docs/agents/agent-04/) — Taxonomy and classification rules
+- [Agent 05: Tax Optimization](docs/agents/agent-05/) — Account placement strategy
+- [Agent 06: Scenario Simulation](docs/agents/agent-06/) — Monte Carlo projection
+
+**API Integration**:
+- [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) — REST API and webhook configuration
+
+**Architecture & Decisions**:
+- [docs/decisions/README.md](docs/decisions/) — Architecture Decision Records (ADRs)
+
+---
+
 ## 🚀 Quick Start
 
 ### For Users

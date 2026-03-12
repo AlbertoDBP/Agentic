@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(venv/bin/pip install:*)"
+      "Bash(venv/bin/pip install:*)",
+      "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" python -m pytest tests/ -v)",
+      "Bash(/Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/pip freeze:*)",
+      "Bash(openssl rand:*)",
+      "Bash(JWT_SECRET=9003f8efcf25cc963a1d7c84dec59c0d8f407d2f5cb37c65e0e7344ad526dd2d /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python3 -c \":*)",
+      "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/ -v --tb=short)",
+      "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/ --tb=no -q)",
+      "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/ --tb=short -q)",
+      "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/test_quality_gate.py::TestCreditRatingHelper -v --tb=long)"
+    ],
+    "additionalDirectories": [
+      "/Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src/scenario-simulation-service/app"
     ]
   }
 }
