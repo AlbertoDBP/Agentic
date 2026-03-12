@@ -3,16 +3,19 @@ Agent 03 — Income Scoring Service
 ORM Models: SQLAlchemy table definitions.
 
 Tables:
-  - income_scores          — scored results per ticker per run
-  - quality_gate_results   — binary pass/fail gate checks
-  - scoring_runs           — audit log of each scoring batch
+  - income_scores              — scored results per ticker per run
+  - quality_gate_results       — binary pass/fail gate checks
+  - scoring_runs               — audit log of each scoring batch
+  - scoring_weight_profiles    — versioned class-specific pillar weights (v2.0)
+  - weight_change_audit        — immutable log of weight changes (v2.0)
+  - signal_penalty_config      — configurable signal penalty rules (v2.0)
 """
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, DateTime,
-    Text, JSON, ForeignKey, UniqueConstraint, Index,
+    Text, JSON, ForeignKey, UniqueConstraint, Index, SmallInteger, Numeric,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 import uuid
 
@@ -140,6 +143,10 @@ class IncomeScore(Base):
     scoring_run_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_runs.id"), nullable=True)
     quality_gate_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.quality_gate_results.id"), nullable=True)
 
+    # ── v2.0 Adaptive Intelligence fields ────────────────────────────────────
+    weight_profile_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_weight_profiles.id"), nullable=True)
+    signal_penalty = Column(Float, nullable=False, default=0.0)  # points deducted by signal layer
+
     __table_args__ = (
         Index("ix_income_scores_ticker_scored", "ticker", "scored_at"),
         Index("ix_income_scores_recommendation", "recommendation"),
@@ -197,4 +204,144 @@ class ScoringRun(Base):
         return (
             f"<ScoringRun {self.id} [{self.run_type}] "
             f"status={self.status} scored={self.tickers_scored}>"
+        )
+
+
+# ── v2.0: Scoring Weight Profiles ────────────────────────────────────────────
+
+class ScoringWeightProfile(Base):
+    """
+    Versioned class-specific pillar weight profiles.
+
+    Each asset class has exactly one active profile at any time.
+    Pillar weights (yield + durability + technical) must sum to 100.
+    Sub-weights within each pillar are stored as percentages summing to 100.
+
+    The scorer computes sub-component ceiling as:
+        ceiling = pillar_budget * sub_weight_pct / 100
+    """
+    __tablename__ = "scoring_weight_profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_class = Column(String(50), nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=1)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    # Top-level pillar weights (integers summing to 100)
+    weight_yield = Column(SmallInteger, nullable=False)
+    weight_durability = Column(SmallInteger, nullable=False)
+    weight_technical = Column(SmallInteger, nullable=False)
+
+    # Sub-component weights within each pillar (JSON %, sum=100 per pillar)
+    # e.g. {"payout_sustainability": 40, "yield_vs_market": 35, "fcf_coverage": 25}
+    yield_sub_weights = Column(JSONB, nullable=False)
+    durability_sub_weights = Column(JSONB, nullable=False)
+    technical_sub_weights = Column(JSONB, nullable=False)
+
+    # Provenance
+    source = Column(String(30), nullable=False, default="MANUAL")
+    # MANUAL | LEARNING_LOOP | INITIAL_SEED
+    change_reason = Column(Text, nullable=True)
+    created_by = Column(String(100), nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    activated_at = Column(DateTime, nullable=True)
+    superseded_at = Column(DateTime, nullable=True)
+    superseded_by_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_weight_profiles.id"), nullable=True)
+
+    __table_args__ = (
+        Index("ix_swp_asset_class_history", "asset_class", "created_at"),
+        {"schema": "platform_shared"},
+    )
+
+    def __repr__(self):
+        status = "ACTIVE" if self.is_active else "SUPERSEDED"
+        return (
+            f"<ScoringWeightProfile {self.asset_class} v{self.version} "
+            f"[{status}] Y={self.weight_yield}/D={self.weight_durability}/T={self.weight_technical}>"
+        )
+
+
+# ── v2.0: Weight Change Audit ─────────────────────────────────────────────────
+
+class WeightChangeAudit(Base):
+    """
+    Immutable audit log of every weight profile change.
+    Created whenever a new ScoringWeightProfile version is activated.
+    """
+    __tablename__ = "weight_change_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_class = Column(String(50), nullable=False, index=True)
+    old_profile_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_weight_profiles.id"), nullable=True)
+    new_profile_id = Column(UUID(as_uuid=True), ForeignKey("platform_shared.scoring_weight_profiles.id"), nullable=False)
+
+    # Deltas (new - old)
+    delta_weight_yield = Column(SmallInteger, nullable=True)
+    delta_weight_durability = Column(SmallInteger, nullable=True)
+    delta_weight_technical = Column(SmallInteger, nullable=True)
+
+    # Why it changed
+    trigger_type = Column(String(30), nullable=False)
+    # MANUAL | QUARTERLY_REVIEW | CONVERGENCE_CLAMP | INITIAL_SEED
+    trigger_details = Column(JSONB, nullable=True)
+
+    changed_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    changed_by = Column(String(100), nullable=True)
+
+    __table_args__ = (
+        Index("ix_wca_asset_class_changed", "asset_class", "changed_at"),
+        {"schema": "platform_shared"},
+    )
+
+    def __repr__(self):
+        return (
+            f"<WeightChangeAudit {self.asset_class} [{self.trigger_type}] "
+            f"dY={self.delta_weight_yield} dD={self.delta_weight_durability} dT={self.delta_weight_technical}>"
+        )
+
+
+# ── v2.0: Signal Penalty Config ───────────────────────────────────────────────
+
+class SignalPenaltyConfig(Base):
+    """
+    Configurable penalty rules for the signal penalty layer.
+    Exactly one row is active at any time.
+
+    Architecture constraint: bullish_strong_bonus_cap = 0.0 enforced in v2.0.
+    Signals can only reduce scores, never inflate them.
+    """
+    __tablename__ = "signal_penalty_config"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    is_active = Column(Boolean, nullable=False, default=True)
+    version = Column(Integer, nullable=False, default=1)
+
+    # Penalty amounts (score points on 0-100 scale)
+    bearish_strong_penalty = Column(Numeric(4, 1), nullable=False, default=8.0)
+    bearish_moderate_penalty = Column(Numeric(4, 1), nullable=False, default=5.0)
+    bearish_weak_penalty = Column(Numeric(4, 1), nullable=False, default=2.0)
+    bullish_strong_bonus_cap = Column(Numeric(4, 1), nullable=False, default=0.0)
+    # Architecture constraint: always 0.0 in v2.0 risk-conservative mode
+
+    # Applicability thresholds
+    min_n_analysts = Column(Integer, nullable=False, default=1)
+    min_decay_weight = Column(Numeric(5, 4), nullable=False, default=0.30)
+    consensus_bearish_threshold = Column(Numeric(4, 3), nullable=False, default=-0.20)
+    consensus_bullish_threshold = Column(Numeric(4, 3), nullable=False, default=0.20)
+
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    created_by = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_spc_active", "is_active"),
+        {"schema": "platform_shared"},
+    )
+
+    def __repr__(self):
+        status = "ACTIVE" if self.is_active else "INACTIVE"
+        return (
+            f"<SignalPenaltyConfig v{self.version} [{status}] "
+            f"bearish_strong={self.bearish_strong_penalty}>"
         )
