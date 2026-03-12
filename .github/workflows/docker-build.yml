@@ -1,0 +1,17 @@
+name: Docker Build Validation
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  docker-build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.yml
+        working-directory: income-platform
+        run: docker compose config
+      - name: Build all services
+        working-directory: income-platform
+        run: docker compose build --no-cache

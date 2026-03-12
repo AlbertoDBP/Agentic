@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-market-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/market-data-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/market-data-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: pytest tests/ --tb=short
+
+  test-newsletter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/agent-02-newsletter-ingestion
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/agent-02-newsletter-ingestion
+        env:
+          JWT_SECRET: test-secret-for-ci
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: pytest tests/ --tb=short
+
+  test-income-scoring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/income-scoring-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/income-scoring-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: pytest tests/ --tb=short
+
+  test-asset-classification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/asset-classification-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/asset-classification-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: pytest tests/ --tb=short
+
+  test-tax-optimization:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/tax-optimization-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/tax-optimization-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: pytest tests/ --tb=short
+
+  test-scenario-simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/scenario-simulation-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/scenario-simulation-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: pytest tests/ --tb=short

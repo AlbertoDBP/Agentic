@@ -226,6 +226,19 @@ curl http://localhost:8000/health
 - International stock support
 - Multi-region deployment
 
+### Backlog — NAV Erosion Dedicated Service
+NAV erosion analysis currently runs inline within the income-scoring-service (Agent 03) using a simple Monte Carlo model (`numpy.random.normal`). This is sufficient for MVP.
+
+A future `nav-erosion-service` (port 8007) is planned with:
+- **Vectorized Monte Carlo engine** — NumPy-optimized with market regime shifts and upside-capping mechanics
+- **Two analysis modes** — `quick` (fast, inline-compatible) and `deep` (full simulation, cached)
+- **DB result caching** — `nav_erosion_analysis_cache` table, cache valid N days, avoids re-running expensive simulations
+- **ETF data collector** — pulls NAV, distribution, options metrics per ticker; validates completeness score
+- **DB schema** — already designed (`documentation/implementation/V2.0__nav_erosion_analysis.sql`)
+- **Test spec** — already written (`documentation/testing/test_nav_erosion.py`)
+
+Decision: defer until income-scoring-service shows latency pressure from NAV erosion compute, or until deep-analysis mode (50K+ simulations) is required.
+
 ---
 
 ## 🧪 Testing
