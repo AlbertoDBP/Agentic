@@ -7,10 +7,17 @@ Run from service root:
 """
 from __future__ import annotations
 
+import os
+import time
+
+import jwt as _jwt
 import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
+
+# Inject JWT_SECRET before any app import so pydantic-settings validation passes
+os.environ.setdefault("JWT_SECRET", "test-secret")
 
 from app.main import app
 from app.models import (
@@ -33,6 +40,14 @@ from app.tax.harvester import identify_harvesting_opportunities
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
+def _make_token(secret: str = "test-secret", exp_offset: int = 3600) -> str:
+    return _jwt.encode(
+        {"sub": "test", "exp": int(time.time()) + exp_offset},
+        secret,
+        algorithm="HS256",
+    )
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
@@ -40,8 +55,10 @@ def anyio_backend():
 
 @pytest_asyncio.fixture
 async def client():
+    token = _make_token()
+    headers = {"Authorization": f"Bearer {token}"}
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=headers) as ac:
         yield ac
 
 
