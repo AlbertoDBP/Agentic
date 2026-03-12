@@ -12,6 +12,10 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY . .
 
+# Explicit install — ensures PyJWT is present regardless of which
+# requirements.txt the build context resolves to.
+RUN pip install --no-cache-dir PyJWT==2.8.0
+
 EXPOSE 8001
 
 CMD ["python3", "src/market-data-service/main.py"]
