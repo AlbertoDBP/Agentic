@@ -1,41 +1,24 @@
 #!/usr/bin/env bash
 # ────────────────────────────────────────────────────────
 # Income Platform — Production Smoke Test
-# Generates a JWT from JWT_SECRET and hits every agent
+# Generates a JWT via PyJWT inside a running container
 # ────────────────────────────────────────────────────────
 set -euo pipefail
 
 BASE="${BASE_URL:-http://localhost}"
 
-# ── Load JWT_SECRET from .env if not already set ──
-if [ -z "${JWT_SECRET:-}" ]; then
-  ENV_FILE="$(dirname "$0")/../.env"
-  if [ -f "$ENV_FILE" ]; then
-    JWT_SECRET=$(grep '^JWT_SECRET=' "$ENV_FILE" | cut -d= -f2-)
-  fi
-fi
+# ── Generate JWT using PyJWT inside a running container ──
+# (containers have PyJWT + JWT_SECRET in their environment)
+TOKEN=$(docker exec agent-03-income-scoring python3 -c "
+import jwt, time, os
+t = jwt.encode({'sub':'smoke-test','iat':int(time.time()),'exp':int(time.time())+3600}, os.environ['JWT_SECRET'], algorithm='HS256')
+print(t)
+")
 
-if [ -z "${JWT_SECRET:-}" ]; then
-  echo "ERROR: JWT_SECRET not set. Export it or add to .env"
+if [ -z "$TOKEN" ]; then
+  echo "ERROR: Could not generate JWT. Is agent-03-income-scoring running?"
   exit 1
 fi
-
-# ── Generate JWT token using Python ──
-export JWT_SECRET
-TOKEN=$(python3 << 'PYEOF'
-import json, hmac, hashlib, base64, time, os
-
-def b64url(data):
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-secret = os.environ["JWT_SECRET"]
-header = b64url(json.dumps({"alg":"HS256","typ":"JWT"}).encode())
-now = int(time.time())
-payload = b64url(json.dumps({"sub":"smoke-test","iat":now,"exp":now+3600}).encode())
-sig = b64url(hmac.new(secret.encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest())
-print(f"{header}.{payload}.{sig}")
-PYEOF
-)
 
 AUTH="Authorization: Bearer $TOKEN"
 PASS=0
@@ -87,52 +70,75 @@ done
 echo ""
 
 # ── Agent 01: Market Data ──
+# Route: @app.get("/stocks/{symbol}/price")
 echo "── Agent 01: Market Data ──"
-test_endpoint "GET /stocks/O" "$BASE:8001/stocks/O"
+test_endpoint "GET /stocks/O/price" "$BASE:8001/stocks/O/price"
+echo ""
+
+# ── Agent 02: Newsletter Ingestion ──
+# Route: prefix="/signal" → GET /{ticker}
+echo "── Agent 02: Newsletter Ingestion ──"
+test_endpoint "GET /signal/O" "$BASE:8002/signal/O"
 echo ""
 
 # ── Agent 03: Income Scoring ──
+# Route: prefix="/scores" → POST /evaluate
 echo "── Agent 03: Income Scoring ──"
-test_endpoint "POST /score (O)" "$BASE:8003/score" "POST" '{"ticker":"O"}'
+test_endpoint "POST /scores/evaluate (O)" "$BASE:8003/scores/evaluate" "POST" '{"ticker":"O"}'
+test_endpoint "GET /scores/O" "$BASE:8003/scores/O"
 echo ""
 
 # ── Agent 04: Asset Classification ──
+# Route: no prefix → POST /classify, POST /entry-price/{ticker}
 echo "── Agent 04: Asset Classification ──"
 test_endpoint "POST /classify (O)" "$BASE:8004/classify" "POST" '{"ticker":"O"}'
 test_endpoint "POST /entry-price/O" "$BASE:8004/entry-price/O" "POST"
 echo ""
 
 # ── Agent 05: Tax Optimization ──
+# Route: prefix="" → GET /tax/profile/{symbol}
 echo "── Agent 05: Tax Optimization ──"
 test_endpoint "GET /tax/profile/O" "$BASE:8005/tax/profile/O"
 echo ""
 
 # ── Agent 06: Scenario Simulation ──
+# Route: no prefix → POST /scenarios/stress-test
 echo "── Agent 06: Scenario Simulation ──"
-test_endpoint "POST /simulate" "$BASE:8006/simulate" "POST" '{"ticker":"O","years":5}'
+test_endpoint "GET /scenarios/library" "$BASE:8006/scenarios/library"
+echo ""
+
+# ── Agent 07: Opportunity Scanner ──
+# Route: no prefix → GET /universe
+echo "── Agent 07: Opportunity Scanner ──"
+test_endpoint "GET /universe" "$BASE:8007/universe"
 echo ""
 
 # ── Agent 08: Rebalancing ──
+# Route: no prefix → GET /rebalance/portfolio/{id}/history
 echo "── Agent 08: Rebalancing ──"
-test_endpoint "GET /rebalancing/status" "$BASE:8008/rebalancing/status"
+test_endpoint "POST /rebalance/1" "$BASE:8008/rebalance/1" "POST"
 echo ""
 
 # ── Agent 09: Income Projection ──
+# Route: prefix="/projection" → GET /{portfolio_id}/latest
 echo "── Agent 09: Income Projection ──"
-test_endpoint "GET /projections/summary" "$BASE:8009/projections/summary"
+test_endpoint "GET /projection/1/latest" "$BASE:8009/projection/1/latest"
 echo ""
 
 # ── Agent 10: NAV Monitor ──
+# Route: prefix="/monitor" → GET /alerts
 echo "── Agent 10: NAV Monitor ──"
-test_endpoint "GET /nav/alerts" "$BASE:8010/nav/alerts"
+test_endpoint "GET /monitor/alerts" "$BASE:8010/monitor/alerts"
 echo ""
 
 # ── Agent 11: Smart Alert ──
+# Route: prefix="/alerts" → GET ""
 echo "── Agent 11: Smart Alert ──"
 test_endpoint "GET /alerts" "$BASE:8011/alerts"
 echo ""
 
 # ── Agent 12: Proposal Engine ──
+# Route: prefix="/proposals" → GET ""
 echo "── Agent 12: Proposal Engine ──"
 test_endpoint "GET /proposals" "$BASE:8012/proposals"
 echo ""
