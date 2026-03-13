@@ -188,3 +188,149 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent 08 — Rebalancing Service
+# ─────────────────────────────────────────────────────────────────────────────
+  agent-08-rebalancing:
+    build:
+      context: src/rebalancing-service
+      dockerfile: Dockerfile
+    container_name: agent-08-rebalancing
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - INCOME_SCORING_URL=http://agent-03-income-scoring:8003
+      - TAX_OPTIMIZATION_URL=http://tax-optimization-service:8005
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8008:8008"
+    depends_on:
+      agent-03-income-scoring:
+        condition: service_healthy
+      tax-optimization-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent 09 — Income Projection Service
+# ─────────────────────────────────────────────────────────────────────────────
+  agent-09-income-projection:
+    build:
+      context: src/income-projection-service
+      dockerfile: Dockerfile
+    container_name: agent-09-income-projection
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8009:8009"
+    depends_on:
+      market-data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent 10 — NAV Monitor Service
+# ─────────────────────────────────────────────────────────────────────────────
+  agent-10-nav-monitor:
+    build:
+      context: src/nav-monitor-service
+      dockerfile: Dockerfile
+    container_name: agent-10-nav-monitor
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8010:8010"
+    depends_on:
+      market-data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent 11 — Smart Alert Service
+# ─────────────────────────────────────────────────────────────────────────────
+  agent-11-smart-alert:
+    build:
+      context: src/smart-alert-service
+      dockerfile: Dockerfile
+    container_name: agent-11-smart-alert
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8011:8011"
+    depends_on:
+      agent-10-nav-monitor:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent 12 — Proposal Service
+# ─────────────────────────────────────────────────────────────────────────────
+  agent-12-proposal:
+    build:
+      context: src/proposal-service
+      dockerfile: Dockerfile
+    container_name: agent-12-proposal
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT02_URL=http://agent-02-newsletter-ingestion:8002
+      - AGENT03_URL=http://agent-03-income-scoring:8003
+      - AGENT04_URL=http://agent-04-asset-classification:8004
+      - AGENT05_URL=http://tax-optimization-service:8005
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8012:8012"
+    depends_on:
+      agent-02-newsletter-ingestion:
+        condition: service_healthy
+      agent-03-income-scoring:
+        condition: service_healthy
+      agent-04-asset-classification:
+        condition: service_healthy
+      tax-optimization-service:
+        condition: service_healthy
+      agent-11-smart-alert:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8012/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
