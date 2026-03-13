@@ -1,12 +1,16 @@
 """
 Migration script — creates income_projections table in platform_shared.
-Run once per environment: python -m scripts.migrate
+Safe to re-run — uses IF NOT EXISTS.
+Usage: DATABASE_URL=... python3 scripts/migrate.py
 """
+import asyncio
 import logging
+import os
+import re
 import sys
 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS platform_shared.income_projections (
@@ -31,15 +35,25 @@ CREATE INDEX IF NOT EXISTS idx_income_projections_computed_at
 """
 
 
-def run_migration() -> None:
-    # Import here so env vars are set before module-level engine is created.
-    from app.database import engine
-    from sqlalchemy import text
+def _strip(url: str) -> str:
+    return re.sub(r"\?.+$", "", url)
 
-    with engine.begin() as conn:
-        conn.execute(text(DDL))
-    logger.info("Migration complete — income_projections table is ready.")
+
+async def run_migration() -> None:
+    import asyncpg
+
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        logger.error("DATABASE_URL not set")
+        sys.exit(1)
+
+    conn = await asyncpg.connect(_strip(db_url), ssl="require")
+    try:
+        await conn.execute(DDL)
+        logger.info("income_projections table ready.")
+    finally:
+        await conn.close()
 
 
 if __name__ == "__main__":
-    run_migration()
+    asyncio.run(run_migration())
