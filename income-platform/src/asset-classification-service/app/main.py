@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import verify_connection
-from app.api import health, classify, rules
+from app.api import health, classify, rules, entry_price
 from app.auth import verify_token
 
 logging.basicConfig(
@@ -55,3 +55,4 @@ async def timing_middleware(request: Request, call_next):
 app.include_router(health.router, tags=["health"])
 app.include_router(classify.router, tags=["classification"], dependencies=[Depends(verify_token)])
 app.include_router(rules.router, tags=["rules"], dependencies=[Depends(verify_token)])
+app.include_router(entry_price.router, tags=["entry-price"], dependencies=[Depends(verify_token)])

@@ -203,3 +203,47 @@ jobs:
           DATABASE_URL: postgresql://user:pass@localhost:5432/testdb
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
         run: python -m pytest tests/ --tb=short
+
+  test-smart-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/smart-alert-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/smart-alert-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          DATABASE_URL: postgresql://user:pass@localhost:5432/testdb
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: python -m pytest tests/ --tb=short
+
+  test-proposal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/proposal-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/proposal-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          DATABASE_URL: postgresql://user:pass@localhost:5432/testdb
+          AGENT02_URL: http://agent-02:8002
+          AGENT03_URL: http://agent-03:8003
+          AGENT04_URL: http://agent-04:8004
+          AGENT05_URL: http://agent-05:8005
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: python -m pytest tests/ --tb=short

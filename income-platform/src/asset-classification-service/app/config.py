@@ -35,5 +35,11 @@ class Settings(BaseSettings):
     enrichment_confidence_threshold: float = 0.70
     classification_cache_ttl_hours: int = 24
 
+    # Entry Price defaults
+    default_target_yield_pct: float = 5.0
+    default_max_position_pct: float = 4.0
+    income_scoring_url: str = "http://income-scoring-service:8003"
+    income_scoring_timeout: float = 10.0
+
 
 settings = Settings()
