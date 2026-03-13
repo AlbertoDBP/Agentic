@@ -21,18 +21,21 @@ if [ -z "${JWT_SECRET:-}" ]; then
 fi
 
 # ── Generate JWT token using Python ──
-TOKEN=$(python3 -c "
-import json, hmac, hashlib, base64, time
+export JWT_SECRET
+TOKEN=$(python3 << 'PYEOF'
+import json, hmac, hashlib, base64, time, os
 
 def b64url(data):
-    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
-header = b64url(json.dumps({'alg':'HS256','typ':'JWT'}).encode())
+secret = os.environ["JWT_SECRET"]
+header = b64url(json.dumps({"alg":"HS256","typ":"JWT"}).encode())
 now = int(time.time())
-payload = b64url(json.dumps({'sub':'smoke-test','iat':now,'exp':now+3600}).encode())
-sig = b64url(hmac.new('${JWT_SECRET}'.encode(), f'{header}.{payload}'.encode(), hashlib.sha256).digest())
-print(f'{header}.{payload}.{sig}')
-")
+payload = b64url(json.dumps({"sub":"smoke-test","iat":now,"exp":now+3600}).encode())
+sig = b64url(hmac.new(secret.encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest())
+print(f"{header}.{payload}.{sig}")
+PYEOF
+)
 
 AUTH="Authorization: Bearer $TOKEN"
 PASS=0
