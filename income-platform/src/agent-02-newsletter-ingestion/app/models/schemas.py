@@ -146,6 +146,7 @@ class AnalystSignalRecommendation(BaseModel):
     bear_case: Optional[str]
     published_at: datetime
     decay_weight: Decimal
+    flip_count: int = 0             # how many times analyst has previously flipped on this ticker
 
 
 class AnalystSignalAnalyst(BaseModel):
@@ -153,6 +154,7 @@ class AnalystSignalAnalyst(BaseModel):
     id: int
     display_name: str
     accuracy_overall: Optional[Decimal]
+    churn_rate: Optional[Decimal] = None  # superseded/total recs ratio (computed weekly)
     sector_alpha: Optional[dict]
     philosophy_summary: Optional[str]
     philosophy_source: PhilosophySource

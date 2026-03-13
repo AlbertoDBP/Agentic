@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     harvester_cron: str = "0 7 * * 2,5"        # Tue + Fri 7AM ET
     intelligence_cron: str = "0 6 * * 1"       # Monday 6AM ET
 
+    # ── Agent 03 Integration ──────────────────────────────────────────────────
+    income_scoring_url: str = "http://income-scoring-service:8003"
+    income_scoring_timeout: float = 30.0
+
     # ── Auth ──────────────────────────────────────────────────────────────────
     jwt_secret: str                            # required — fail loudly if missing
 

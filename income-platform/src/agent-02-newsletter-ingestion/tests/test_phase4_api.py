@@ -31,6 +31,7 @@ def _mock_analyst(id=1, sa_id="96726", name="Test Analyst",
     a.display_name = name
     a.is_active = True
     a.overall_accuracy = Decimal(str(accuracy))
+    a.churn_rate = Decimal("0.1250")
     a.sector_alpha = {"REIT": 0.81, "BDC": 0.68}
     a.philosophy_summary = "Focuses on high-yield dividend sustainability"
     a.philosophy_source = "llm"
@@ -79,6 +80,7 @@ def _mock_recommendation(
     r.decay_weight = Decimal(str(decay_weight))
     r.is_active = True
     r.superseded_by = None
+    r.flip_count = 0
     r.platform_alignment = None
     r.platform_scored_at = None
     r.created_at = datetime(2025, 1, 10, tzinfo=timezone.utc)

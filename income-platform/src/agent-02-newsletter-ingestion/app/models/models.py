@@ -50,6 +50,7 @@ class Analyst(Base):
 
     # Accuracy — updated by Intelligence Flow backtest
     overall_accuracy         = Column(Numeric(5, 4), nullable=True)    # 0.0 - 1.0
+    churn_rate               = Column(Numeric(5, 4), nullable=True)    # superseded/total recs ratio
     sector_alpha             = Column(JSONB, nullable=True)            # {REIT: 0.81, ...}
     article_count            = Column(Integer, default=0)
     last_article_fetched_at  = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -167,7 +168,10 @@ class AnalystRecommendation(Base):
                                  ForeignKey("platform_shared.analyst_recommendations.id"),
                                  nullable=True)
 
-    # Agent 12 alignment (written back by Proposal Agent)
+    # Churn tracking (set at save time by Harvester Flow)
+    flip_count          = Column(Integer, default=0)                    # prior flips on this analyst+ticker
+
+    # Agent 02 alignment (written at harvest time by Harvester Flow via Agent 03)
     platform_alignment  = Column(String(20), nullable=True)             # Aligned|Partial|Divergent|Vetoed
     platform_scored_at  = Column(TIMESTAMP(timezone=True), nullable=True)
 

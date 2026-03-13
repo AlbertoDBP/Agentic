@@ -95,6 +95,8 @@ class ScoreResponse(BaseModel):
     # v2.0: signal penalty layer
     signal_penalty: float = 0.0
     signal_penalty_details: Optional[dict] = None
+    # v2.1: human-readable score explanation
+    score_commentary: str = ""
 
 
 class ScoreListItem(BaseModel):
@@ -108,7 +110,116 @@ class ScoreListItem(BaseModel):
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
+_COMPONENT_LABELS = {
+    "payout_sustainability": "payout sustainability",
+    "yield_vs_market":       "yield vs market",
+    "fcf_coverage":          "free cash flow coverage",
+    "debt_safety":           "debt safety",
+    "dividend_consistency":  "dividend consistency",
+    "volatility_score":      "price volatility",
+    "price_momentum":        "price momentum",
+    "price_range_position":  "price range position",
+}
+
+_PILLAR_COMPONENTS = {
+    "valuation & yield":    ["payout_sustainability", "yield_vs_market", "fcf_coverage"],
+    "financial durability": ["debt_safety", "dividend_consistency", "volatility_score"],
+    "technical entry":      ["price_momentum", "price_range_position"],
+}
+
+
+def _generate_commentary(
+    factor_details: dict,
+    signal_penalty: float,
+    signal_penalty_details: Optional[dict],
+    nav_erosion_penalty: float,
+    nav_erosion_details: Optional[dict],
+    total_score: float,
+    grade: str,
+    recommendation: str,
+    chowder_signal: Optional[str],
+    chowder_number: Optional[float],
+    data_completeness_pct: float,
+) -> str:
+    """Generate a 2-3 sentence human-readable explanation of the score decision."""
+    try:
+        # Collect per-component (score, max, ratio) from factor_details
+        components: dict[str, tuple[float, float, float]] = {}
+        for key in _COMPONENT_LABELS:
+            comp = factor_details.get(key)
+            if isinstance(comp, dict):
+                sc = float(comp.get("score", 0.0))
+                mx = float(comp.get("max", 1.0) or 1.0)
+                components[key] = (sc, mx, sc / mx)
+
+        # Strongest / weakest by normalised ratio
+        strongest = weakest = None
+        if components:
+            strongest = max(components, key=lambda k: components[k][2])
+            weakest   = min(components, key=lambda k: components[k][2])
+
+        # Leading pillar by raw score sum
+        pillar_scores = {
+            p: sum(components[k][0] for k in keys if k in components)
+            for p, keys in _PILLAR_COMPONENTS.items()
+        }
+        leading_pillar = max(pillar_scores, key=pillar_scores.get) if pillar_scores else None
+
+        # Sentence 1 — overall result + leading pillar
+        rec_label = recommendation.replace("_", " ").title()
+        s1 = f"Score {total_score:.0f} ({grade}) — {rec_label}."
+        if leading_pillar:
+            s1 += f" {leading_pillar.title()} leads this assessment."
+
+        # Sentence 2 — strength and weakness
+        s2 = ""
+        if strongest and weakest and strongest != weakest:
+            ss, sm, _ = components[strongest]
+            ws, wm, _ = components[weakest]
+            s2 = (
+                f"Strongest driver: {_COMPONENT_LABELS[strongest]} ({ss:.1f}/{sm:.0f}); "
+                f"weakest: {_COMPONENT_LABELS[weakest]} ({ws:.1f}/{wm:.0f})."
+            )
+        elif strongest:
+            ss, sm, _ = components[strongest]
+            s2 = f"Strongest driver: {_COMPONENT_LABELS[strongest]} ({ss:.1f}/{sm:.0f})."
+
+        # Sentence 3 — penalties, chowder, data quality
+        notes: list[str] = []
+        if signal_penalty > 0:
+            strength = (signal_penalty_details or {}).get("signal_strength", "")
+            slabel = f"{strength.lower()} " if strength else ""
+            notes.append(
+                f"a {slabel}analyst BEARISH signal applied a {signal_penalty:.0f}-point penalty"
+            )
+        if nav_erosion_penalty > 0:
+            risk = (nav_erosion_details or {}).get("risk_classification", "")
+            notes.append(
+                f"NAV erosion risk ({risk}) applied a {nav_erosion_penalty:.0f}-point penalty"
+            )
+        if chowder_signal and chowder_number is not None:
+            notes.append(f"Chowder signal {chowder_signal} at {chowder_number:.1f}")
+        if data_completeness_pct < 80.0:
+            notes.append(f"data completeness {data_completeness_pct:.0f}% — score may be understated")
+
+        s3 = ""
+        if notes:
+            s3 = notes[0].capitalize()
+            for n in notes[1:]:
+                s3 += "; " + n
+            s3 += "."
+
+        return " ".join(p for p in [s1, s2, s3] if p).strip()
+
+    except Exception:
+        return f"Score {total_score:.0f} ({grade}) — {recommendation.replace('_', ' ').title()}."
+
+
 def _orm_to_response(score: IncomeScore, tax_efficiency: Optional[dict] = None) -> ScoreResponse:
+    fd = score.factor_details or {}
+    sp = score.signal_penalty or 0.0
+    nep = score.nav_erosion_penalty or 0.0
+    dcp = score.data_completeness_pct or 0.0
     return ScoreResponse(
         ticker=score.ticker,
         asset_class=score.asset_class,
@@ -116,22 +227,35 @@ def _orm_to_response(score: IncomeScore, tax_efficiency: Optional[dict] = None) 
         financial_durability_score=score.financial_durability_score,
         technical_entry_score=score.technical_entry_score,
         total_score_raw=score.total_score_raw,
-        nav_erosion_penalty=score.nav_erosion_penalty,
+        nav_erosion_penalty=nep,
         total_score=score.total_score,
         grade=score.grade,
         recommendation=score.recommendation,
-        factor_details=score.factor_details or {},
+        factor_details=fd,
         nav_erosion_details=score.nav_erosion_details,
-        chowder_number=score.factor_details.get("chowder_number") if score.factor_details else None,
-        chowder_signal=score.factor_details.get("chowder_signal") if score.factor_details else None,
+        chowder_number=fd.get("chowder_number"),
+        chowder_signal=fd.get("chowder_signal"),
         data_quality_score=score.data_quality_score or 0.0,
-        data_completeness_pct=score.data_completeness_pct or 0.0,
+        data_completeness_pct=dcp,
         scored_at=score.scored_at,
         tax_efficiency=tax_efficiency,
         weight_profile_version=None,   # not stored on ORM row in v2.0 (captured via FK)
         weight_profile_id=str(score.weight_profile_id) if score.weight_profile_id else None,
-        signal_penalty=score.signal_penalty or 0.0,
+        signal_penalty=sp,
         signal_penalty_details=score.signal_penalty_details,
+        score_commentary=_generate_commentary(
+            factor_details=fd,
+            signal_penalty=sp,
+            signal_penalty_details=score.signal_penalty_details,
+            nav_erosion_penalty=nep,
+            nav_erosion_details=score.nav_erosion_details,
+            total_score=score.total_score,
+            grade=score.grade,
+            recommendation=score.recommendation,
+            chowder_signal=fd.get("chowder_signal"),
+            chowder_number=fd.get("chowder_number"),
+            data_completeness_pct=dcp,
+        ),
     )
 
 
@@ -166,6 +290,19 @@ def _result_to_response(
         weight_profile_id=result.weight_profile_id,
         signal_penalty=signal_penalty,
         signal_penalty_details=signal_penalty_details,
+        score_commentary=_generate_commentary(
+            factor_details=result.factor_details,
+            signal_penalty=signal_penalty,
+            signal_penalty_details=signal_penalty_details,
+            nav_erosion_penalty=result.nav_erosion_penalty,
+            nav_erosion_details=nav_erosion_details,
+            total_score=result.total_score,
+            grade=result.grade,
+            recommendation=result.recommendation,
+            chowder_signal=result.chowder_signal,
+            chowder_number=result.chowder_number,
+            data_completeness_pct=result.data_completeness_pct,
+        ),
     )
 
 

@@ -83,6 +83,19 @@ def save_recommendation(
         .all()
     )
 
+    # Count already-superseded recs to compute flip_count on the new rec
+    prior_superseded_count = (
+        db.query(AnalystRecommendation)
+        .filter(
+            AnalystRecommendation.analyst_id == analyst_id,
+            AnalystRecommendation.ticker == ticker,
+            AnalystRecommendation.superseded_by.isnot(None),
+        )
+        .count()
+    )
+    # flip_count = total prior flips (already superseded + active recs being superseded now)
+    flip_count = prior_superseded_count + len(prior_recs)
+
     rec = AnalystRecommendation(
         analyst_id=analyst_id,
         article_id=article_id,
@@ -107,6 +120,7 @@ def save_recommendation(
         expires_at=expires_at,
         decay_weight=1.0,
         is_active=True,
+        flip_count=flip_count,
     )
     db.add(rec)
     db.flush()
@@ -157,3 +171,32 @@ def update_analyst_after_fetch(db, analyst_id: int, articles_added: int) -> None
     if analyst:
         analyst.article_count = (analyst.article_count or 0) + articles_added
         analyst.last_article_fetched_at = datetime.now(timezone.utc)
+
+
+def compute_and_store_alignment(
+    db,
+    rec_id: int,
+    ticker: str,
+    sentiment_score: Optional[float],
+) -> None:
+    """
+    Call Agent 03 to score a ticker and derive platform_alignment for a recommendation.
+    Updates the recommendation record in-place.
+    No-op if Agent 03 is unavailable or returns no score.
+    """
+    from app.processors.alignment_client import score_ticker_sync, _derive_alignment
+
+    score_data = score_ticker_sync(ticker)
+    if score_data is None:
+        return
+
+    total_score = score_data.get("total_score")
+    if total_score is None:
+        return
+
+    alignment = _derive_alignment(sentiment_score, total_score)
+
+    rec = db.query(AnalystRecommendation).filter(AnalystRecommendation.id == rec_id).first()
+    if rec:
+        rec.platform_alignment = alignment
+        rec.platform_scored_at = datetime.now(timezone.utc)

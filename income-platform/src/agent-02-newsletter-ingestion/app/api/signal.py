@@ -207,6 +207,7 @@ def get_signal(
         id=best_analyst.id if best_analyst else best_rec.analyst_id,
         display_name=best_analyst.display_name if best_analyst else "Unknown",
         accuracy_overall=best_analyst.overall_accuracy if best_analyst else None,
+        churn_rate=best_analyst.churn_rate if best_analyst else None,
         sector_alpha=best_analyst.sector_alpha if best_analyst else None,
         philosophy_summary=best_analyst.philosophy_summary if best_analyst else None,
         philosophy_source=(
@@ -230,6 +231,7 @@ def get_signal(
         bear_case=metadata.get("bear_case"),
         published_at=best_rec.published_at,
         decay_weight=best_rec.decay_weight,
+        flip_count=best_rec.flip_count or 0,
     )
 
     consensus = ConsensusResponse(

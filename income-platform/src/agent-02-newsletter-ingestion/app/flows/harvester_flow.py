@@ -183,7 +183,41 @@ def persist_article(
             "sa_article_id": sa_article_id,
             "recs_saved": len(saved_recs),
             "tickers": ticker_symbols,
+            "rec_info": [
+                {
+                    "rec_id": r.id,
+                    "ticker": r.ticker,
+                    "sentiment_score": (
+                        float(r.sentiment_score) if r.sentiment_score is not None else None
+                    ),
+                }
+                for r in saved_recs
+            ],
         }
+
+
+@task(name="compute-alignment", retries=1, tags=["harvester", "agent03"])
+def compute_alignment_task(rec_info: list[dict]) -> int:
+    """
+    Call Agent 03 for each new recommendation to compute platform_alignment.
+    Failures are logged and skipped — does not abort the flow.
+    """
+    log = get_run_logger()
+    scored = 0
+    for info in rec_info:
+        try:
+            with get_db_context() as db:
+                article_store.compute_and_store_alignment(
+                    db=db,
+                    rec_id=info["rec_id"],
+                    ticker=info["ticker"],
+                    sentiment_score=info["sentiment_score"],
+                )
+                scored += 1
+        except Exception as e:
+            log.warning(f"Alignment scoring failed for rec {info['rec_id']}: {e}")
+    log.info(f"Platform alignment computed for {scored}/{len(rec_info)} recommendations")
+    return scored
 
 
 # ── Main Flow ──────────────────────────────────────────────────────────────────
@@ -321,6 +355,10 @@ def harvester_flow(analyst_ids: Optional[list[int]] = None):
 
                     analyst_articles_added += 1
                     analyst_recs_added += result["recs_saved"]
+
+                    # 8. Compute platform alignment via Agent 03 (passive, non-blocking)
+                    if result.get("rec_info"):
+                        compute_alignment_task(result["rec_info"])
 
                 except Exception as e:
                     log.error(f"Error processing article {article_sa_id}: {e}")

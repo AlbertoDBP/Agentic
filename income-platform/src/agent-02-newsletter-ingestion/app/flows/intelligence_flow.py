@@ -121,6 +121,42 @@ def task_consensus_rebuild(analyst_id: int) -> dict:
     return result
 
 
+@task(
+    name="churn-rate-update",
+    tags=["intelligence", "db"],
+)
+def task_churn_rate_update(analyst_id: int) -> dict:
+    """
+    Compute and store churn_rate for an analyst.
+    churn_rate = superseded_recs / total_recs (0.0 if no recs).
+    """
+    log = get_run_logger()
+    with get_db_context() as db:
+        from app.models.models import AnalystRecommendation
+
+        total = (
+            db.query(AnalystRecommendation)
+            .filter(AnalystRecommendation.analyst_id == analyst_id)
+            .count()
+        )
+        superseded = (
+            db.query(AnalystRecommendation)
+            .filter(
+                AnalystRecommendation.analyst_id == analyst_id,
+                AnalystRecommendation.superseded_by.isnot(None),
+            )
+            .count()
+        )
+        churn_rate = round(superseded / total, 4) if total > 0 else 0.0
+
+        analyst = db.query(Analyst).filter(Analyst.id == analyst_id).first()
+        if analyst:
+            analyst.churn_rate = churn_rate
+
+    log.info(f"Analyst {analyst_id} churn_rate: {churn_rate:.4f} ({superseded}/{total})")
+    return {"total_recs": total, "superseded_recs": superseded, "churn_rate": churn_rate}
+
+
 # ── Main Flow ──────────────────────────────────────────────────────────────────
 
 @flow(
@@ -192,6 +228,9 @@ def intelligence_flow(analyst_ids: Optional[list[int]] = None):
             consensus_result = task_consensus_rebuild(analyst_id=analyst_id)
             total_tickers_rebuilt += consensus_result.get("tickers_rebuilt", 0)
 
+            # Step 5: Churn rate update
+            churn_result = task_churn_rate_update(analyst_id=analyst_id)
+
             analyst_results.append({
                 "analyst_id": analyst_id,
                 "display_name": display_name,
@@ -199,6 +238,7 @@ def intelligence_flow(analyst_ids: Optional[list[int]] = None):
                 "backtest": backtest_result,
                 "philosophy_source": philosophy_result.get("philosophy_source"),
                 "tickers_rebuilt": consensus_result.get("tickers_rebuilt", 0),
+                "churn_rate": churn_result.get("churn_rate"),
                 "status": "success",
             })
 
