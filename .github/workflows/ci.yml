@@ -141,3 +141,25 @@ jobs:
           INCOME_SCORING_URL: http://agent-03:8003
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
         run: python -m pytest tests/ --tb=short
+
+  test-rebalancing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/rebalancing-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/rebalancing-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          DATABASE_URL: postgresql://user:pass@localhost:5432/testdb
+          INCOME_SCORING_URL: http://agent-03:8003
+          TAX_OPTIMIZATION_URL: http://agent-05:8005
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: python -m pytest tests/ --tb=short
