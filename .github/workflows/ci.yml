@@ -183,3 +183,23 @@ jobs:
           DATABASE_URL: postgresql://user:pass@localhost:5432/testdb
           PYTHONPATH: ${{ github.workspace }}/income-platform/src
         run: python -m pytest tests/ --tb=short
+
+  test-nav-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: income-platform/src/nav-monitor-service
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: income-platform/src/nav-monitor-service
+        env:
+          JWT_SECRET: test-secret-for-ci
+          DATABASE_URL: postgresql://user:pass@localhost:5432/testdb
+          PYTHONPATH: ${{ github.workspace }}/income-platform/src
+        run: python -m pytest tests/ --tb=short
