@@ -84,7 +84,7 @@ echo ""
 # ── Agent 03: Income Scoring ──
 # Route: prefix="/scores" → POST /evaluate
 echo "── Agent 03: Income Scoring ──"
-test_endpoint "POST /scores/evaluate (O)" "$BASE:8003/scores/evaluate" "POST" '{"ticker":"O"}'
+test_endpoint "POST /scores/evaluate (O)" "$BASE:8003/scores/evaluate" "POST" '{"ticker":"O","asset_class":"CommonStock"}'
 test_endpoint "GET /scores/O" "$BASE:8003/scores/O"
 echo ""
 
@@ -115,14 +115,16 @@ echo ""
 
 # ── Agent 08: Rebalancing ──
 # Route: no prefix → GET /rebalance/portfolio/{id}/history
+DUMMY_UUID="00000000-0000-0000-0000-000000000001"
+
 echo "── Agent 08: Rebalancing ──"
-test_endpoint "POST /rebalance/1" "$BASE:8008/rebalance/1" "POST"
+test_endpoint "GET /rebalance/portfolio/history" "$BASE:8008/rebalance/portfolio/$DUMMY_UUID/history"
 echo ""
 
 # ── Agent 09: Income Projection ──
 # Route: prefix="/projection" → GET /{portfolio_id}/latest
 echo "── Agent 09: Income Projection ──"
-test_endpoint "GET /projection/1/latest" "$BASE:8009/projection/1/latest"
+test_endpoint "GET /projection/{id}/latest" "$BASE:8009/projection/$DUMMY_UUID/latest"
 echo ""
 
 # ── Agent 10: NAV Monitor ──
