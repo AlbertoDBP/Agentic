@@ -21,26 +21,24 @@ async def dashboard(request: Request):
     healthy_count = sum(1 for s in health if s["healthy"])
     total_count = len(health)
 
-    # DB metrics
+    # DB metrics — each table in its own connection so one missing table
+    # doesn't abort the transaction and block subsequent counts
     metrics = {"positions": 0, "articles": 0, "alerts": 0, "proposals": 0}
     if engine:
-        try:
-            with engine.connect() as conn:
-                for table, key in [
-                    ("positions", "positions"),
-                    ("articles", "articles"),
-                    ("alerts", "alerts"),
-                    ("proposals", "proposals"),
-                ]:
-                    try:
-                        row = conn.execute(
-                            text(f"SELECT COUNT(*) FROM platform_shared.{table}")
-                        ).scalar()
-                        metrics[key] = row or 0
-                    except Exception as te:
-                        logger.warning(f"Table {table} query failed: {te}")
-        except Exception as e:
-            logger.error(f"DB metrics error: {e}")
+        for table, key in [
+            ("positions", "positions"),
+            ("articles", "articles"),
+            ("alerts", "alerts"),
+            ("proposals", "proposals"),
+        ]:
+            try:
+                with engine.connect() as conn:
+                    row = conn.execute(
+                        text(f"SELECT COUNT(*) FROM platform_shared.{table}")
+                    ).scalar()
+                    metrics[key] = row or 0
+            except Exception as te:
+                logger.debug(f"Table {table} not found: {te}")
     else:
         logger.error("DB engine not available — metrics will be 0")
 
