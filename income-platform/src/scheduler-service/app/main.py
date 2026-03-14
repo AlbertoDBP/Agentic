@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("scheduler")
 
-scheduler = BackgroundScheduler(timezone="US/Eastern")
+scheduler = BackgroundScheduler(timezone="America/New_York")
 
 # ═══════════════════════════════════════════════════════════════════════
 # SCHEDULE DEFINITIONS  (all times US/Eastern)
