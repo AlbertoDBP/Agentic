@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Alerts — Income Platform{% endblock %}
+{% block content %}
+<h1>Alerts</h1>
+
+<h2>NAV Alerts (Agent 10)</h2>
+{% if nav_alerts %}
+<table>
+  <thead><tr><th>Symbol</th><th>Severity</th><th>Type</th><th>Status</th></tr></thead>
+  <tbody>
+    {% for a in nav_alerts %}
+    <tr>
+      <td><strong>{{ a.symbol or "?" }}</strong></td>
+      <td>
+        {% if a.severity == "HIGH" or a.severity == "CRITICAL" %}
+          <span class="badge badge-red">{{ a.severity }}</span>
+        {% elif a.severity == "MEDIUM" %}
+          <span class="badge badge-yellow">{{ a.severity }}</span>
+        {% else %}
+          <span class="badge badge-blue">{{ a.severity or "?" }}</span>
+        {% endif %}
+      </td>
+      <td>{{ a.alert_type or "?" }}</td>
+      <td>{{ a.status or "?" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No NAV alerts.</p>
+{% endif %}
+
+<h2>Unified Alerts (Agent 11)</h2>
+{% if unified_alerts %}
+<table>
+  <thead><tr><th>Symbol</th><th>Type</th><th>Status</th><th>Created</th><th>Action</th></tr></thead>
+  <tbody>
+    {% for a in unified_alerts %}
+    <tr>
+      <td><strong>{{ a.symbol or "?" }}</strong></td>
+      <td>{{ a.alert_type or "?" }}</td>
+      <td>
+        {% if a.status == "ACTIVE" %}
+          <span class="badge badge-red">{{ a.status }}</span>
+        {% else %}
+          <span class="badge badge-green">{{ a.status }}</span>
+        {% endif %}
+      </td>
+      <td>{{ a.created_at[:19] | replace("T", " ") if a.created_at else "" }}</td>
+      <td>
+        {% if a.status == "ACTIVE" %}
+        <form method="post" action="/alerts/resolve/{{ a.id }}" style="display:inline">
+          <button type="submit" class="btn-sm outline">Resolve</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No unified alerts.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Analysts — Income Platform{% endblock %}
+{% block content %}
+<h1>Analysts</h1>
+
+<div style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem;">
+  <form method="post" action="/analysts/harvest" style="display:inline">
+    <button type="submit" class="btn-sm" onclick="return confirm('Trigger harvester for all analysts?')">Trigger Harvest</button>
+  </form>
+  <form method="post" action="/analysts/intelligence" style="display:inline">
+    <button type="submit" class="btn-sm outline" onclick="return confirm('Trigger intelligence flow?')">Run Intelligence</button>
+  </form>
+</div>
+
+{% if analysts %}
+<table>
+  <thead>
+    <tr><th>Name</th><th>Articles</th><th>Last Fetched</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for a in analysts %}
+    <tr>
+      <td><strong>{{ a.display_name or a.name or "Unknown" }}</strong></td>
+      <td>{{ a.article_count or 0 }}</td>
+      <td>{{ a.last_article_fetched_at[:19] | replace("T", " ") if a.last_article_fetched_at else "never" }}</td>
+      <td>
+        {% if a.is_active is not defined or a.is_active %}
+          <span class="badge badge-green">active</span>
+        {% else %}
+          <span class="badge badge-red">inactive</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No analysts registered.</p>
+{% endif %}
+
+{% if flow_status %}
+<h2>Flow Run History</h2>
+<table>
+  <thead>
+    <tr><th>Flow</th><th>Last Run</th><th>Status</th><th>Articles</th><th>Duration</th></tr>
+  </thead>
+  <tbody>
+    {% for f in flow_status %}
+    <tr>
+      <td>{{ f.flow_name or "?" }}</td>
+      <td>{{ f.last_run_at[:19] | replace("T", " ") if f.last_run_at else "never" }}</td>
+      <td>
+        {% if f.last_run_status == "success" %}
+          <span class="badge badge-green">{{ f.last_run_status }}</span>
+        {% else %}
+          <span class="badge badge-red">{{ f.last_run_status or "?" }}</span>
+        {% endif %}
+      </td>
+      <td>{{ f.articles_processed or 0 }}</td>
+      <td>{{ f.duration_seconds or 0 }}s</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

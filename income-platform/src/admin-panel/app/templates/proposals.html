@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Proposals — Income Platform{% endblock %}
+{% block content %}
+<h1>Proposals</h1>
+
+{% if proposals %}
+<table>
+  <thead>
+    <tr><th>ID</th><th>Type</th><th>Symbol</th><th>Summary</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for p in proposals %}
+    <tr>
+      <td><code>{{ p.id[:8] if p.id else "?" }}</code></td>
+      <td>{{ p.proposal_type or p.type or "?" }}</td>
+      <td><strong>{{ p.symbol or "?" }}</strong></td>
+      <td>{{ p.summary or p.title or "" }}</td>
+      <td>
+        {% if p.status == "PENDING" %}
+          <span class="badge badge-yellow">{{ p.status }}</span>
+        {% elif p.status == "ACCEPTED" %}
+          <span class="badge badge-green">{{ p.status }}</span>
+        {% elif p.status == "REJECTED" %}
+          <span class="badge badge-red">{{ p.status }}</span>
+        {% else %}
+          <span class="badge badge-blue">{{ p.status or "?" }}</span>
+        {% endif %}
+      </td>
+      <td>{{ p.created_at[:19] | replace("T", " ") if p.created_at else "" }}</td>
+      <td>
+        {% if p.status == "PENDING" %}
+        <form method="post" action="/proposals/{{ p.id }}/accept" style="display:inline">
+          <button type="submit" class="btn-sm" style="background:#22c55e;color:#fff;border:none">Accept</button>
+        </form>
+        <form method="post" action="/proposals/{{ p.id }}/reject" style="display:inline">
+          <button type="submit" class="btn-sm" style="background:#ef4444;color:#fff;border:none">Reject</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No proposals yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Logs: {{ label }} — Income Platform{% endblock %}
+{% block content %}
+<h1>Logs: {{ label }}</h1>
+<p>
+  <a href="/services">Back to Services</a> &middot;
+  <a href="/services/{{ num }}/logs?lines=50">50</a> |
+  <a href="/services/{{ num }}/logs?lines=100">100</a> |
+  <a href="/services/{{ num }}/logs?lines=500">500</a> lines
+</p>
+<pre class="log-output">{{ log_text }}</pre>
+{% endblock %}

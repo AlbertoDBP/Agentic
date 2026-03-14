@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Income Platform Admin{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    :root {
+      --pico-font-size: 14px;
+    }
+    body { margin: 0; }
+    nav.sidebar {
+      position: fixed; top: 0; left: 0; bottom: 0; width: 220px;
+      background: var(--pico-card-background-color);
+      border-right: 1px solid var(--pico-muted-border-color);
+      padding: 1rem 0; overflow-y: auto; z-index: 10;
+    }
+    nav.sidebar .brand {
+      padding: 0.5rem 1.2rem 1.5rem;
+      font-weight: bold; font-size: 1.1rem;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      margin-bottom: 0.5rem;
+    }
+    nav.sidebar a {
+      display: block; padding: 0.55rem 1.2rem;
+      color: var(--pico-color); text-decoration: none;
+      border-left: 3px solid transparent;
+      font-size: 0.9rem;
+    }
+    nav.sidebar a:hover { background: var(--pico-primary-focus); }
+    nav.sidebar a.active {
+      border-left-color: var(--pico-primary);
+      color: var(--pico-primary);
+      font-weight: 600;
+    }
+    main.content {
+      margin-left: 220px; padding: 1.5rem 2rem;
+    }
+    .badge {
+      display: inline-block; padding: 0.15rem 0.5rem;
+      border-radius: 4px; font-size: 0.8rem; font-weight: 600;
+    }
+    .badge-green { background: #22c55e22; color: #22c55e; }
+    .badge-red   { background: #ef444422; color: #ef4444; }
+    .badge-yellow { background: #eab30822; color: #eab308; }
+    .badge-blue  { background: #3b82f622; color: #3b82f6; }
+    .metric-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem; margin-bottom: 1.5rem;
+    }
+    .metric-card {
+      background: var(--pico-card-background-color);
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: 8px; padding: 1rem 1.2rem;
+    }
+    .metric-card .value { font-size: 1.8rem; font-weight: 700; }
+    .metric-card .label { font-size: 0.85rem; color: var(--pico-muted-color); }
+    .health-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.75rem;
+    }
+    .health-tile {
+      background: var(--pico-card-background-color);
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: 8px; padding: 0.75rem 1rem;
+      display: flex; align-items: center; gap: 0.75rem;
+    }
+    .health-dot {
+      width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+    }
+    .health-dot.up { background: #22c55e; }
+    .health-dot.down { background: #ef4444; }
+    table { font-size: 0.9rem; }
+    pre.log-output {
+      background: #111; color: #ccc; padding: 1rem;
+      border-radius: 8px; overflow-x: auto;
+      font-size: 0.8rem; max-height: 70vh;
+    }
+    .btn-sm {
+      padding: 0.3rem 0.7rem; font-size: 0.8rem;
+      border-radius: 4px; cursor: pointer;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 1.2rem; }
+    h2 { font-size: 1.2rem; margin-top: 1.5rem; margin-bottom: 0.8rem; }
+  </style>
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="brand">Income Platform</div>
+    <a href="/" class="{% if page == 'dashboard' %}active{% endif %}">Dashboard</a>
+    <a href="/services" class="{% if page == 'services' %}active{% endif %}">Services</a>
+    <a href="/scheduler" class="{% if page == 'scheduler' %}active{% endif %}">Scheduler</a>
+    <a href="/portfolio" class="{% if page == 'portfolio' %}active{% endif %}">Portfolio</a>
+    <a href="/alerts" class="{% if page == 'alerts' %}active{% endif %}">Alerts</a>
+    <a href="/proposals" class="{% if page == 'proposals' %}active{% endif %}">Proposals</a>
+    <a href="/analysts" class="{% if page == 'analysts' %}active{% endif %}">Analysts</a>
+  </nav>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

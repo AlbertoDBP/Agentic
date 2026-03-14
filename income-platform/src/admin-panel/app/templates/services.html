@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Services — Income Platform{% endblock %}
+{% block content %}
+<h1>Services</h1>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>Service</th><th>Port</th><th>Status</th><th>Response</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for svc in services %}
+    <tr>
+      <td>{{ svc.num }}</td>
+      <td><strong>{{ svc.label }}</strong><br><small>{{ svc.container }}</small></td>
+      <td>{{ svc.port }}</td>
+      <td>
+        {% if svc.healthy %}
+          <span class="badge badge-green">healthy</span>
+        {% else %}
+          <span class="badge badge-red">DOWN ({{ svc.status_code }})</span>
+        {% endif %}
+      </td>
+      <td>{{ svc.ms }}ms</td>
+      <td>
+        <a href="/services/{{ svc.num }}/logs" class="btn-sm">Logs</a>
+        <form method="post" action="/services/{{ svc.num }}/restart" style="display:inline">
+          <button type="submit" class="btn-sm outline" onclick="return confirm('Restart {{ svc.label }}?')">Restart</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

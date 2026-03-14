@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Portfolio — Income Platform{% endblock %}
+{% block content %}
+<h1>Portfolio</h1>
+
+<div class="metric-grid">
+  <div class="metric-card">
+    <div class="value">{{ summary.positions }}</div>
+    <div class="label">Active Positions</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">${{ "{:,.0f}".format(summary.total_value) }}</div>
+    <div class="label">Total Value</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">${{ "{:,.0f}".format(summary.annual_income) }}</div>
+    <div class="label">Annual Income</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">{{ "{:.2%}".format(summary.avg_yoc) }}</div>
+    <div class="label">Avg Yield on Cost</div>
+  </div>
+</div>
+
+{% if allocation %}
+<h2>Asset Allocation</h2>
+<table>
+  <thead><tr><th>Asset Type</th><th>Positions</th><th>Value</th></tr></thead>
+  <tbody>
+    {% for a in allocation %}
+    <tr>
+      <td>{{ a.asset_type or "Unknown" }}</td>
+      <td>{{ a.count }}</td>
+      <td>${{ "{:,.2f}".format(a.value) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>Positions</h2>
+<table>
+  <thead>
+    <tr><th>Symbol</th><th>Name</th><th>Type</th><th>Shares</th><th>Cost Basis</th><th>Value</th><th>Income</th><th>YoC</th></tr>
+  </thead>
+  <tbody>
+    {% for p in positions %}
+    <tr>
+      <td><strong>{{ p.symbol }}</strong></td>
+      <td>{{ p.name }}</td>
+      <td><span class="badge badge-blue">{{ p.asset_type }}</span></td>
+      <td>{{ "{:,.2f}".format(p.shares) if p.shares else "-" }}</td>
+      <td>${{ "{:,.2f}".format(p.cost_basis) if p.cost_basis else "-" }}</td>
+      <td>${{ "{:,.2f}".format(p.current_value) if p.current_value else "-" }}</td>
+      <td>${{ "{:,.2f}".format(p.annual_income) if p.annual_income else "-" }}</td>
+      <td>{{ "{:.2%}".format(p.yield_on_cost) if p.yield_on_cost else "-" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

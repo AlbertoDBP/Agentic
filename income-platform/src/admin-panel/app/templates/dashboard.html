@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Income Platform{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="metric-grid">
+  <div class="metric-card">
+    <div class="value">{{ healthy_count }}/{{ total_count }}</div>
+    <div class="label">Services Healthy</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">{{ metrics.positions }}</div>
+    <div class="label">Active Positions</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">{{ metrics.articles }}</div>
+    <div class="label">Articles Ingested</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">{{ metrics.alerts }}</div>
+    <div class="label">Active Alerts</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">{{ metrics.proposals }}</div>
+    <div class="label">Proposals</div>
+  </div>
+</div>
+
+<h2>Service Health</h2>
+<div class="health-grid">
+  {% for svc in health %}
+  <div class="health-tile">
+    <div class="health-dot {{ 'up' if svc.healthy else 'down' }}"></div>
+    <div>
+      <strong>{{ svc.label }}</strong><br>
+      <small>:{{ svc.port }} &middot; {{ svc.ms }}ms</small>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if jobs %}
+<h2>Next Scheduled Jobs</h2>
+<table>
+  <thead><tr><th>Job</th><th>Next Run</th></tr></thead>
+  <tbody>
+    {% for job in jobs %}
+    <tr>
+      <td>{{ job.name or job.id }}</td>
+      <td>{{ job.next_run[:19] | replace("T", " ") if job.next_run else "N/A" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

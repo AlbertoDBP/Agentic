@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Scheduler — Income Platform{% endblock %}
+{% block content %}
+<h1>Scheduler Jobs</h1>
+
+{% if jobs %}
+<table>
+  <thead>
+    <tr><th>Job ID</th><th>Name</th><th>Next Run</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    {% for job in jobs %}
+    <tr>
+      <td><code>{{ job.id }}</code></td>
+      <td>{{ job.name or job.id }}</td>
+      <td>{{ job.next_run[:19] | replace("T", " ") if job.next_run else "N/A" }}</td>
+      <td>
+        <form method="post" action="/scheduler/trigger/{{ job.id }}" style="display:inline">
+          <button type="submit" class="btn-sm outline" onclick="return confirm('Trigger {{ job.id }}?')">Trigger</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No scheduler jobs found. Is the scheduler service running?</p>
+{% endif %}
+{% endblock %}
