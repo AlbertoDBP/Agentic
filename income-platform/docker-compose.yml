@@ -334,3 +334,38 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scheduler — APScheduler cron for all batch jobs
+# ─────────────────────────────────────────────────────────────────────────────
+  scheduler:
+    build:
+      context: src/scheduler-service
+      dockerfile: Dockerfile
+    container_name: scheduler
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8099:8099"
+    depends_on:
+      market-data-service:
+        condition: service_healthy
+      agent-02-newsletter-ingestion:
+        condition: service_healthy
+      agent-03-income-scoring:
+        condition: service_healthy
+      agent-07-opportunity-scanner:
+        condition: service_healthy
+      agent-10-nav-monitor:
+        condition: service_healthy
+      agent-11-smart-alert:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8099/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
