@@ -23,8 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user
-RUN adduser --disabled-password --gecos "" --uid 1001 appuser
+# Non-root user + Prefect home directory
+RUN adduser --disabled-password --gecos "" --uid 1001 appuser \
+    && mkdir -p /home/appuser/.prefect \
+    && chown -R appuser:appuser /home/appuser/.prefect
 
 WORKDIR /app
 
@@ -46,6 +48,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
 CMD ["python3", "-m", "uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
      "--port", "8002", \
-     "--workers", "2", \
+     "--workers", "1", \
      "--log-level", "info", \
      "--no-access-log"]
