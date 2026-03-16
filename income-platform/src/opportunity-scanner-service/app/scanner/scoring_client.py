@@ -48,7 +48,7 @@ async def score_ticker(ticker: str) -> Optional[dict]:
         token = _make_token()
         headers = {"Authorization": f"Bearer {token}"}
         async with httpx.AsyncClient(timeout=settings.income_scoring_timeout) as client:
-            resp = await client.post(url, json={"ticker": ticker}, headers=headers)
+            resp = await client.post(url, json={"ticker": ticker, "gate_data": {}}, headers=headers)
         if resp.status_code != 200:
             logger.warning("Agent 03 returned HTTP %d for %s", resp.status_code, ticker)
             return None
