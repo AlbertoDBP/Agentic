@@ -22,7 +22,8 @@ interface ProposalPosition {
 interface Proposal {
   id: string;
   portfolio_id: string;
-  proposal_type: "BUY" | "REBALANCE" | "TRIM";
+  proposal_type: "BUY" | "REBALANCE" | "TRIM" | "TRANSFER";
+  to_portfolio_id?: string;
   summary: string;
   status: "PENDING" | "ACCEPTED" | "REJECTED";
   created_at: string;
@@ -216,6 +217,15 @@ export default function ProposalsPage() {
 
     // Update proposal status
     setProposals((prev) => prev.map((p) => p.id === proposal.id ? { ...p, status: "ACCEPTED" as const } : p));
+
+    // TRANSFER proposals don't generate a market order
+    if (proposal.proposal_type === "TRANSFER") {
+      const next = { ...editedPositions };
+      delete next[proposal.id];
+      setEditedPositions(next);
+      setEditingId(null);
+      return;
+    }
 
     // Generate order
     const order: Order = {
@@ -446,7 +456,8 @@ export default function ProposalsPage() {
                       "rounded px-1.5 py-0.5 text-[10px] font-bold",
                       p.proposal_type === "BUY" && "bg-emerald-400/10 text-emerald-400",
                       p.proposal_type === "TRIM" && "bg-red-400/10 text-red-400",
-                      p.proposal_type === "REBALANCE" && "bg-amber-400/10 text-amber-400"
+                      p.proposal_type === "REBALANCE" && "bg-amber-400/10 text-amber-400",
+                      p.proposal_type === "TRANSFER" && "bg-cyan-400/10 text-cyan-400"
                     )}
                   >
                     {p.proposal_type}
@@ -478,7 +489,8 @@ export default function ProposalsPage() {
                     "rounded px-2 py-0.5 text-xs font-bold",
                     selected.proposal_type === "BUY" && "bg-emerald-400/10 text-emerald-400",
                     selected.proposal_type === "TRIM" && "bg-red-400/10 text-red-400",
-                    selected.proposal_type === "REBALANCE" && "bg-amber-400/10 text-amber-400"
+                    selected.proposal_type === "REBALANCE" && "bg-amber-400/10 text-amber-400",
+                    selected.proposal_type === "TRANSFER" && "bg-cyan-400/10 text-cyan-400"
                   )}
                 >
                   {selected.proposal_type}
@@ -497,6 +509,27 @@ export default function ProposalsPage() {
             </div>
 
             <p className="mb-4 text-sm leading-relaxed">{selected.summary}</p>
+
+            {/* TRANSFER: from → to display */}
+            {selected.proposal_type === "TRANSFER" && (() => {
+              const fromFlag = selected.risk_flags.find((f) => f.startsWith("From:"));
+              const toFlag = selected.risk_flags.find((f) => f.startsWith("To:"));
+              const fromName = fromFlag ? fromFlag.replace("From: ", "") : portfolioName(selected.portfolio_id);
+              const toName = toFlag ? toFlag.replace("To: ", "") : ((selected as Proposal & { to_portfolio_id?: string }).to_portfolio_id ? portfolioName((selected as Proposal & { to_portfolio_id?: string }).to_portfolio_id!) : "—");
+              return (
+                <div className="mb-4 flex items-center gap-3 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-4 py-3">
+                  <div className="flex-1 text-center">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">From</p>
+                    <p className="text-sm font-semibold text-foreground">{fromName}</p>
+                  </div>
+                  <div className="text-cyan-400">→</div>
+                  <div className="flex-1 text-center">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">To</p>
+                    <p className="text-sm font-semibold text-foreground">{toName}</p>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Dual-lens: Analyst + Platform */}
             <div className="grid grid-cols-2 gap-6 mb-5">

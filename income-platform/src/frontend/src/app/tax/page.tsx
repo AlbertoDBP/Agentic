@@ -103,6 +103,32 @@ const FILING_LABELS: Record<FilingStatus, string> = {
   head_of_household: "Head of Household",
 };
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function matchPortfolioForAccount(portfolios: { id: string; name: string }[], accountType: string): string {
+  const lower = accountType.toLowerCase();
+  const match = portfolios.find((p) => {
+    const name = p.name.toLowerCase();
+    if (lower === "roth_ira") return name.includes("roth");
+    if (lower === "traditional_ira") return (name.includes("traditional") || name.includes("ira")) && !name.includes("roth");
+    if (lower === "401k") return name.includes("401");
+    if (lower === "taxable") return name.includes("taxable") || name.includes("brokerage");
+    return false;
+  });
+  return match?.id ?? portfolios[0]?.id ?? "";
+}
+
+interface TransferModal {
+  symbol: string;
+  assetType: string;
+  fromAccount: string;
+  toAccount: string;
+  fromPortfolioId: string;
+  toPortfolioId: string;
+  reason: string;
+  savings: number;
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function TaxPage() {
@@ -113,6 +139,7 @@ export default function TaxPage() {
   const [selectedHarvest, setSelectedHarvest] = useState<Set<string>>(new Set());
   const [harvestDialogOpen, setHarvestDialogOpen] = useState(false);
   const [harvestPortfolioId, setHarvestPortfolioId] = useState(portfolios[0]?.id ?? "p1");
+  const [transferModal, setTransferModal] = useState<TransferModal | null>(null);
 
   // Calculate tab state
   const [calcInput, setCalcInput] = useState<TaxCalcInput>({
@@ -204,6 +231,42 @@ export default function TaxPage() {
     router.push("/proposals");
   };
 
+  const createTransferProposal = () => {
+    if (!transferModal) return;
+    const fromPortfolio = portfolios.find((p) => p.id === transferModal.fromPortfolioId);
+    const toPortfolio = portfolios.find((p) => p.id === transferModal.toPortfolioId);
+    const fromName = fromPortfolio?.name ?? ACCOUNT_LABELS[transferModal.fromAccount as AccountType] ?? transferModal.fromAccount;
+    const toName = toPortfolio?.name ?? ACCOUNT_LABELS[transferModal.toAccount as AccountType] ?? transferModal.toAccount;
+    const proposal = {
+      id: `transfer-${Date.now()}-${transferModal.symbol}`,
+      portfolio_id: transferModal.fromPortfolioId,
+      to_portfolio_id: transferModal.toPortfolioId,
+      proposal_type: "TRANSFER",
+      summary: `In-kind transfer: move ${transferModal.symbol} from ${fromName} → ${toName}. ${transferModal.reason}. Est. annual tax savings: $${transferModal.savings.toLocaleString()}.`,
+      status: "PENDING",
+      created_at: new Date().toISOString(),
+      analyst_source: "Tax Optimizer",
+      analyst_sentiment: "Tax-driven",
+      risk_flags: [`From: ${fromName}`, `To: ${toName}`],
+      positions: [{
+        symbol: transferModal.symbol,
+        name: transferModal.symbol,
+        asset_type: transferModal.assetType,
+        shares: 1,
+        entry_price: 0,
+        current_price: 0,
+        yield_estimate: 0,
+        score: 0,
+      }],
+    };
+    try {
+      const existing = JSON.parse(localStorage.getItem("pendingProposals") ?? "[]");
+      localStorage.setItem("pendingProposals", JSON.stringify([...existing, proposal]));
+    } catch { /* ignore */ }
+    setTransferModal(null);
+    router.push("/proposals");
+  };
+
   return (
     <div className="space-y-4">
       {/* Harvest proposal dialog */}
@@ -240,6 +303,71 @@ export default function TaxPage() {
             <div className="flex gap-2 pt-1">
               <button onClick={() => setHarvestDialogOpen(false)} className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-secondary transition-colors">Cancel</button>
               <button onClick={createHarvestProposal} className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">Create Proposal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transfer proposal modal */}
+      {transferModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl space-y-4">
+            <h2 className="text-base font-semibold">Create Transfer Proposal</h2>
+            <div className="rounded-md border border-border bg-secondary/50 px-3 py-2 space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-semibold text-sm">{transferModal.symbol}</span>
+                <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">{transferModal.assetType}</span>
+              </div>
+              <p className="text-xs text-muted-foreground">{transferModal.reason}</p>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  From Portfolio <span className="text-[10px] normal-case">(recommended: {ACCOUNT_LABELS[transferModal.fromAccount as AccountType] ?? transferModal.fromAccount})</span>
+                </label>
+                <select
+                  value={transferModal.fromPortfolioId}
+                  onChange={(e) => setTransferModal({ ...transferModal, fromPortfolioId: e.target.value })}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {portfolios.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center justify-center text-muted-foreground">
+                <ArrowRight className="h-4 w-4" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  To Portfolio <span className="text-[10px] normal-case">(recommended: {ACCOUNT_LABELS[transferModal.toAccount as AccountType] ?? transferModal.toAccount})</span>
+                </label>
+                <select
+                  value={transferModal.toPortfolioId}
+                  onChange={(e) => setTransferModal({ ...transferModal, toPortfolioId: e.target.value })}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {portfolios.filter((p) => p.id !== transferModal.fromPortfolioId).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {transferModal.savings > 0 && (
+              <div className="rounded-md border border-emerald-400/30 bg-emerald-400/5 px-3 py-2">
+                <p className="text-xs text-emerald-400 font-medium">Est. annual tax savings: ${transferModal.savings.toLocaleString()}</p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">This is an in-kind or manual transfer — confirm with your broker.</p>
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setTransferModal(null)} className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-secondary transition-colors">Cancel</button>
+              <button
+                onClick={createTransferProposal}
+                disabled={!transferModal.fromPortfolioId || !transferModal.toPortfolioId || transferModal.fromPortfolioId === transferModal.toPortfolioId}
+                className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                Create Transfer Proposal
+              </button>
             </div>
           </div>
         </div>
@@ -484,8 +612,22 @@ export default function TaxPage() {
                       {row.action}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{ACCOUNT_LABELS[row.from as AccountType] || row.from}</td>
-                  <td className="px-4 py-3 text-xs">{ACCOUNT_LABELS[row.to as AccountType] || row.to}</td>
+                  <td className="px-4 py-3">
+                    <p className="text-xs text-muted-foreground">{ACCOUNT_LABELS[row.from as AccountType] || row.from}</p>
+                    {(() => {
+                      const pid = matchPortfolioForAccount(portfolios, row.from);
+                      const name = portfolios.find((p) => p.id === pid)?.name;
+                      return name ? <p className="text-[10px] text-muted-foreground/60 mt-0.5">{name}</p> : null;
+                    })()}
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="text-xs">{ACCOUNT_LABELS[row.to as AccountType] || row.to}</p>
+                    {(() => {
+                      const pid = matchPortfolioForAccount(portfolios, row.to);
+                      const name = portfolios.find((p) => p.id === pid)?.name;
+                      return name ? <p className="text-[10px] text-muted-foreground/60 mt-0.5">{name}</p> : null;
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground max-w-xs">{row.reason}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-xs font-medium text-income">
                     {row.savings_est > 0 ? formatCurrency(row.savings_est) : "—"}
@@ -493,25 +635,16 @@ export default function TaxPage() {
                   <td className="px-4 py-3 text-right">
                     {row.action === "MOVE" && (
                       <button
-                        onClick={() => {
-                          const proposal = {
-                            id: `transfer-${Date.now()}-${row.symbol}`,
-                            portfolio_id: portfolios[0]?.id ?? "p1",
-                            proposal_type: "REBALANCE",
-                            summary: `In-kind transfer: Move ${row.symbol} from ${ACCOUNT_LABELS[row.from as AccountType] || row.from} → ${ACCOUNT_LABELS[row.to as AccountType] || row.to}. ${row.reason}. Est. annual tax savings: $${row.savings_est.toLocaleString()}.`,
-                            status: "PENDING",
-                            created_at: new Date().toISOString(),
-                            analyst_source: "Tax Optimizer",
-                            analyst_sentiment: "Tax-driven",
-                            risk_flags: [],
-                            positions: [{ symbol: row.symbol, name: row.symbol, asset_type: "", shares: 1, entry_price: 0, current_price: 0, yield_estimate: 0, score: 0 }],
-                          };
-                          try {
-                            const existing = JSON.parse(localStorage.getItem("pendingProposals") ?? "[]");
-                            localStorage.setItem("pendingProposals", JSON.stringify([...existing, proposal]));
-                          } catch { /* ignore */ }
-                          router.push("/proposals");
-                        }}
+                        onClick={() => setTransferModal({
+                          symbol: row.symbol,
+                          assetType: "",
+                          fromAccount: row.from,
+                          toAccount: row.to,
+                          fromPortfolioId: matchPortfolioForAccount(portfolios, row.from),
+                          toPortfolioId: matchPortfolioForAccount(portfolios, row.to),
+                          reason: row.reason,
+                          savings: row.savings_est,
+                        })}
                         className="rounded-md border border-border px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                       >
                         Propose Transfer

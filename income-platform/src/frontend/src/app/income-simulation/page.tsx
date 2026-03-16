@@ -213,7 +213,7 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
                   formatter={(v: any, n: any) => [formatCurrency(Number(v)), n === "p90" ? "P90 Bull" : n === "p10" ? "P10 Bear" : "P50 Base"] as [string, string]}
                 />
                 <Area type="monotone" dataKey="p90" stroke="#10b981" strokeWidth={1} strokeDasharray="3 3" fill="url(#p90g)" dot={false} />
-                <Area type="monotone" dataKey="p50" stroke="#10b981" strokeWidth={2} fill="none" dot={false} />
+                <Area type="monotone" dataKey="p50" stroke="#94a3b8" strokeWidth={2} fill="none" dot={false} />
                 <Area type="monotone" dataKey="p10" stroke="#f87171" strokeWidth={1} strokeDasharray="3 3" fill="url(#p10g)" dot={false} />
               </AreaChart>
             </ResponsiveContainer>

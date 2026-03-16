@@ -31,6 +31,7 @@ def _base(service: str) -> str:
         "scanner": settings.agent07_url,
         "scenarios": settings.agent06_url,
         "tax": settings.agent05_url,
+        "market-data": settings.agent01_url,
     }[service]
 
 
@@ -73,6 +74,18 @@ async def _proxy(
     except Exception as exc:
         logger.error("Proxy %s %s → %s", method, url, exc)
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+# ─── Market Data (Agent 01) ───────────────────────────────────────────────────
+
+@router.get("/market-data/price/{symbol}")
+async def market_data_price(symbol: str, request: Request):
+    return await _proxy("GET", "market-data", f"/stocks/{symbol.upper()}/price", request)
+
+
+@router.get("/market-data/fundamentals/{symbol}")
+async def market_data_fundamentals(symbol: str, request: Request):
+    return await _proxy("GET", "market-data", f"/stocks/{symbol.upper()}/fundamentals", request)
 
 
 # ─── Scanner (Agent 07) ───────────────────────────────────────────────────────

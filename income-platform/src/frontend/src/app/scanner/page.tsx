@@ -162,6 +162,7 @@ export default function ScannerPage() {
   const { portfolios } = usePortfolio();
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
   const [proposalDialogOpen, setProposalDialogOpen] = useState(false);
+  const [proposalCreating, setProposalCreating] = useState(false);
   const [proposalPortfolioId, setProposalPortfolioId] = useState(portfolios[0]?.id ?? "p1");
   const [proposalAmount, setProposalAmount] = useState("5000");
 
@@ -278,27 +279,45 @@ export default function ScannerPage() {
     !!filters.min_nav_discount_pct,
   ].filter(Boolean).length;
 
-  const createProposal = () => {
+  const createProposal = async () => {
+    setProposalCreating(true);
     const tickers = Array.from(selectedTickers);
-    const amountPerPosition = Math.round(Number(proposalAmount) / tickers.length);
+    const totalAmount = Number(proposalAmount);
+    const amountPerPosition = Math.round(totalAmount / tickers.length);
+
+    // Fetch live prices; fall back to placeholder if unavailable
+    const priceMap: Record<string, number> = {};
+    await Promise.all(
+      tickers.map(async (ticker) => {
+        try {
+          const data = await apiGet<{ price: number }>(`/api/market-data/price/${ticker}`);
+          if (data?.price > 0) priceMap[ticker] = data.price;
+        } catch { /* keep placeholder */ }
+      })
+    );
+
     const positions = tickers.map((ticker) => {
       const item = results?.items.find((i) => i.ticker === ticker);
+      const price = priceMap[ticker] ?? 0;
+      const shares = price > 0 ? Math.floor(amountPerPosition / price) : 0;
       return {
         symbol: ticker,
         name: ticker,
         asset_type: item?.asset_class ?? "ETF",
-        shares: 1,
-        entry_price: amountPerPosition,
-        current_price: amountPerPosition,
+        shares: shares > 0 ? shares : 1,
+        entry_price: price > 0 ? price : amountPerPosition,
+        current_price: price > 0 ? price : amountPerPosition,
         yield_estimate: 0,
         score: item?.score ?? 0,
       };
     });
+
+    const hasPrices = Object.keys(priceMap).length > 0;
     const proposal = {
       id: `scanner-${Date.now()}`,
       portfolio_id: proposalPortfolioId,
       proposal_type: "BUY",
-      summary: `Scanner-identified opportunities: ${tickers.join(", ")}. Target allocation: $${Number(proposalAmount).toLocaleString()} total across ${tickers.length} position${tickers.length > 1 ? "s" : ""}.`,
+      summary: `Scanner-identified opportunities: ${tickers.join(", ")}. Target allocation: $${totalAmount.toLocaleString()} total across ${tickers.length} position${tickers.length > 1 ? "s" : ""}${hasPrices ? " — shares computed from live prices" : " — update shares/prices as needed"}.`,
       status: "PENDING",
       created_at: new Date().toISOString(),
       analyst_source: "Opportunity Scanner",
@@ -310,6 +329,7 @@ export default function ScannerPage() {
       const existing = JSON.parse(localStorage.getItem("pendingProposals") ?? "[]");
       localStorage.setItem("pendingProposals", JSON.stringify([...existing, proposal]));
     } catch { /* ignore */ }
+    setProposalCreating(false);
     setProposalDialogOpen(false);
     setSelectedTickers(new Set());
     router.push("/proposals");
@@ -368,10 +388,10 @@ export default function ScannerPage() {
               </button>
               <button
                 onClick={createProposal}
-                disabled={!proposalAmount || Number(proposalAmount) <= 0}
+                disabled={!proposalAmount || Number(proposalAmount) <= 0 || proposalCreating}
                 className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
-                Create Proposal
+                {proposalCreating ? "Fetching prices…" : "Create Proposal"}
               </button>
             </div>
           </div>
