@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # Upstream service URLs
     income_scoring_url: str = "http://income-scoring-service:8003"
     income_scoring_timeout: float = 30.0
+    asset_classification_url: str = "http://agent-04-asset-classification:8004"
+    asset_classification_timeout: float = 10.0
 
     # Scanner config
     scan_concurrency: int = 10       # max concurrent Agent 03 calls
