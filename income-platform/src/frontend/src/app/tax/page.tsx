@@ -635,16 +635,24 @@ export default function TaxPage() {
                   <td className="px-4 py-3 text-right">
                     {row.action === "MOVE" && (
                       <button
-                        onClick={() => setTransferModal({
-                          symbol: row.symbol,
-                          assetType: "",
-                          fromAccount: row.from,
-                          toAccount: row.to,
-                          fromPortfolioId: matchPortfolioForAccount(portfolios, row.from),
-                          toPortfolioId: matchPortfolioForAccount(portfolios, row.to),
-                          reason: row.reason,
-                          savings: row.savings_est,
-                        })}
+                        onClick={() => {
+                          const fromPid = matchPortfolioForAccount(portfolios, row.from);
+                          let toPid = matchPortfolioForAccount(portfolios, row.to);
+                          // If both resolved to the same portfolio, pick any other one
+                          if (toPid === fromPid) {
+                            toPid = portfolios.find((p) => p.id !== fromPid)?.id ?? toPid;
+                          }
+                          setTransferModal({
+                            symbol: row.symbol,
+                            assetType: "",
+                            fromAccount: row.from,
+                            toAccount: row.to,
+                            fromPortfolioId: fromPid,
+                            toPortfolioId: toPid,
+                            reason: row.reason,
+                            savings: row.savings_est,
+                          });
+                        }}
                         className="rounded-md border border-border px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                       >
                         Propose Transfer
