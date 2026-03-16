@@ -399,3 +399,28 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Frontend — User-facing investment dashboard (Next.js)
+# ─────────────────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: src/frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - NEXT_PUBLIC_API_BASE=http://admin-panel:8100
+      - DATABASE_URL=${DATABASE_URL}
+    ports:
+      - "8200:8200"
+    depends_on:
+      admin-panel:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8200"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped

@@ -10,7 +10,13 @@
       "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/ -v --tb=short)",
       "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/ --tb=no -q)",
       "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/ --tb=short -q)",
-      "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/test_quality_gate.py::TestCreditRatingHelper -v --tb=long)"
+      "Bash(DATABASE_URL=\"postgresql://dummy:dummy@localhost/dummy\" JWT_SECRET=\"test-secret-for-tests\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/venv/bin/python -m pytest tests/test_quality_gate.py::TestCreditRatingHelper -v --tb=long)",
+      "Bash(grep -r 'CREATE TABLE' /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src --include=*.py)",
+      "Read(//Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/**)",
+      "Bash(chmod +x /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/scripts/platform-ctl.sh)",
+      "Bash(find /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform -name *migration* -type f)",
+      "Bash(find /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src -name *.sql -o -name alembic -type d)",
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --no-import-alias --use-npm)"
     ],
     "additionalDirectories": [
       "/Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src/scenario-simulation-service/app"
