@@ -1,272 +1,209 @@
 "use client";
 
-import { useState } from "react";
-import { TrendingUp, RefreshCw } from "lucide-react";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
-import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils";
-import { TickerBadge } from "@/components/ticker-badge";
+import { useState, useMemo } from "react";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import { usePortfolio } from "@/lib/portfolio-context";
-import { apiPost } from "@/lib/api";
+import { MetricCard } from "@/components/metric-card";
+import { formatCurrency } from "@/lib/utils";
+import { DollarSign, TrendingUp, Target } from "lucide-react";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface ProjectionResult {
-  portfolio_id: string;
-  horizon_months: number;
-  projected_income_p10: number;
-  projected_income_p50: number;
-  projected_income_p90: number;
-  by_position: {
-    symbol: string;
-    asset_class: string;
-    current_annual: number;
-    projected_annual_p50: number;
-    growth_rate_pct: number;
-    confidence: string;
-  }[];
-  monthly_series: {
-    month: string;
-    p10: number;
-    p50: number;
-    p90: number;
-  }[];
-  computed_at: string;
-}
-
-// ── Mock result ───────────────────────────────────────────────────────────────
-
-function buildMock(portfolioId: string, horizonMonths: number): ProjectionResult {
-  const base = 3515; // monthly base income
-  const months: { month: string; p10: number; p50: number; p90: number }[] = [];
-  for (let i = 1; i <= horizonMonths; i++) {
-    const growth = 1 + (i / horizonMonths) * 0.08;
-    months.push({
-      month: new Date(Date.now() + i * 30 * 86400 * 1000).toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
-      p10: Math.round(base * growth * 0.88),
-      p50: Math.round(base * growth),
-      p90: Math.round(base * growth * 1.12),
-    });
-  }
-  return {
-    portfolio_id: portfolioId,
-    horizon_months: horizonMonths,
-    projected_income_p10: Math.round(base * 12 * 0.88 * 1.04),
-    projected_income_p50: Math.round(base * 12 * 1.04),
-    projected_income_p90: Math.round(base * 12 * 1.12 * 1.04),
-    computed_at: new Date().toISOString(),
-    monthly_series: months,
-    by_position: [
-      { symbol: "JEPI",  asset_class: "ETF",  current_annual: 7370, projected_annual_p50: 7590, growth_rate_pct: 3.0,  confidence: "HIGH" },
-      { symbol: "EPD",   asset_class: "MLP",  current_annual: 3840, projected_annual_p50: 4110, growth_rate_pct: 7.0,  confidence: "HIGH" },
-      { symbol: "O",     asset_class: "REIT", current_annual: 3140, projected_annual_p50: 3330, growth_rate_pct: 6.1,  confidence: "HIGH" },
-      { symbol: "ARCC",  asset_class: "BDC",  current_annual: 3580, projected_annual_p50: 3690, growth_rate_pct: 3.1,  confidence: "MEDIUM" },
-      { symbol: "MAIN",  asset_class: "BDC",  current_annual: 2160, projected_annual_p50: 2310, growth_rate_pct: 6.9,  confidence: "HIGH" },
-      { symbol: "PDI",   asset_class: "CEF",  current_annual: 5520, projected_annual_p50: 5190, growth_rate_pct: -6.0, confidence: "LOW" },
-      { symbol: "GOF",   asset_class: "CEF",  current_annual: 3290, projected_annual_p50: 3060, growth_rate_pct: -7.0, confidence: "LOW" },
-      { symbol: "HTGC",  asset_class: "BDC",  current_annual: 2290, projected_annual_p50: 2380, growth_rate_pct: 3.9,  confidence: "MEDIUM" },
-      { symbol: "PFF",   asset_class: "ETF",  current_annual: 1090, projected_annual_p50: 1100, growth_rate_pct: 0.9,  confidence: "HIGH" },
-      { symbol: "NLY",   asset_class: "REIT", current_annual: 3700, projected_annual_p50: 3410, growth_rate_pct: -7.8, confidence: "LOW" },
-    ],
-  };
-}
-
-const CONFIDENCE_COLORS: Record<string, string> = {
-  HIGH: "text-emerald-400",
-  MEDIUM: "text-amber-400",
-  LOW: "text-red-400",
+// Per-portfolio mock projection data
+const PROJECTIONS: Record<string, { month: string; projected: number; low: number; high: number }[]> = {
+  p1: [
+    { month: "Apr '26", projected: 3800, low: 3400, high: 4200 },
+    { month: "May", projected: 4100, low: 3700, high: 4500 },
+    { month: "Jun", projected: 3600, low: 3200, high: 4000 },
+    { month: "Jul", projected: 4200, low: 3800, high: 4600 },
+    { month: "Aug", projected: 3900, low: 3500, high: 4300 },
+    { month: "Sep", projected: 4400, low: 3900, high: 4900 },
+    { month: "Oct", projected: 3700, low: 3300, high: 4100 },
+    { month: "Nov", projected: 4000, low: 3500, high: 4500 },
+    { month: "Dec", projected: 4300, low: 3800, high: 4800 },
+    { month: "Jan '27", projected: 3800, low: 3400, high: 4200 },
+    { month: "Feb", projected: 4100, low: 3600, high: 4600 },
+    { month: "Mar", projected: 3500, low: 3100, high: 3900 },
+  ],
+  p2: [
+    { month: "Apr '26", projected: 520, low: 480, high: 560 },
+    { month: "May", projected: 540, low: 500, high: 580 },
+    { month: "Jun", projected: 510, low: 470, high: 550 },
+    { month: "Jul", projected: 560, low: 520, high: 600 },
+    { month: "Aug", projected: 530, low: 490, high: 570 },
+    { month: "Sep", projected: 570, low: 530, high: 610 },
+    { month: "Oct", projected: 500, low: 460, high: 540 },
+    { month: "Nov", projected: 550, low: 510, high: 590 },
+    { month: "Dec", projected: 580, low: 540, high: 620 },
+    { month: "Jan '27", projected: 520, low: 480, high: 560 },
+    { month: "Feb", projected: 540, low: 500, high: 580 },
+    { month: "Mar", projected: 490, low: 450, high: 530 },
+  ],
+  p3: [
+    { month: "Apr '26", projected: 380, low: 350, high: 410 },
+    { month: "May", projected: 390, low: 360, high: 420 },
+    { month: "Jun", projected: 370, low: 340, high: 400 },
+    { month: "Jul", projected: 400, low: 370, high: 430 },
+    { month: "Aug", projected: 385, low: 355, high: 415 },
+    { month: "Sep", projected: 410, low: 380, high: 440 },
+    { month: "Oct", projected: 375, low: 345, high: 405 },
+    { month: "Nov", projected: 395, low: 365, high: 425 },
+    { month: "Dec", projected: 420, low: 390, high: 450 },
+    { month: "Jan '27", projected: 380, low: 350, high: 410 },
+    { month: "Feb", projected: 390, low: 360, high: 420 },
+    { month: "Mar", projected: 365, low: 335, high: 395 },
+  ],
 };
 
-const HORIZONS = [3, 6, 12, 24, 36, 60];
+const GOALS: Record<string, number> = {
+  p1: 50000,
+  p2: 7000,
+  p3: 5000,
+};
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+export default function ProjectionPage() {
+  const { portfolios, activePortfolio } = usePortfolio();
+  const [selectedScope, setSelectedScope] = useState<string>("active");
 
-export default function IncomeProjectionPage() {
-  const { portfolios } = usePortfolio();
-  const [portfolioId, setPortfolioId] = useState(portfolios[0]?.id ?? "p1");
-  const [horizonMonths, setHorizonMonths] = useState(12);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ProjectionResult | null>(null);
-
-  const run = async () => {
-    setLoading(true);
-    setResult(null);
-    try {
-      const data = await apiPost<Omit<ProjectionResult, "monthly_series">>("/api/scenarios/income-projection", {
-        portfolio_id: portfolioId,
-        horizon_months: horizonMonths,
+  const data = useMemo(() => {
+    if (selectedScope === "all") {
+      // Merge all portfolios' projections
+      const months = PROJECTIONS.p1 || [];
+      return months.map((m, i) => {
+        let projected = 0, low = 0, high = 0;
+        for (const pid of Object.keys(PROJECTIONS)) {
+          const row = PROJECTIONS[pid]?.[i];
+          if (row) { projected += row.projected; low += row.low; high += row.high; }
+        }
+        return { month: m.month, projected, low, high };
       });
-      // Build monthly_series from P50 data since backend doesn't return it
-      const mock = buildMock(portfolioId, horizonMonths);
-      setResult({
-        ...data,
-        monthly_series: mock.monthly_series,
-      } as ProjectionResult);
-    } catch (err) {
-      console.error("Projection failed:", err);
-      // Fall back to mock during development
-      setResult(buildMock(portfolioId, horizonMonths));
-    } finally {
-      setLoading(false);
     }
-  };
+    const pid = selectedScope === "active" ? (activePortfolio?.id || "p1") : selectedScope;
+    return PROJECTIONS[pid] || PROJECTIONS.p1 || [];
+  }, [selectedScope, activePortfolio]);
 
-  const portfolioName = portfolios.find((p) => p.id === portfolioId)?.name ?? portfolioId;
+  const totalProjected = data.reduce((s, m) => s + m.projected, 0);
+  const monthlyAvg = data.length > 0 ? totalProjected / data.length : 0;
+
+  const goal = useMemo(() => {
+    if (selectedScope === "all") {
+      return Object.values(GOALS).reduce((s, g) => s + g, 0);
+    }
+    const pid = selectedScope === "active" ? (activePortfolio?.id || "p1") : selectedScope;
+    return GOALS[pid] || 50000;
+  }, [selectedScope, activePortfolio]);
+
+  const goalPct = goal > 0 ? (totalProjected / goal) * 100 : 0;
+
+  const scopeLabel = selectedScope === "all"
+    ? "All Portfolios"
+    : selectedScope === "active"
+      ? activePortfolio?.name || "Portfolio"
+      : portfolios.find((p) => p.id === selectedScope)?.name || "Portfolio";
 
   return (
-    <div className="space-y-4">
-      <div>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Income Projection</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Monte Carlo projection of portfolio income across P10 / P50 / P90 confidence intervals
-        </p>
-      </div>
-
-      {/* Config */}
-      <div className="flex flex-wrap items-end gap-4 rounded-lg border border-border bg-card p-4">
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Portfolio</label>
-          <select
-            value={portfolioId}
-            onChange={(e) => setPortfolioId(e.target.value)}
-            className="rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-          >
-            {portfolios.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Horizon</label>
-          <div className="flex gap-1">
-            {HORIZONS.map((h) => (
-              <button
-                key={h}
-                onClick={() => setHorizonMonths(h)}
-                className={cn(
-                  "rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
-                  horizonMonths === h
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-secondary text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {h < 12 ? `${h}mo` : `${h / 12}yr`}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <button
-          onClick={run}
-          disabled={loading}
-          className={cn(
-            "flex items-center gap-2 rounded-md px-5 py-2 text-sm font-medium transition-colors",
-            loading
-              ? "bg-primary/50 text-primary-foreground/50 cursor-not-allowed"
-              : "bg-primary text-primary-foreground hover:bg-primary/90"
-          )}
+        <select
+          value={selectedScope}
+          onChange={(e) => setSelectedScope(e.target.value)}
+          className="rounded-md border border-border bg-secondary px-3 py-1.5 text-xs"
         >
-          {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
-          {loading ? "Projecting..." : "Run Projection"}
-        </button>
+          <option value="active">{activePortfolio?.name || "Active Portfolio"}</option>
+          <option value="all">All Portfolios</option>
+          {portfolios.filter((p) => p.id !== activePortfolio?.id).map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
       </div>
 
-      {/* Results */}
-      {result && !loading && (
-        <div className="space-y-4">
-          {/* P10/P50/P90 summary */}
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { label: "P10 — Bear Case",   value: result.projected_income_p10, color: "text-red-400",   desc: "10% chance income falls below this" },
-              { label: "P50 — Base Case",   value: result.projected_income_p50, color: "text-foreground", desc: "Most likely annual income outcome" },
-              { label: "P90 — Bull Case",   value: result.projected_income_p90, color: "text-income",    desc: "10% chance income exceeds this" },
-            ].map(({ label, value, color, desc }) => (
-              <div key={label} className="rounded-lg border border-border bg-card p-4">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
-                <p className={cn("text-xl font-semibold tabular-nums", color)}>{formatCurrency(value)}/yr</p>
-                <p className="text-[10px] text-muted-foreground mt-1">{desc}</p>
-              </div>
-            ))}
-          </div>
+      <div className="grid grid-cols-3 gap-4">
+        <MetricCard
+          label="12-Month Forecast"
+          value={formatCurrency(totalProjected, true)}
+          icon={DollarSign}
+        />
+        <MetricCard
+          label="Monthly Average"
+          value={formatCurrency(monthlyAvg)}
+          icon={TrendingUp}
+        />
+        <MetricCard
+          label="Annual Goal"
+          value={formatCurrency(goal, true)}
+          delta={`${goalPct.toFixed(0)}% of target`}
+          deltaType={goalPct >= 100 ? "positive" : "neutral"}
+          icon={Target}
+        />
+      </div>
 
-          {/* Area chart */}
-          <div className="rounded-lg border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold mb-4">Monthly Income — {horizonMonths}-Month Projection ({portfolioName})</h2>
-            <ResponsiveContainer width="100%" height={260}>
-              <AreaChart data={result.monthly_series} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="p90g" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.02} />
-                  </linearGradient>
-                  <linearGradient id="p10g" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f87171" stopOpacity={0.1} />
-                    <stop offset="95%" stopColor="#f87171" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} interval={Math.floor(result.monthly_series.length / 6)} />
-                <YAxis tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(1)}k`} width={52} />
-                <Tooltip
-                  contentStyle={{ background: "#1a1a2e", border: "1px solid #2d2d44", borderRadius: 6, fontSize: 12 }}
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  formatter={(v: any, n: any) => [formatCurrency(Number(v)), n === "p90" ? "P90 Bull" : n === "p10" ? "P10 Bear" : "P50 Base"] as [string, string]}
-                />
-                <Area type="monotone" dataKey="p90" stroke="#10b981" strokeWidth={1} strokeDasharray="3 3" fill="url(#p90g)" dot={false} />
-                <Area type="monotone" dataKey="p50" stroke="#10b981" strokeWidth={2} fill="none" dot={false} />
-                <Area type="monotone" dataKey="p10" stroke="#f87171" strokeWidth={1} strokeDasharray="3 3" fill="url(#p10g)" dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+      {/* Projection Chart */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h2 className="mb-4 text-sm font-medium text-muted-foreground">Monthly Income Forecast — {scopeLabel}</h2>
+        <ResponsiveContainer width="100%" height={340}>
+          <AreaChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#252d3d" vertical={false} />
+            <XAxis dataKey="month" tick={{ fill: "#8891a8", fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: "#8891a8", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(1)}K`} />
+            <Tooltip
+              contentStyle={{ background: "#111520", border: "1px solid #252d3d", borderRadius: 8, fontSize: 12 }}
+              labelStyle={{ color: "#e8eaf0" }}
+              formatter={(value) => [formatCurrency(Number(value)), ""]}
+            />
+            <Area type="monotone" dataKey="high" stroke="transparent" fill="#3b82f6" fillOpacity={0.08} />
+            <Area type="monotone" dataKey="low" stroke="transparent" fill="#0a0d11" fillOpacity={1} />
+            <Area type="monotone" dataKey="projected" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
 
-          {/* By position table */}
-          <div className="rounded-lg border border-border bg-card">
-            <div className="border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold">By Position</h2>
+      {/* Goal Tracker */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h2 className="mb-4 text-sm font-medium text-muted-foreground">Goal Progress — {scopeLabel}</h2>
+        <div className="flex items-center gap-6">
+          <div className="relative h-32 w-32">
+            <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+              <circle cx="50" cy="50" r="42" fill="none" stroke="#181d2a" strokeWidth="8" />
+              <circle
+                cx="50" cy="50" r="42" fill="none"
+                stroke={goalPct >= 100 ? "#10b981" : "#3b82f6"}
+                strokeWidth="8"
+                strokeDasharray={`${Math.min(goalPct, 100) / 100 * 264} 264`}
+                strokeLinecap="round"
+              />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-lg font-bold tabular-nums">{goalPct.toFixed(0)}%</span>
+              <span className="text-[10px] text-muted-foreground">of goal</span>
             </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-secondary/40">
-                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Symbol</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Class</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Current Annual</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Projected P50</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Growth</th>
-                  <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground">Confidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.by_position.map((pos) => (
-                  <tr key={pos.symbol} className="border-b border-border/50 hover:bg-secondary/20">
-                    <td className="px-3 py-2.5">
-                      <TickerBadge symbol={pos.symbol} assetType={pos.asset_class} />
-                    </td>
-                    <td className="px-3 py-2.5 text-xs text-muted-foreground">{pos.asset_class}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-xs text-income">{formatCurrency(pos.current_annual)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium">{formatCurrency(pos.projected_annual_p50)}</td>
-                    <td className={cn("px-3 py-2.5 text-right tabular-nums text-xs font-medium",
-                      pos.growth_rate_pct < 0 ? "text-red-400" : "text-income"
-                    )}>
-                      {pos.growth_rate_pct > 0 ? "+" : ""}{pos.growth_rate_pct.toFixed(1)}%
-                    </td>
-                    <td className={cn("px-3 py-2.5 text-center text-xs font-medium", CONFIDENCE_COLORS[pos.confidence])}>
-                      {pos.confidence}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          </div>
+          <div className="space-y-2 text-sm">
+            <div className="flex gap-8">
+              <div>
+                <p className="text-muted-foreground">Projected</p>
+                <p className="text-lg font-semibold tabular-nums">{formatCurrency(totalProjected, true)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Goal</p>
+                <p className="text-lg font-semibold tabular-nums">{formatCurrency(goal, true)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Gap</p>
+                <p className={`text-lg font-semibold tabular-nums ${totalProjected >= goal ? "text-income" : "text-loss"}`}>
+                  {totalProjected >= goal ? "+" : ""}{formatCurrency(totalProjected - goal, true)}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
-      )}
-
-      {/* Empty state */}
-      {!result && !loading && (
-        <div className="rounded-lg border border-border bg-card py-16 text-center">
-          <TrendingUp className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
-          <p className="text-sm text-muted-foreground">Select a portfolio and horizon, then run the projection</p>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

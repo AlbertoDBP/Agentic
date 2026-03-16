@@ -13,9 +13,15 @@ logging.basicConfig(level=settings.log_level, format="%(asctime)s %(name)s %(lev
 
 app = FastAPI(title="Income Platform Admin", docs_url=None, redoc_url=None)
 app.add_middleware(GZipMiddleware)
+import os as _os
+_cors_origins = [o.strip() for o in _os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://localhost:8200",
+).split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8200"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
