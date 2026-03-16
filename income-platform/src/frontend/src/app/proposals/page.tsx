@@ -112,6 +112,22 @@ export default function ProposalsPage() {
     portfolios.find((p) => p.id === portfolioId)?.cash_balance;
   const [proposals, setProposals] = useState<Proposal[]>(INITIAL_PROPOSALS);
 
+  // Load proposals created from scanner/tax pages
+  useEffect(() => {
+    try {
+      const pending = JSON.parse(localStorage.getItem("pendingProposals") ?? "[]") as Proposal[];
+      if (pending.length > 0) {
+        setProposals((prev) => {
+          // Avoid duplicates by id
+          const existingIds = new Set(prev.map((p) => p.id));
+          const newOnes = pending.filter((p) => !existingIds.has(p.id));
+          return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
+        });
+        localStorage.removeItem("pendingProposals");
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   // Editable positions state
   const [editedPositions, setEditedPositions] = useState<Record<string, ProposalPosition[]>>({});
   const [editingId, setEditingId] = useState<string | null>(null);

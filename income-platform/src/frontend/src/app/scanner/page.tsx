@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Search, ScanLine, Filter, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TickerBadge } from "@/components/ticker-badge";
 import { ScorePill } from "@/components/score-pill";
 import { formatPercent } from "@/lib/utils";
 import { apiPost, apiGet } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { usePortfolio } from "@/lib/portfolio-context";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -156,6 +158,12 @@ export default function ScannerPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [universeCount, setUniverseCount] = useState<number | null>(null);
+  const router = useRouter();
+  const { portfolios } = usePortfolio();
+  const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
+  const [proposalDialogOpen, setProposalDialogOpen] = useState(false);
+  const [proposalPortfolioId, setProposalPortfolioId] = useState(portfolios[0]?.id ?? "p1");
+  const [proposalAmount, setProposalAmount] = useState("5000");
 
   useEffect(() => {
     apiGet<{ total: number; securities: UniverseItem[] }>("/api/scanner/universe?limit=1000")
@@ -214,13 +222,7 @@ export default function ScannerPage() {
       const data = await apiPost<ScanResult>("/api/scanner/scan", payload);
       setProgress(100);
 
-      // Client-side grade/recommendation filters (applied post-scan)
-      let items = data.items;
-      if (filters.grades.length > 0) items = items.filter((i) => filters.grades.includes(i.grade));
-      if (filters.recommendations.length > 0) items = items.filter((i) => filters.recommendations.includes(i.recommendation));
-      if (filters.chowder_signals.length > 0) items = items.filter((i) => i.chowder_signal && filters.chowder_signals.includes(i.chowder_signal));
-
-      setResults({ ...data, items });
+      setResults(data);
     } catch (err) {
       console.error("Scan failed:", err);
       // Fall back to mock on error during development
@@ -229,6 +231,18 @@ export default function ScannerPage() {
       setScanning(false);
     }
   };
+
+  const filteredItems = useMemo(() => {
+    if (!results) return [];
+    return results.items.filter((item) => {
+      if (filters.grades.length > 0 && !filters.grades.includes(item.grade)) return false;
+      if (filters.recommendations.length > 0 && !filters.recommendations.includes(item.recommendation)) return false;
+      if (filters.chowder_signals.length > 0 && (!item.chowder_signal || !filters.chowder_signals.includes(item.chowder_signal))) return false;
+      if (filters.asset_classes.length > 0 && !filters.asset_classes.includes(item.asset_class)) return false;
+      if (item.score < filters.min_score) return false;
+      return true;
+    });
+  }, [results, filters.grades, filters.recommendations, filters.chowder_signals, filters.asset_classes, filters.min_score]);
 
   const handleSort = (col: keyof ScanItem) => {
     if (sortCol === col) {
@@ -239,16 +253,14 @@ export default function ScannerPage() {
     }
   };
 
-  const sorted = results
-    ? [...results.items].sort((a, b) => {
-        const av = a[sortCol];
-        const bv = b[sortCol];
-        if (av === null || av === undefined) return 1;
-        if (bv === null || bv === undefined) return -1;
-        const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-        return sortDir === "asc" ? cmp : -cmp;
-      })
-    : [];
+  const sorted = [...filteredItems].sort((a, b) => {
+    const av = a[sortCol];
+    const bv = b[sortCol];
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    return sortDir === "asc" ? cmp : -cmp;
+  });
 
   const activeFilterCount = [
     filters.asset_classes.length > 0,
@@ -266,8 +278,106 @@ export default function ScannerPage() {
     !!filters.min_nav_discount_pct,
   ].filter(Boolean).length;
 
+  const createProposal = () => {
+    const tickers = Array.from(selectedTickers);
+    const amountPerPosition = Math.round(Number(proposalAmount) / tickers.length);
+    const positions = tickers.map((ticker) => {
+      const item = results?.items.find((i) => i.ticker === ticker);
+      return {
+        symbol: ticker,
+        name: ticker,
+        asset_type: item?.asset_class ?? "ETF",
+        shares: 1,
+        entry_price: amountPerPosition,
+        current_price: amountPerPosition,
+        yield_estimate: 0,
+        score: item?.score ?? 0,
+      };
+    });
+    const proposal = {
+      id: `scanner-${Date.now()}`,
+      portfolio_id: proposalPortfolioId,
+      proposal_type: "BUY",
+      summary: `Scanner-identified opportunities: ${tickers.join(", ")}. Target allocation: $${Number(proposalAmount).toLocaleString()} total across ${tickers.length} position${tickers.length > 1 ? "s" : ""}.`,
+      status: "PENDING",
+      created_at: new Date().toISOString(),
+      analyst_source: "Opportunity Scanner",
+      analyst_sentiment: "Bullish",
+      risk_flags: [],
+      positions,
+    };
+    try {
+      const existing = JSON.parse(localStorage.getItem("pendingProposals") ?? "[]");
+      localStorage.setItem("pendingProposals", JSON.stringify([...existing, proposal]));
+    } catch { /* ignore */ }
+    setProposalDialogOpen(false);
+    setSelectedTickers(new Set());
+    router.push("/proposals");
+  };
+
   return (
     <div className="space-y-4">
+      {/* Proposal dialog */}
+      {proposalDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl space-y-4">
+            <h2 className="text-base font-semibold">Create Buy Proposal</h2>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Selected positions ({selectedTickers.size})</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from(selectedTickers).map((t) => (
+                  <span key={t} className="rounded bg-primary/10 px-2 py-0.5 text-xs font-mono font-medium text-primary">{t}</span>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Target Portfolio</label>
+                <select
+                  value={proposalPortfolioId}
+                  onChange={(e) => setProposalPortfolioId(e.target.value)}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {portfolios.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Total Investment Amount ($)</label>
+                <input
+                  type="number"
+                  value={proposalAmount}
+                  onChange={(e) => setProposalAmount(e.target.value)}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  placeholder="e.g. 10000"
+                />
+                {selectedTickers.size > 0 && Number(proposalAmount) > 0 && (
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    ≈ ${Math.round(Number(proposalAmount) / selectedTickers.size).toLocaleString()} per position · adjust shares in Proposals
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setProposalDialogOpen(false)}
+                className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createProposal}
+                disabled={!proposalAmount || Number(proposalAmount) <= 0}
+                className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                Create Proposal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Opportunity Scanner</h1>
@@ -569,6 +679,17 @@ export default function ScannerPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-secondary/50">
+                  <th className="px-3 py-2 w-8">
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={sorted.length > 0 && sorted.every((i) => selectedTickers.has(i.ticker))}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedTickers(new Set(sorted.map((i) => i.ticker)));
+                        else setSelectedTickers(new Set());
+                      }}
+                    />
+                  </th>
                   {[
                     { key: "rank", label: "#" },
                     { key: "ticker", label: "Ticker" },
@@ -608,6 +729,19 @@ export default function ScannerPage() {
                         expandedRow === item.ticker ? "bg-secondary/50" : "hover:bg-secondary/30"
                       )}
                     >
+                      <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          className="rounded"
+                          checked={selectedTickers.has(item.ticker)}
+                          onChange={(e) => {
+                            const next = new Set(selectedTickers);
+                            if (e.target.checked) next.add(item.ticker);
+                            else next.delete(item.ticker);
+                            setSelectedTickers(next);
+                          }}
+                        />
+                      </td>
                       <td className="px-3 py-2.5 text-xs tabular-nums text-muted-foreground">{item.rank}</td>
                       <td className="px-3 py-2.5">
                         <TickerBadge symbol={item.ticker} assetType={item.asset_class} />
@@ -642,7 +776,7 @@ export default function ScannerPage() {
                     </tr>
                     {expandedRow === item.ticker && (
                       <tr key={`${item.ticker}-exp`} className="border-b border-border/50 bg-secondary/20">
-                        <td colSpan={10} className="px-4 py-3">
+                        <td colSpan={11} className="px-4 py-3">
                           <div className="grid grid-cols-4 gap-4 text-xs">
                             {[
                               { label: "Valuation/Yield", val: item.score_details.valuation_yield_score },
@@ -667,6 +801,32 @@ export default function ScannerPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Proposal action bar */}
+      {results && !scanning && selectedTickers.size > 0 && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 flex items-center gap-4">
+          <span className="text-sm font-medium">{selectedTickers.size} position{selectedTickers.size > 1 ? "s" : ""} selected</span>
+          <div className="flex flex-wrap gap-1">
+            {Array.from(selectedTickers).map((t) => (
+              <span key={t} className="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-mono font-medium text-primary">{t}</span>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setSelectedTickers(new Set())}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => setProposalDialogOpen(true)}
+              className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              Create Proposal →
+            </button>
           </div>
         </div>
       )}

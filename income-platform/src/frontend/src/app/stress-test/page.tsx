@@ -170,9 +170,9 @@ const COLUMNS: ColumnDef<PositionImpact>[] = [
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function StressTestPage() {
+export function StressTestContent({ defaultPortfolioId }: { defaultPortfolioId?: string }) {
   const { portfolios } = usePortfolio();
-  const [portfolioId, setPortfolioId] = useState(portfolios[0]?.id ?? "p1");
+  const [portfolioId, setPortfolioId] = useState(defaultPortfolioId ?? portfolios[0]?.id ?? "p1");
   const [scenarioId, setScenarioId] = useState("RATE_HIKE_200BPS");
   const [customParams, setCustomParams] = useState<CustomParams>({
     equity_shock_pct: "-20",
@@ -363,4 +363,8 @@ export default function StressTestPage() {
       )}
     </div>
   );
+}
+
+export default function StressTestPage() {
+  return <StressTestContent />;
 }

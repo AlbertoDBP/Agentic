@@ -81,9 +81,9 @@ const HORIZONS = [3, 6, 12, 24, 36, 60];
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function IncomeSimulationPage() {
+export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?: string }) {
   const { portfolios } = usePortfolio();
-  const [portfolioId, setPortfolioId] = useState(portfolios[0]?.id ?? "p1");
+  const [portfolioId, setPortfolioId] = useState(defaultPortfolioId ?? portfolios[0]?.id ?? "p1");
   const [horizonMonths, setHorizonMonths] = useState(12);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ProjectionResult | null>(null);
@@ -269,4 +269,8 @@ export default function IncomeSimulationPage() {
       )}
     </div>
   );
+}
+
+export default function IncomeSimulationPage() {
+  return <SimulationContent />;
 }

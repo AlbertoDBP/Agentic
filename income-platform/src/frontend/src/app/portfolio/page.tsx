@@ -15,10 +15,23 @@ import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Tras
 import { useState, useMemo, useEffect, useRef, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { HD_POSITIONS, HD_MARKET_DATA, type MarketData } from "@/lib/mock-portfolio-data";
+import { VulnerabilityContent } from "@/app/vulnerability/page";
+import { StressTestContent } from "@/app/stress-test/page";
+import { SimulationContent } from "@/app/income-simulation/page";
 
 const MOCK_POSITIONS = HD_POSITIONS;
 
-type PortfolioTab = "summary" | "positions" | "health" | "market";
+type PortfolioTab = "summary" | "positions" | "health" | "market" | "vulnerability" | "stress-test" | "simulation";
+
+const TAB_LABELS: Record<PortfolioTab, string> = {
+  summary: "Summary",
+  positions: "Holdings",
+  health: "Health",
+  market: "Market",
+  vulnerability: "Vulnerability",
+  "stress-test": "Stress Test",
+  simulation: "Simulation",
+};
 
 const ASSET_TYPES = ["Common Stock", "BDC", "CEF", "MLP", "ETF", "Preferred", "Bond"];
 const FREQUENCIES = ["Monthly", "Quarterly", "Semi-Annual", "Annual"];
@@ -683,16 +696,16 @@ function PortfolioContent() {
 
       {/* Sub-tabs */}
       <div className="flex items-center gap-4 border-b border-border">
-        {(["summary", "positions", "health", "market"] as PortfolioTab[]).map((t) => (
+        {(["summary", "positions", "health", "market", "vulnerability", "stress-test", "simulation"] as PortfolioTab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={cn(
-              "border-b-2 px-1 pb-2 text-sm font-medium capitalize transition-colors",
+              "border-b-2 px-1 pb-2 text-sm font-medium transition-colors",
               tab === t ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
-            {t}
+            {TAB_LABELS[t]}
           </button>
         ))}
         {qualityFilter && (
@@ -990,6 +1003,21 @@ function PortfolioContent() {
           </div>
           <DataTable columns={marketColumns} data={MOCK_MARKET_DATA} storageKey="portfolio-market" onRowClick={(row) => router.push(`/portfolio/${row.symbol}`)} />
         </>
+      )}
+
+      {/* ── Vulnerability ── */}
+      {tab === "vulnerability" && (
+        <VulnerabilityContent defaultPortfolioId={portfolioId} />
+      )}
+
+      {/* ── Stress Test ── */}
+      {tab === "stress-test" && (
+        <StressTestContent defaultPortfolioId={portfolioId} />
+      )}
+
+      {/* ── Income Simulation ── */}
+      {tab === "simulation" && (
+        <SimulationContent defaultPortfolioId={portfolioId} />
       )}
     </div>
   );

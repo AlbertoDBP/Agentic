@@ -13,9 +13,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ScanLine,
-  Zap,
-  PieChart,
-  BarChart3,
   Leaf,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,9 +26,6 @@ const NAV_ITEMS = [
   { href: "/alerts",             label: "Alerts",             icon: Bell },
   { href: "/proposals",          label: "Proposals",          icon: FileCheck },
   { href: "/scanner",            label: "Scanner",            icon: ScanLine },
-  { href: "/stress-test",        label: "Stress Test",        icon: Zap },
-  { href: "/income-simulation",  label: "Income Simulation",  icon: PieChart },
-  { href: "/vulnerability",      label: "Vulnerability",      icon: BarChart3 },
   { href: "/tax",                label: "Tax Optimizer",      icon: Leaf },
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/settings", label: "Settings", icon: Settings },

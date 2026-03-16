@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calculator, Leaf, TrendingDown, RefreshCw, DollarSign, Info } from "lucide-react";
+import { Calculator, Leaf, TrendingDown, RefreshCw, DollarSign, Info, ArrowRight, FileText } from "lucide-react";
 import { apiPost, apiGet } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { TickerBadge } from "@/components/ticker-badge";
+import { usePortfolio } from "@/lib/portfolio-context";
+import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,8 +106,13 @@ const FILING_LABELS: Record<FilingStatus, string> = {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function TaxPage() {
+  const { portfolios } = usePortfolio();
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("calculate");
   const [loading, setLoading] = useState(false);
+  const [selectedHarvest, setSelectedHarvest] = useState<Set<string>>(new Set());
+  const [harvestDialogOpen, setHarvestDialogOpen] = useState(false);
+  const [harvestPortfolioId, setHarvestPortfolioId] = useState(portfolios[0]?.id ?? "p1");
 
   // Calculate tab state
   const [calcInput, setCalcInput] = useState<TaxCalcInput>({
@@ -161,8 +168,83 @@ export default function TaxPage() {
     }
   }, [tab]);
 
+  const createHarvestProposal = () => {
+    const symbols = Array.from(selectedHarvest);
+    const positions = symbols.map((sym) => {
+      const row = harvestResults.find((r) => r.symbol === sym);
+      return {
+        symbol: sym,
+        name: sym,
+        asset_type: row?.asset_class ?? "ETF",
+        shares: -1,
+        entry_price: Math.abs(row?.unrealized_loss ?? 0),
+        current_price: 0,
+        yield_estimate: 0,
+        score: 0,
+      };
+    });
+    const proposal = {
+      id: `harvest-${Date.now()}`,
+      portfolio_id: harvestPortfolioId,
+      proposal_type: "TRIM",
+      summary: `Tax-loss harvest: sell ${symbols.join(", ")} to realize losses. Est. tax savings: $${harvestResults.filter(r => symbols.includes(r.symbol)).reduce((s, r) => s + r.tax_savings_est, 0).toLocaleString()}. Re-purchase equivalent positions after 30-day wash-sale window.`,
+      status: "PENDING",
+      created_at: new Date().toISOString(),
+      analyst_source: "Tax Optimizer",
+      analyst_sentiment: "Tax-driven",
+      risk_flags: harvestResults.filter(r => symbols.includes(r.symbol) && r.wash_sale_risk).map(r => `${r.symbol} wash-sale risk`),
+      positions,
+    };
+    try {
+      const existing = JSON.parse(localStorage.getItem("pendingProposals") ?? "[]");
+      localStorage.setItem("pendingProposals", JSON.stringify([...existing, proposal]));
+    } catch { /* ignore */ }
+    setHarvestDialogOpen(false);
+    setSelectedHarvest(new Set());
+    router.push("/proposals");
+  };
+
   return (
     <div className="space-y-4">
+      {/* Harvest proposal dialog */}
+      {harvestDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl space-y-4">
+            <h2 className="text-base font-semibold">Create Tax-Loss Harvest Proposal</h2>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Positions to harvest ({selectedHarvest.size})</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from(selectedHarvest).map((t) => (
+                  <span key={t} className="rounded bg-red-400/10 px-2 py-0.5 text-xs font-mono font-medium text-red-400">{t}</span>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Source Portfolio</label>
+              <select
+                value={harvestPortfolioId}
+                onChange={(e) => setHarvestPortfolioId(e.target.value)}
+                className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                {portfolios.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-md border border-emerald-400/30 bg-emerald-400/5 px-3 py-2">
+              <p className="text-xs text-emerald-400 font-medium">
+                Est. total tax savings: ${harvestResults.filter(r => selectedHarvest.has(r.symbol)).reduce((s, r) => s + r.tax_savings_est, 0).toLocaleString()}
+              </p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">A TRIM proposal will be created — re-purchase equivalent positions after the 30-day wash-sale window.</p>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setHarvestDialogOpen(false)} className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-secondary transition-colors">Cancel</button>
+              <button onClick={createHarvestProposal} className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">Create Proposal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div>
         <h1 className="text-xl font-semibold">Tax Optimizer</h1>
         <p className="text-xs text-muted-foreground mt-0.5">
@@ -385,6 +467,7 @@ export default function TaxPage() {
                 <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">To</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Reason</th>
                 <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Est. Annual Savings</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -407,6 +490,34 @@ export default function TaxPage() {
                   <td className="px-4 py-3 text-right tabular-nums text-xs font-medium text-income">
                     {row.savings_est > 0 ? formatCurrency(row.savings_est) : "—"}
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    {row.action === "MOVE" && (
+                      <button
+                        onClick={() => {
+                          const proposal = {
+                            id: `transfer-${Date.now()}-${row.symbol}`,
+                            portfolio_id: portfolios[0]?.id ?? "p1",
+                            proposal_type: "REBALANCE",
+                            summary: `In-kind transfer: Move ${row.symbol} from ${ACCOUNT_LABELS[row.from as AccountType] || row.from} → ${ACCOUNT_LABELS[row.to as AccountType] || row.to}. ${row.reason}. Est. annual tax savings: $${row.savings_est.toLocaleString()}.`,
+                            status: "PENDING",
+                            created_at: new Date().toISOString(),
+                            analyst_source: "Tax Optimizer",
+                            analyst_sentiment: "Tax-driven",
+                            risk_flags: [],
+                            positions: [{ symbol: row.symbol, name: row.symbol, asset_type: "", shares: 1, entry_price: 0, current_price: 0, yield_estimate: 0, score: 0 }],
+                          };
+                          try {
+                            const existing = JSON.parse(localStorage.getItem("pendingProposals") ?? "[]");
+                            localStorage.setItem("pendingProposals", JSON.stringify([...existing, proposal]));
+                          } catch { /* ignore */ }
+                          router.push("/proposals");
+                        }}
+                        className="rounded-md border border-border px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                      >
+                        Propose Transfer
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -427,10 +538,29 @@ export default function TaxPage() {
             </div>
           </div>
 
+          {selectedHarvest.size > 0 && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 flex items-center justify-between">
+              <span className="text-sm font-medium">{selectedHarvest.size} position{selectedHarvest.size > 1 ? "s" : ""} selected · Est. savings: ${harvestResults.filter(r => selectedHarvest.has(r.symbol)).reduce((s, r) => s + r.tax_savings_est, 0).toLocaleString()}</span>
+              <div className="flex gap-2">
+                <button onClick={() => setSelectedHarvest(new Set())} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
+                <button onClick={() => setHarvestDialogOpen(true)} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors">Create Harvest Proposal →</button>
+              </div>
+            </div>
+          )}
+
           <div className={cn("rounded-lg border border-border bg-card", harvestLoading && "opacity-50")}>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-secondary/50">
+                  <th className="px-4 py-2 w-8">
+                    <input type="checkbox" className="rounded"
+                      checked={harvestResults.length > 0 && harvestResults.every(r => selectedHarvest.has(r.symbol))}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedHarvest(new Set(harvestResults.map(r => r.symbol)));
+                        else setSelectedHarvest(new Set());
+                      }}
+                    />
+                  </th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Symbol</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Class</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Unrealized Loss</th>
@@ -443,6 +573,17 @@ export default function TaxPage() {
               <tbody>
                 {harvestResults.map((row) => (
                   <tr key={row.symbol} className="border-b border-border/50 hover:bg-secondary/20">
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" className="rounded"
+                        checked={selectedHarvest.has(row.symbol)}
+                        onChange={(e) => {
+                          const next = new Set(selectedHarvest);
+                          if (e.target.checked) next.add(row.symbol);
+                          else next.delete(row.symbol);
+                          setSelectedHarvest(next);
+                        }}
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <TickerBadge symbol={row.symbol} assetType={row.asset_class} />
                     </td>
@@ -473,14 +614,14 @@ export default function TaxPage() {
               </tbody>
               <tfoot>
                 <tr className="bg-secondary/30">
-                  <td colSpan={2} className="px-4 py-2 text-xs font-medium text-muted-foreground text-right">Total</td>
+                  <td colSpan={3} className="px-4 py-2 text-xs font-medium text-muted-foreground text-right">Total</td>
                   <td className="px-4 py-2 text-right tabular-nums text-sm font-semibold text-red-400">
                     {formatCurrency(harvestResults.reduce((s, r) => s + r.unrealized_loss, 0))}
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums text-sm font-semibold text-income">
                     {formatCurrency(harvestResults.reduce((s, r) => s + r.tax_savings_est, 0))}
                   </td>
-                  <td colSpan={3}></td>
+                  <td colSpan={4}></td>
                 </tr>
               </tfoot>
             </table>
