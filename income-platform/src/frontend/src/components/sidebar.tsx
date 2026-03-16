@@ -12,6 +12,11 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
+  ScanLine,
+  Zap,
+  PieChart,
+  BarChart3,
+  Leaf,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PortfolioSwitcher } from "./portfolio-switcher";
@@ -23,6 +28,11 @@ const NAV_ITEMS = [
   { href: "/projection", label: "Projection", icon: TrendingUp },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/proposals", label: "Proposals", icon: FileCheck },
+  { href: "/scanner",           label: "Scanner",             icon: ScanLine },
+  { href: "/stress-test",       label: "Stress Test",         icon: Zap },
+  { href: "/income-projection", label: "Income Projection",   icon: PieChart },
+  { href: "/vulnerability",     label: "Vulnerability",       icon: BarChart3 },
+  { href: "/tax",               label: "Tax Optimizer",       icon: Leaf },
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

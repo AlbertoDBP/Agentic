@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
+from app.api.cache import router as cache_router
 from app.api.health import router as health_router
 from app.api.scanner import router as scanner_router
 from app.auth import verify_token
@@ -50,3 +51,4 @@ app = FastAPI(
 
 app.include_router(health_router)
 app.include_router(scanner_router, dependencies=[Depends(verify_token)])
+app.include_router(cache_router)

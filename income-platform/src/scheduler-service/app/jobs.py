@@ -99,3 +99,10 @@ def job_smart_alert_scan():
     Schedule: Daily at 20:00 ET.
     """
     _call("POST", f"{settings.agent11_url}/alerts/scan", "Smart Alert Scan")
+
+
+def job_market_cache_refresh():
+    """Agent 07 — Refresh market_data_cache for all tracked tickers.
+    Schedule: Every weekday at 06:30 ET (before market open, uses prior-day close data).
+    """
+    _call("POST", f"{settings.agent07_url}/cache/refresh", "Market Cache Refresh")

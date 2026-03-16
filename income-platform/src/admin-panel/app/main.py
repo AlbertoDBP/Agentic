@@ -2,6 +2,7 @@
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
@@ -12,11 +13,18 @@ logging.basicConfig(level=settings.log_level, format="%(asctime)s %(name)s %(lev
 
 app = FastAPI(title="Income Platform Admin", docs_url=None, redoc_url=None)
 app.add_middleware(GZipMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:8200"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 templates = Jinja2Templates(directory="app/templates")
 
 # ── Import and mount routes ──
-from app.routes import dashboard, services, scheduler, portfolio, alerts, proposals, analysts  # noqa: E402
+from app.routes import dashboard, services, scheduler, portfolio, alerts, proposals, analysts, proxy  # noqa: E402
 
 app.include_router(dashboard.router)
 app.include_router(services.router)
@@ -25,6 +33,7 @@ app.include_router(portfolio.router)
 app.include_router(alerts.router)
 app.include_router(proposals.router)
 app.include_router(analysts.router)
+app.include_router(proxy.router)
 
 
 @app.get("/health")

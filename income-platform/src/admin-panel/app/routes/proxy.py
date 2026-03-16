@@ -1,0 +1,156 @@
+"""
+Admin Panel — JSON proxy routes for Agent 05 (Tax), 06 (Scenario), 07 (Scanner).
+The Next.js frontend calls these endpoints; the admin panel forwards with auth.
+
+Routes:
+  /api/scanner/*   → Agent 07 (port 8007)
+  /api/scenarios/* → Agent 06 (port 8006)
+  /api/tax/*       → Agent 05 (port 8005)
+"""
+from __future__ import annotations
+
+import logging
+
+import httpx
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from app.auth import auth_headers
+from app.config import settings
+
+logger = logging.getLogger("admin.proxy")
+router = APIRouter(prefix="/api")
+
+# Increase timeout for scan operations (scoring can take a while)
+_SCAN_TIMEOUT = 120
+_DEFAULT_TIMEOUT = 30
+
+
+def _base(service: str) -> str:
+    return {
+        "scanner": settings.agent07_url,
+        "scenarios": settings.agent06_url,
+        "tax": settings.agent05_url,
+    }[service]
+
+
+async def _proxy(
+    method: str,
+    service: str,
+    sub_path: str,
+    request: Request,
+    timeout: int = _DEFAULT_TIMEOUT,
+) -> JSONResponse:
+    """Forward a request to the target service with auth headers."""
+    url = f"{_base(service)}{sub_path}"
+    headers = auth_headers()
+
+    # Forward query params
+    query = str(request.url.query)
+    if query:
+        url = f"{url}?{query}"
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if method == "GET":
+                resp = await client.get(url, headers=headers)
+            else:
+                body = await request.body()
+                resp = await client.post(
+                    url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    content=body,
+                )
+
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text[:500])
+        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail=f"{service} service timed out")
+    except Exception as exc:
+        logger.error("Proxy %s %s → %s", method, url, exc)
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+# ─── Scanner (Agent 07) ───────────────────────────────────────────────────────
+
+@router.post("/scanner/scan")
+async def scanner_scan(request: Request):
+    return await _proxy("POST", "scanner", "/scan", request, timeout=_SCAN_TIMEOUT)
+
+
+@router.get("/scanner/scan/{scan_id}")
+async def scanner_get_scan(scan_id: str, request: Request):
+    return await _proxy("GET", "scanner", f"/scan/{scan_id}", request)
+
+
+@router.get("/scanner/universe")
+async def scanner_universe(request: Request):
+    return await _proxy("GET", "scanner", "/universe", request)
+
+
+@router.post("/scanner/cache/refresh")
+async def scanner_cache_refresh(request: Request):
+    return await _proxy("POST", "scanner", "/cache/refresh", request, timeout=_SCAN_TIMEOUT)
+
+
+# ─── Scenarios (Agent 06) ─────────────────────────────────────────────────────
+
+@router.post("/scenarios/stress-test")
+async def scenarios_stress_test(request: Request):
+    return await _proxy("POST", "scenarios", "/scenarios/stress-test", request, timeout=_SCAN_TIMEOUT)
+
+
+@router.post("/scenarios/income-projection")
+async def scenarios_income_projection(request: Request):
+    return await _proxy("POST", "scenarios", "/scenarios/income-projection", request, timeout=_SCAN_TIMEOUT)
+
+
+@router.post("/scenarios/vulnerability")
+async def scenarios_vulnerability(request: Request):
+    return await _proxy("POST", "scenarios", "/scenarios/vulnerability", request, timeout=_SCAN_TIMEOUT)
+
+
+@router.get("/scenarios/library")
+async def scenarios_library(request: Request):
+    return await _proxy("GET", "scenarios", "/scenarios/library", request)
+
+
+# ─── Tax (Agent 05) ──────────────────────────────────────────────────────────
+
+@router.get("/tax/profile/{symbol}")
+async def tax_profile_get(symbol: str, request: Request):
+    return await _proxy("GET", "tax", f"/tax/profile/{symbol}", request)
+
+
+@router.post("/tax/profile")
+async def tax_profile_post(request: Request):
+    return await _proxy("POST", "tax", "/tax/profile", request)
+
+
+@router.post("/tax/calculate")
+async def tax_calculate(request: Request):
+    return await _proxy("POST", "tax", "/tax/calculate", request)
+
+
+@router.get("/tax/calculate/{symbol}")
+async def tax_calculate_get(symbol: str, request: Request):
+    return await _proxy("GET", "tax", f"/tax/calculate/{symbol}", request)
+
+
+@router.post("/tax/optimize")
+async def tax_optimize(request: Request):
+    return await _proxy("POST", "tax", "/tax/optimize", request, timeout=_SCAN_TIMEOUT)
+
+
+@router.post("/tax/harvest")
+async def tax_harvest(request: Request):
+    return await _proxy("POST", "tax", "/tax/harvest", request)
+
+
+@router.get("/tax/asset-classes")
+async def tax_asset_classes(request: Request):
+    return await _proxy("GET", "tax", "/tax/asset-classes", request)

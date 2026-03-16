@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from app.config import settings
 from app.jobs import (
     job_classify_new,
+    job_market_cache_refresh,
     job_market_data_refresh,
     job_nav_monitor_scan,
     job_newsletter_harvest,
@@ -34,6 +35,11 @@ scheduler = BackgroundScheduler(timezone="America/New_York")
 # ═══════════════════════════════════════════════════════════════════════
 JOBS = [
     # (job_func, cron_kwargs, id, description)
+    (job_market_cache_refresh,
+     {"day_of_week": "mon-fri", "hour": 6, "minute": 30},
+     "market-cache-refresh",
+     "Refresh market data cache (Mon-Fri 06:30 ET)"),
+
     (job_market_data_refresh,
      {"day_of_week": "mon-fri", "hour": 18, "minute": 30},
      "market-data-refresh",

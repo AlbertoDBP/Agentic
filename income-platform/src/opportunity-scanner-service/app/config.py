@@ -29,5 +29,11 @@ class Settings(BaseSettings):
     quality_gate_threshold: float = 70.0   # VETO gate score floor
     max_tickers_per_scan: int = 200
 
+    # FMP (for market data cache)
+    fmp_api_key: str = ""
+    fmp_base_url: str = "https://financialmodelingprep.com/stable"
+    fmp_batch_size: int = 50          # tickers per FMP batch request
+    fmp_request_timeout: float = 30.0
+
 
 settings = Settings()

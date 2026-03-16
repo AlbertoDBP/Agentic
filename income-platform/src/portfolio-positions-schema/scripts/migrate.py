@@ -478,6 +478,60 @@ async def run_migration():
                 (portfolio_id, computed_at DESC)
         """)
 
+        # ----------------------------------------------------------------
+        # PHASE 5 — Market Data Cache
+        # ----------------------------------------------------------------
+        print("\n[Phase 5] Market data cache...")
+
+        print("  Creating platform_shared.market_data_cache...")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS platform_shared.market_data_cache (
+                symbol              TEXT PRIMARY KEY
+                                        REFERENCES platform_shared.securities(symbol)
+                                        ON DELETE CASCADE,
+                -- Price & Market
+                price               NUMERIC(12,4),
+                price_change_pct    NUMERIC(8,4),
+                volume_avg_10d      BIGINT,
+                market_cap_m        NUMERIC(14,2),
+                pe_ratio            NUMERIC(10,2),
+                price_to_book       NUMERIC(10,4),
+                beta                NUMERIC(8,4),
+                week52_high         NUMERIC(12,4),
+                week52_low          NUMERIC(12,4),
+                -- Income
+                dividend_yield      NUMERIC(8,4),
+                payout_ratio        NUMERIC(8,4),
+                chowder_number      NUMERIC(8,2),
+                ex_div_date         DATE,
+                pay_date            DATE,
+                div_frequency       TEXT,
+                -- CEF / BDC specific
+                nav_value           NUMERIC(12,4),
+                nav_discount_pct    NUMERIC(8,4),
+                coverage_ratio      NUMERIC(8,4),
+                leverage_pct        NUMERIC(8,4),
+                -- Tracking
+                is_tracked          BOOLEAN NOT NULL DEFAULT TRUE,
+                track_reason        TEXT,
+                snapshot_date       DATE NOT NULL DEFAULT CURRENT_DATE,
+                fetched_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mdc_snapshot_date
+                ON platform_shared.market_data_cache (snapshot_date)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mdc_yield
+                ON platform_shared.market_data_cache (dividend_yield)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mdc_tracked
+                ON platform_shared.market_data_cache (is_tracked)
+                WHERE is_tracked = TRUE
+        """)
+
         await conn.execute("COMMIT")
         print("\n✅ Migration complete.")
         print("\nTables created:")
@@ -486,7 +540,8 @@ async def run_migration():
         print("  Phase 2: accounts, portfolios, portfolio_constraints")
         print("  Phase 3: positions, transactions, dividend_events")
         print("  Phase 4: portfolio_income_metrics, portfolio_health_scores")
-        print("\nTotal: 12 tables")
+        print("  Phase 5: market_data_cache")
+        print("\nTotal: 13 tables")
 
     except Exception as e:
         await conn.execute("ROLLBACK")

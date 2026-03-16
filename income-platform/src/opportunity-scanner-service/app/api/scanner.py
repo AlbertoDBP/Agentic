@@ -17,6 +17,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import ScanResult
 from app.scanner.engine import run_scan
+from app.scanner.market_cache import apply_market_filters, fetch_and_upsert, get_stale_tickers
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,20 @@ router = APIRouter()
 class ScanRequest(BaseModel):
     tickers: List[str] = Field(..., min_length=1, description="Ticker symbols to scan")
     min_score: float = Field(0.0, ge=0.0, le=100.0, description="Minimum total score (0–100)")
-    min_yield: float = Field(0.0, ge=0.0, description="Minimum annual yield (informational filter)")
     asset_classes: Optional[List[str]] = Field(None, description="Restrict to these asset classes")
     quality_gate_only: bool = Field(False, description="If true, exclude tickers with score < 70")
+
+    # Group 2 — market data filters (applied against market_data_cache)
+    min_yield: float = Field(0.0, ge=0.0, description="Minimum annual dividend yield (%)")
+    max_payout_ratio: Optional[float] = Field(None, ge=0.0, le=200.0, description="Max payout ratio (%)")
+    min_volume: Optional[int] = Field(None, ge=0, description="Min average daily volume (shares)")
+    min_market_cap_m: Optional[float] = Field(None, ge=0.0, description="Min market cap ($M)")
+    max_market_cap_m: Optional[float] = Field(None, ge=0.0, description="Max market cap ($M)")
+    min_price: Optional[float] = Field(None, ge=0.0, description="Min price ($)")
+    max_price: Optional[float] = Field(None, ge=0.0, description="Max price ($)")
+    max_pe: Optional[float] = Field(None, ge=0.0, description="Max P/E ratio")
+    min_nav_discount_pct: Optional[float] = Field(None, description="Min NAV discount (negative = discount, e.g. -5 means ≥5% discount)")
+    use_universe: bool = Field(False, description="If true, scan full active universe instead of supplied tickers")
 
     model_config = {"json_schema_extra": {
         "example": {
@@ -78,14 +90,72 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
     from results when quality_gate_only=True. When quality_gate_only=False they
     appear in results but are clearly flagged.
     """
-    if len(request.tickers) > settings.max_tickers_per_scan:
+    # ── Resolve ticker universe ──────────────────────────────────────────
+    tickers = [t.upper() for t in request.tickers]
+
+    if request.use_universe:
+        rows = db.execute(
+            text(
+                "SELECT symbol FROM platform_shared.securities "
+                "WHERE is_active = TRUE ORDER BY symbol"
+            )
+        ).fetchall()
+        tickers = [r[0] for r in rows]
+
+    if not tickers:
+        raise HTTPException(status_code=422, detail="No tickers to scan.")
+
+    if len(tickers) > settings.max_tickers_per_scan:
         raise HTTPException(
             status_code=422,
             detail=f"Too many tickers. Max {settings.max_tickers_per_scan} per scan.",
         )
 
+    # ── Ensure market cache is fresh ─────────────────────────────────────
+    _fresh, stale = get_stale_tickers(tickers, db)
+    if stale:
+        await fetch_and_upsert(stale, db, track_reason="scan")
+
+    # ── SQL pre-filter (Group 2) ─────────────────────────────────────────
+    any_market_filter = any([
+        request.min_yield > 0,
+        request.max_payout_ratio is not None,
+        request.min_volume is not None,
+        request.min_market_cap_m is not None,
+        request.max_market_cap_m is not None,
+        request.min_price is not None,
+        request.max_price is not None,
+        request.max_pe is not None,
+        request.min_nav_discount_pct is not None,
+    ])
+    if any_market_filter:
+        tickers = apply_market_filters(
+            tickers=tickers,
+            db=db,
+            min_yield=request.min_yield,
+            max_payout_ratio=request.max_payout_ratio,
+            min_volume=request.min_volume,
+            min_market_cap_m=request.min_market_cap_m,
+            max_market_cap_m=request.max_market_cap_m,
+            min_price=request.min_price,
+            max_price=request.max_price,
+            max_pe=request.max_pe,
+            min_nav_discount_pct=request.min_nav_discount_pct,
+        )
+    if not tickers:
+        # Return empty result immediately — no tickers passed market filters
+        return ScanResponse(
+            scan_id="00000000-0000-0000-0000-000000000000",
+            total_scanned=0,
+            total_passed=0,
+            total_vetoed=0,
+            items=[],
+            filters_applied={},
+            created_at=str(__import__("datetime").datetime.utcnow()),
+        )
+
     result = await run_scan(
-        tickers=request.tickers,
+        tickers=tickers,
         min_score=request.min_score,
         min_yield=request.min_yield,
         asset_classes=request.asset_classes,
@@ -98,6 +168,15 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
         "asset_classes": request.asset_classes,
         "quality_gate_only": request.quality_gate_only,
         "quality_gate_threshold": settings.quality_gate_threshold,
+        "max_payout_ratio": request.max_payout_ratio,
+        "min_volume": request.min_volume,
+        "min_market_cap_m": request.min_market_cap_m,
+        "max_market_cap_m": request.max_market_cap_m,
+        "min_price": request.min_price,
+        "max_price": request.max_price,
+        "max_pe": request.max_pe,
+        "min_nav_discount_pct": request.min_nav_discount_pct,
+        "use_universe": request.use_universe,
     }
 
     items_json = [
