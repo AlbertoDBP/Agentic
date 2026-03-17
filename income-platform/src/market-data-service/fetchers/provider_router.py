@@ -4,7 +4,7 @@ Priority chains (left = highest priority):
 
     get_current_price    : Polygon → FMP → yfinance
     get_daily_prices     : Polygon → yfinance
-    get_dividend_history : FMP → yfinance
+    get_dividend_history : FMP → yfinance → Polygon
     get_fundamentals     : FMP → yfinance
     get_etf_holdings     : FMP → yfinance
 
@@ -124,15 +124,13 @@ class ProviderRouter:
     async def get_dividend_history(self, symbol: str) -> list[dict]:
         """Return dividend payment history for *symbol*.
 
-        Chain: FMP (most complete dividend records) → yfinance.
-        Polygon is intentionally absent — dividend coverage is limited on the
-        Starter tier.
+        Chain: FMP → yfinance → Polygon (fallback — good for equity income symbols).
         """
         symbol = symbol.upper()
         chain  = self._build_chain(
             symbol, "get_dividend_history",
-            [self.fmp,  self.yfinance],
-            ["fmp",     "yfinance"],
+            [self.fmp,  self.yfinance, self.polygon],
+            ["fmp",     "yfinance",    "polygon"],
         )
         return await self._try_chain(f"get_dividend_history({symbol})", chain)
 
