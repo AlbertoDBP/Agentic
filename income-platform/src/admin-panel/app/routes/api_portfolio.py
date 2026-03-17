@@ -136,16 +136,19 @@ def get_positions(portfolio_id: str):
             positions = []
             for r in rows:
                 pos = dict(r._mapping)
-                # Coerce types for JSON
+                # Coerce UUIDs to str
+                for k in ("id", "portfolio_id"):
+                    if pos.get(k) is not None:
+                        pos[k] = str(pos[k])
+                # Coerce Decimal/float
                 for k in ("shares", "cost_basis", "current_value", "market_price",
                           "avg_cost", "annual_income", "yield_on_cost", "current_yield", "score"):
-                    if pos[k] is not None:
+                    if pos.get(k) is not None:
                         pos[k] = float(pos[k])
+                # Coerce datetimes
                 for k in ("price_updated_at", "updated_at"):
                     if pos.get(k):
                         pos[k] = pos[k].isoformat()
-                # Map DB field names to frontend interface names
-                pos["id"] = str(pos["id"])
                 positions.append(pos)
 
             return JSONResponse(content=positions)
