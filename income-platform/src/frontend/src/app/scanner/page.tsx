@@ -321,7 +321,7 @@ export default function ScannerPage() {
       };
     });
 
-    const hasPrices = Object.keys(priceMap).length > 0;
+    const hasPrices = Object.keys(quoteMap).length > 0;
     const proposal = {
       id: `scanner-${Date.now()}`,
       portfolio_id: proposalPortfolioId,
