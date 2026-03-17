@@ -102,7 +102,7 @@ interface Order {
   auto_execute: boolean;
   created_at: string;
   // Populated when broker execution succeeds
-  broker_orders?: { symbol: string; order_id: string; status: string; qty: number }[];
+  broker_orders?: { symbol: string; order_id: string; status: string; qty: number; error?: string }[];
   broker_error?: string;
 }
 
