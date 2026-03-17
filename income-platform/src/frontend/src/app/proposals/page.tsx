@@ -6,7 +6,8 @@ import { TickerBadge } from "@/components/ticker-badge";
 import { ScorePill } from "@/components/score-pill";
 import { formatCurrency, formatPercent, formatDateTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import { Check, X, Clock, Pencil, Minus, FileText, Zap, AlertTriangle } from "lucide-react";
+import { Check, X, Clock, Pencil, Minus, FileText, Zap, AlertTriangle, Loader2 } from "lucide-react";
+import { apiPost } from "@/lib/api";
 
 interface ProposalPosition {
   symbol: string;
@@ -100,6 +101,9 @@ interface Order {
   positions: { symbol: string; shares: number; limit_price: number }[];
   auto_execute: boolean;
   created_at: string;
+  // Populated when broker execution succeeds
+  broker_orders?: { symbol: string; order_id: string; status: string; qty: number }[];
+  broker_error?: string;
 }
 
 export default function ProposalsPage() {
@@ -135,6 +139,7 @@ export default function ProposalsPage() {
 
   // Order overlay
   const [generatedOrder, setGeneratedOrder] = useState<Order | null>(null);
+  const [executing, setExecuting] = useState(false);
 
   // Load portfolio auto-execute setting
   const getAutoExecute = (portfolioId: string): boolean => {
@@ -211,7 +216,7 @@ export default function ProposalsPage() {
   };
 
   // Accept proposal
-  const acceptProposal = (proposal: Proposal) => {
+  const acceptProposal = async (proposal: Proposal) => {
     const positions = getPositions(proposal.id);
     const autoExec = getAutoExecute(proposal.portfolio_id);
 
@@ -247,6 +252,42 @@ export default function ProposalsPage() {
     delete next[proposal.id];
     setEditedPositions(next);
     setEditingId(null);
+
+    // Auto-execute via broker API (one call per position)
+    if (autoExec) {
+      setExecuting(true);
+      try {
+        const side = order.type === "BUY" ? "buy" : "sell";
+        const results: { symbol: string; order_id: string; status: string; qty: number; error?: string }[] = [];
+        for (const p of order.positions) {
+          try {
+            const r = await apiPost<{ order_id: string; symbol: string; status: string; qty: number }>(
+              "/api/broker/orders",
+              {
+                broker: "alpaca",
+                portfolio_id: proposal.portfolio_id,
+                symbol: p.symbol,
+                side,
+                qty: p.shares,
+                order_type: "limit",
+                limit_price: p.limit_price,
+                proposal_id: proposal.id,
+              }
+            );
+            results.push({ symbol: p.symbol, order_id: r?.order_id ?? "", status: r?.status ?? "submitted", qty: p.shares });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            results.push({ symbol: p.symbol, order_id: "", status: "error", qty: p.shares, error: msg });
+          }
+        }
+        setGeneratedOrder((prev) => prev ? { ...prev, broker_orders: results } : prev);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setGeneratedOrder((prev) => prev ? { ...prev, broker_error: msg } : prev);
+      } finally {
+        setExecuting(false);
+      }
+    }
   };
 
   // Reject proposal
@@ -382,6 +423,35 @@ export default function ProposalsPage() {
               );
             })()}
 
+            {/* Broker execution results */}
+            {executing && (
+              <div className="mb-4 flex items-center gap-2 rounded-md border border-amber-400/30 bg-amber-400/5 px-3 py-2">
+                <Loader2 className="h-4 w-4 text-amber-400 animate-spin shrink-0" />
+                <p className="text-xs text-amber-400">Submitting orders to broker…</p>
+              </div>
+            )}
+            {generatedOrder.broker_orders && generatedOrder.broker_orders.length > 0 && (
+              <div className="mb-4 rounded-md border border-emerald-400/30 bg-emerald-400/5 px-3 py-2 space-y-1.5">
+                <p className="text-xs font-semibold text-emerald-400">Orders submitted to broker</p>
+                {generatedOrder.broker_orders.map((o) => (
+                  <div key={o.order_id} className="flex justify-between text-xs">
+                    <span className="font-mono font-medium">{o.symbol}</span>
+                    <span className="text-muted-foreground truncate max-w-[180px]">{o.order_id}</span>
+                    <span className={cn(
+                      "font-medium",
+                      o.status === "accepted" || o.status === "pending_new" || o.status === "new" ? "text-emerald-400" :
+                      o.error ? "text-red-400" : "text-muted-foreground"
+                    )}>{o.error ?? o.status}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {generatedOrder.broker_error && (
+              <div className="mb-4 flex items-start gap-2 rounded-md border border-red-400/30 bg-red-400/5 px-3 py-2">
+                <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-red-400">{generatedOrder.broker_error}</p>
+              </div>
+            )}
             {!generatedOrder.auto_execute && (
               <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-400/5 px-3 py-2">
                 <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
@@ -394,7 +464,8 @@ export default function ProposalsPage() {
 
             <button
               onClick={() => setGeneratedOrder(null)}
-              className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              disabled={executing}
+              className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               Done
             </button>
@@ -751,9 +822,11 @@ export default function ProposalsPage() {
                 </button>
                 <button
                   onClick={() => acceptProposal(selected)}
-                  className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                  disabled={executing}
+                  className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
                 >
-                  <Check className="h-4 w-4" /> Accept
+                  {executing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  {executing ? "Submitting…" : "Accept"}
                 </button>
                 <button
                   onClick={() => deferProposal(selected.id)}

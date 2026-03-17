@@ -11,7 +11,8 @@ import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import { ASSET_CLASS_COLORS } from "@/lib/config";
 import type { Position } from "@/lib/types";
-import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Trash2, Upload, X, Check, Download, Wallet } from "lucide-react";
+import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Trash2, Upload, X, Check, Download, Wallet, RefreshCw } from "lucide-react";
+import { apiPost } from "@/lib/api";
 import { useState, useMemo, useEffect, useRef, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { HD_POSITIONS, HD_MARKET_DATA, type MarketData } from "@/lib/mock-portfolio-data";
@@ -414,7 +415,7 @@ export default function PortfolioPage() {
 
 function PortfolioContent() {
   const router = useRouter();
-  const { activePortfolio, portfolios, setActiveId, updatePortfolio } = usePortfolio();
+  const { activePortfolio, portfolios, setActiveId, updatePortfolio, reloadPortfolios } = usePortfolio();
   const searchParams = useSearchParams();
   const qualityFilter = searchParams.get("quality");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -426,17 +427,59 @@ function PortfolioContent() {
   const [editingCash, setEditingCash] = useState(false);
   const [cashInput, setCashInput] = useState("");
 
-  // Persisted positions per portfolio
-  const [positions, setPositions] = useState<Position[]>(MOCK_POSITIONS);
-  const portfolioId = activePortfolio?.id || "p1";
+  // Broker sync
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
+
+  const syncBroker = async () => {
+    if (!activePortfolio) return;
+    setSyncLoading(true);
+    try {
+      const result = await apiPost<{ cash_balance?: number; portfolio_id?: string }>("/api/broker/sync", {
+        broker: "alpaca",
+        portfolio_id: activePortfolio.id,
+      });
+      if (result?.cash_balance !== undefined) {
+        updatePortfolio(activePortfolio.id, { cash_balance: result.cash_balance });
+      }
+      // Reload positions and portfolio totals from DB
+      await loadPositions(activePortfolio.id);
+      await reloadPortfolios();
+      const now = new Date().toLocaleTimeString();
+      setLastSynced(now);
+    } catch { /* silent — broker may not be configured */ }
+    finally { setSyncLoading(false); }
+  };
+
+  // Positions — loaded from API, localStorage used for manual edits only
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [positionsLoading, setPositionsLoading] = useState(false);
+  const portfolioId = activePortfolio?.id || "";
+
+  const loadPositions = useCallback(async (pid: string) => {
+    if (!pid) return;
+    setPositionsLoading(true);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8100"}/api/portfolios/${pid}/positions`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json() as Position[];
+        setPositions(data);
+        setPositionsLoading(false);
+        return;
+      }
+    } catch { /* fall through */ }
+    // Fallback: localStorage then mock
+    try {
+      const saved = localStorage.getItem(`positions-${pid}`);
+      if (saved) { setPositions(JSON.parse(saved)); setPositionsLoading(false); return; }
+    } catch { /* ignore */ }
+    setPositions(MOCK_POSITIONS);
+    setPositionsLoading(false);
+  }, []);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(`positions-${portfolioId}`);
-      if (saved) setPositions(JSON.parse(saved));
-      else setPositions(MOCK_POSITIONS); // fallback to mock
-    } catch { setPositions(MOCK_POSITIONS); }
-  }, [portfolioId]);
+    loadPositions(portfolioId);
+  }, [portfolioId, loadPositions]);
 
   const persistPositions = useCallback((next: Position[]) => {
     setPositions(next);
@@ -627,16 +670,35 @@ function PortfolioContent() {
             )}
           </p>
         </div>
-        <select
-          value={activePortfolio?.id || ""}
-          onChange={(e) => setActiveId(e.target.value)}
-          className="rounded-md border border-border bg-secondary px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-        >
-          {portfolios.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={syncBroker}
+            disabled={syncLoading}
+            title={lastSynced ? `Last synced: ${lastSynced}` : "Sync positions from broker"}
+            className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", syncLoading && "animate-spin")} />
+            {syncLoading ? "Syncing…" : "Sync from Broker"}
+          </button>
+          <select
+            value={activePortfolio?.id || ""}
+            onChange={(e) => setActiveId(e.target.value)}
+            className="rounded-md border border-border bg-secondary px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            {portfolios.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
+
+      {/* Loading indicator */}
+      {positionsLoading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <RefreshCw className="h-3 w-3 animate-spin" />
+          Loading positions from database…
+        </div>
+      )}
 
       {/* KPI strip */}
       <div className="grid grid-cols-6 gap-2">

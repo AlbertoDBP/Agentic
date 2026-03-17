@@ -1,0 +1,211 @@
+"""
+Admin Panel — JSON API routes for portfolio + position data.
+Reads directly from platform_shared tables.
+
+Routes:
+  GET /api/portfolios                    → list all active portfolios
+  GET /api/portfolios/{id}/positions     → all active positions for a portfolio
+  POST /api/portfolios/{id}/prices       → update market_data_cache prices (manual entry for bonds etc.)
+"""
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from sqlalchemy import text
+
+from app.database import engine
+
+logger = logging.getLogger("admin.api_portfolio")
+router = APIRouter(prefix="/api")
+
+
+def _db():
+    if not engine:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    return engine
+
+
+# ── Portfolios ────────────────────────────────────────────────────────────────
+
+@router.get("/portfolios")
+def list_portfolios():
+    """Return all active portfolios with account metadata and position count."""
+    try:
+        with _db().connect() as conn:
+            rows = conn.execute(text("""
+                SELECT
+                    po.id,
+                    po.portfolio_name        AS name,
+                    COALESCE(a.account_type, 'Unknown') AS account_type,
+                    COALESCE(a.broker, '')   AS broker,
+                    COALESCE(po.cash_balance, 0)  AS cash_balance,
+                    COALESCE(po.total_value, 0)   AS total_value,
+                    COUNT(p.id)              AS position_count,
+                    po.updated_at            AS last_updated
+                FROM platform_shared.portfolios po
+                LEFT JOIN platform_shared.accounts a  ON a.id = po.account_id
+                LEFT JOIN platform_shared.positions p
+                       ON p.portfolio_id = po.id AND p.status = 'ACTIVE'
+                WHERE po.status = 'ACTIVE'
+                GROUP BY po.id, po.portfolio_name, a.account_type, a.broker,
+                         po.cash_balance, po.total_value, po.updated_at
+                ORDER BY po.total_value DESC NULLS LAST
+            """)).fetchall()
+            portfolios = [dict(r._mapping) for r in rows]
+            # Coerce Decimal → float for JSON serialisation
+            for p in portfolios:
+                for k in ("cash_balance", "total_value"):
+                    if p[k] is not None:
+                        p[k] = float(p[k])
+                p["position_count"] = int(p["position_count"])
+                if p.get("last_updated"):
+                    p["last_updated"] = p["last_updated"].isoformat()
+            return JSONResponse(content=portfolios)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("list_portfolios error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Positions ─────────────────────────────────────────────────────────────────
+
+@router.get("/portfolios/{portfolio_id}/positions")
+def get_positions(portfolio_id: str):
+    """
+    Return all active positions for a portfolio, enriched with:
+    - securities: name, asset_type, sector
+    - market_data_cache: current price, dividend_yield
+    - income_scores: total_score, grade
+    """
+    try:
+        with _db().connect() as conn:
+            rows = conn.execute(text("""
+                SELECT
+                    p.id,
+                    p.portfolio_id,
+                    p.symbol,
+                    COALESCE(s.name, p.symbol)          AS name,
+                    COALESCE(s.asset_type, 'Unknown')   AS asset_type,
+                    COALESCE(s.sector, '')               AS sector,
+                    p.quantity                           AS shares,
+                    COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0)
+                                                         AS cost_basis,
+                    COALESCE(p.current_value, 0)         AS current_value,
+                    COALESCE(p.current_price, p.avg_cost_basis, 0)
+                                                         AS market_price,
+                    COALESCE(p.avg_cost_basis, 0)        AS avg_cost,
+                    COALESCE(p.annual_income, 0)         AS annual_income,
+                    COALESCE(p.yield_on_cost, 0)         AS yield_on_cost,
+                    COALESCE(m.dividend_yield, 0)        AS current_yield,
+                    COALESCE(sc.total_score, 0)          AS score,
+                    COALESCE(sc.grade, '')               AS grade,
+                    p.price_updated_at,
+                    p.updated_at
+                FROM platform_shared.positions p
+                LEFT JOIN platform_shared.securities s
+                       ON s.symbol = p.symbol
+                LEFT JOIN platform_shared.market_data_cache m
+                       ON m.symbol = p.symbol
+                LEFT JOIN LATERAL (
+                    SELECT total_score, grade
+                    FROM platform_shared.income_scores
+                    WHERE ticker = p.symbol
+                    ORDER BY scored_at DESC
+                    LIMIT 1
+                ) sc ON TRUE
+                WHERE p.portfolio_id = :pid
+                  AND p.status = 'ACTIVE'
+                ORDER BY p.current_value DESC NULLS LAST
+            """), {"pid": portfolio_id}).fetchall()
+
+            if not rows and portfolio_id:
+                # Check if portfolio exists
+                exists = conn.execute(
+                    text("SELECT 1 FROM platform_shared.portfolios WHERE id = :id"),
+                    {"id": portfolio_id}
+                ).fetchone()
+                if not exists:
+                    raise HTTPException(status_code=404, detail="Portfolio not found")
+
+            positions = []
+            for r in rows:
+                pos = dict(r._mapping)
+                # Coerce types for JSON
+                for k in ("shares", "cost_basis", "current_value", "market_price",
+                          "avg_cost", "annual_income", "yield_on_cost", "current_yield", "score"):
+                    if pos[k] is not None:
+                        pos[k] = float(pos[k])
+                for k in ("price_updated_at", "updated_at"):
+                    if pos.get(k):
+                        pos[k] = pos[k].isoformat()
+                # Map DB field names to frontend interface names
+                pos["id"] = str(pos["id"])
+                positions.append(pos)
+
+            return JSONResponse(content=positions)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_positions error (%s): %s", portfolio_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Manual price update (for bonds / unpriced symbols) ────────────────────────
+
+class PriceUpdate(BaseModel):
+    symbol: str
+    price: float
+    dividend_yield: Optional[float] = None
+
+
+@router.post("/portfolios/{portfolio_id}/prices")
+def update_prices(portfolio_id: str, updates: list[PriceUpdate]):
+    """
+    Manually set prices for symbols that automated feeds can't price (bonds, OTC, etc.).
+    Updates market_data_cache and positions.current_price / current_value.
+    """
+    try:
+        with _db().connect() as conn:
+            updated = []
+            for u in updates:
+                conn.execute(text("""
+                    UPDATE platform_shared.market_data_cache
+                    SET price = :price,
+                        dividend_yield = COALESCE(:dy, dividend_yield),
+                        fetched_at = NOW(),
+                        snapshot_date = CURRENT_DATE
+                    WHERE symbol = :sym
+                """), {"price": u.price, "dy": u.dividend_yield, "sym": u.symbol})
+
+                conn.execute(text("""
+                    UPDATE platform_shared.positions
+                    SET current_price = :price,
+                        current_value = ROUND(quantity * :price, 2),
+                        price_updated_at = NOW(),
+                        updated_at = NOW()
+                    WHERE symbol = :sym AND portfolio_id = :pid AND status = 'ACTIVE'
+                """), {"price": u.price, "sym": u.symbol, "pid": portfolio_id})
+                updated.append(u.symbol)
+
+            # Refresh portfolio total
+            conn.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET total_value = (
+                    SELECT COALESCE(SUM(current_value), 0) + COALESCE(cash_balance, 0)
+                    FROM platform_shared.positions
+                    WHERE portfolio_id = :pid AND status = 'ACTIVE'
+                ), updated_at = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id})
+            conn.commit()
+            return {"updated": updated}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("update_prices error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
