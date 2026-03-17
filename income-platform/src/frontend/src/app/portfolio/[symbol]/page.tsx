@@ -1,93 +1,134 @@
 "use client";
 
-import { use } from "react";
+import { use, useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, TrendingUp, DollarSign, Activity, Calendar, AlertTriangle } from "lucide-react";
+import { ArrowLeft, TrendingUp, DollarSign, Activity, AlertTriangle, Loader2 } from "lucide-react";
 import { MetricCard } from "@/components/metric-card";
 import { ScorePill } from "@/components/score-pill";
 import { AlertBadge } from "@/components/alert-badge";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import { ASSET_CLASS_COLORS } from "@/lib/config";
+import { API_BASE_URL } from "@/lib/config";
+import { usePortfolio } from "@/lib/portfolio-context";
 
-// Mock — will be replaced with API calls
-const MOCK_TICKER_DATA: Record<string, {
-  symbol: string; name: string; asset_type: string; sector: string; industry: string;
-  shares: number; cost_basis: number; current_value: number; annual_income: number;
-  yield_on_cost: number; current_yield: number; score: number; alert_count: number;
-  dividend_frequency: string; last_ex_date: string; next_ex_date: string;
-  monthly_income: number[];
-  analyst_sentiment: string; analyst_rating: string;
-  nav_discount?: number; coverage_ratio?: number;
-}> = {
-  MAIN: {
-    symbol: "MAIN", name: "Main Street Capital", asset_type: "BDC", sector: "Financials", industry: "Capital Markets",
-    shares: 500, cost_basis: 19500, current_value: 22000, annual_income: 1680,
-    yield_on_cost: 8.62, current_yield: 7.64, score: 92, alert_count: 0,
-    dividend_frequency: "Monthly", last_ex_date: "2026-02-28", next_ex_date: "2026-03-28",
-    monthly_income: [140, 140, 140, 140, 140, 140, 140, 140, 140, 140, 140, 140],
-    analyst_sentiment: "Bullish", analyst_rating: "Strong Buy",
-    nav_discount: -2.1, coverage_ratio: 1.25,
-  },
-  ARCC: {
-    symbol: "ARCC", name: "Ares Capital", asset_type: "BDC", sector: "Financials", industry: "Capital Markets",
-    shares: 800, cost_basis: 15200, current_value: 16800, annual_income: 1536,
-    yield_on_cost: 10.11, current_yield: 9.14, score: 85, alert_count: 1,
-    dividend_frequency: "Quarterly", last_ex_date: "2026-02-14", next_ex_date: "2026-05-14",
-    monthly_income: [0, 0, 384, 0, 0, 384, 0, 0, 384, 0, 0, 384],
-    analyst_sentiment: "Bullish", analyst_rating: "Buy",
-    nav_discount: -1.5, coverage_ratio: 1.18,
-  },
-  PDI: {
-    symbol: "PDI", name: "PIMCO Dynamic Income", asset_type: "CEF", sector: "Fixed Income", industry: "Bond Fund",
-    shares: 400, cost_basis: 7600, current_value: 6800, annual_income: 864,
-    yield_on_cost: 11.37, current_yield: 12.71, score: 45, alert_count: 2,
-    dividend_frequency: "Monthly", last_ex_date: "2026-03-10", next_ex_date: "2026-04-10",
-    monthly_income: [72, 72, 72, 72, 72, 72, 72, 72, 72, 72, 72, 72],
-    analyst_sentiment: "Neutral", analyst_rating: "Hold",
-    nav_discount: -8.2, coverage_ratio: 0.92,
-  },
-};
+interface Position {
+  id: string;
+  portfolio_id: string;
+  symbol: string;
+  name: string;
+  asset_type: string;
+  sector: string;
+  shares: number;
+  cost_basis: number;
+  current_value: number;
+  market_price: number;
+  avg_cost: number;
+  annual_income: number;
+  yield_on_cost: number;
+  current_yield: number;
+  score: number;
+  grade: string;
+  price_updated_at: string | null;
+  updated_at: string | null;
+}
 
 export default function TickerDetailPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = use(params);
-  const ticker = MOCK_TICKER_DATA[symbol.toUpperCase()];
+  const { activePortfolio } = usePortfolio();
 
-  if (!ticker) {
+  const [position, setPosition] = useState<Position | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activePortfolio?.id) return;
+
+    setLoading(true);
+    setError(null);
+
+    fetch(`${API_BASE_URL}/api/portfolios/${activePortfolio.id}/positions`, {
+      credentials: "include",
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`API ${res.status}`);
+        return res.json() as Promise<Position[]>;
+      })
+      .then((positions) => {
+        const match = positions.find(
+          (p) => p.symbol.toUpperCase() === symbol.toUpperCase()
+        );
+        if (match) {
+          setPosition(match);
+        } else {
+          setError(`Position not found: ${symbol.toUpperCase()}`);
+        }
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [activePortfolio?.id, symbol]);
+
+  const backLink = (
+    <Link
+      href="/portfolio"
+      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+    >
+      <ArrowLeft className="h-4 w-4" /> Back to Portfolio
+    </Link>
+  );
+
+  if (loading) {
     return (
       <div className="space-y-4">
-        <Link href="/portfolio" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" /> Back to Portfolio
-        </Link>
-        <p className="text-muted-foreground">Position not found: {symbol}</p>
+        {backLink}
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Loading {symbol.toUpperCase()}…</span>
+        </div>
       </div>
     );
   }
 
-  const gain = ticker.current_value - ticker.cost_basis;
-  const gainPct = ticker.cost_basis > 0 ? (gain / ticker.cost_basis) * 100 : 0;
-  const color = ASSET_CLASS_COLORS[ticker.asset_type] || "#64748b";
+  if (error || !position) {
+    return (
+      <div className="space-y-4">
+        {backLink}
+        <p className="text-muted-foreground">{error ?? `Position not found: ${symbol}`}</p>
+      </div>
+    );
+  }
+
+  const gain = position.current_value - position.cost_basis;
+  const gainPct = position.cost_basis > 0 ? (gain / position.cost_basis) * 100 : 0;
+  const color = ASSET_CLASS_COLORS[position.asset_type] || "#64748b";
+  const currentPrice = position.market_price || (position.shares > 0 ? position.current_value / position.shares : 0);
+  const avgCostPerShare = position.shares > 0 ? position.cost_basis / position.shares : position.avg_cost;
+
+  // Build monthly income bars based on annual_income (flat monthly for simplicity; real data would need dividend calendar)
+  const monthlyAmt = position.annual_income / 12;
+  const monthlyIncome = Array(12).fill(monthlyAmt);
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <Link href="/portfolio" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-3">
-          <ArrowLeft className="h-4 w-4" /> Back to Portfolio
-        </Link>
-        <div className="flex items-center gap-3">
+        {backLink}
+        <div className="flex items-center gap-3 mt-3">
           <span className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
-          <h1 className="text-2xl font-semibold">{ticker.symbol}</h1>
-          <span className="rounded bg-secondary px-2 py-0.5 text-xs font-medium">{ticker.asset_type}</span>
-          {ticker.score !== undefined && <ScorePill score={ticker.score} />}
-          {ticker.alert_count > 0 && <AlertBadge severity="HIGH" count={ticker.alert_count} />}
+          <h1 className="text-2xl font-semibold">{position.symbol}</h1>
+          <span className="rounded bg-secondary px-2 py-0.5 text-xs font-medium">{position.asset_type}</span>
+          {position.score > 0 && <ScorePill score={position.score} />}
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">{ticker.name} · {ticker.sector} · {ticker.industry}</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {position.name}
+          {position.sector ? ` · ${position.sector}` : ""}
+          {position.grade ? ` · Grade ${position.grade}` : ""}
+        </p>
       </div>
 
       {/* KPI strip */}
       <div className="grid grid-cols-6 gap-3">
-        <MetricCard label="Current Value" value={formatCurrency(ticker.current_value)} icon={DollarSign} />
-        <MetricCard label="Cost Basis" value={formatCurrency(ticker.cost_basis)} />
+        <MetricCard label="Current Value" value={formatCurrency(position.current_value)} icon={DollarSign} />
+        <MetricCard label="Cost Basis" value={formatCurrency(position.cost_basis)} />
         <MetricCard
           label="Gain/Loss"
           value={`${gain >= 0 ? "+" : ""}${formatCurrency(gain)}`}
@@ -95,9 +136,9 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           deltaType={gain >= 0 ? "positive" : "negative"}
           icon={TrendingUp}
         />
-        <MetricCard label="Annual Income" value={formatCurrency(ticker.annual_income)} icon={DollarSign} />
-        <MetricCard label="Yield on Cost" value={formatPercent(ticker.yield_on_cost)} icon={Activity} />
-        <MetricCard label="Current Yield" value={formatPercent(ticker.current_yield)} />
+        <MetricCard label="Annual Income" value={formatCurrency(position.annual_income)} icon={DollarSign} />
+        <MetricCard label="Yield on Cost" value={formatPercent(position.yield_on_cost * 100)} icon={Activity} />
+        <MetricCard label="Current Yield" value={formatPercent(position.current_yield * 100)} />
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -106,13 +147,17 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Position Details</h2>
           <dl className="space-y-2.5 text-sm">
             {[
-              ["Shares", ticker.shares.toLocaleString()],
-              ["Avg Cost/Share", formatCurrency(ticker.cost_basis / ticker.shares)],
-              ["Current Price", formatCurrency(ticker.current_value / ticker.shares)],
-              ["Weight", "—"],
-              ["Div Frequency", ticker.dividend_frequency],
-              ["Last Ex-Date", ticker.last_ex_date],
-              ["Next Ex-Date", ticker.next_ex_date],
+              ["Shares", position.shares.toLocaleString()],
+              ["Avg Cost/Share", formatCurrency(avgCostPerShare)],
+              ["Current Price", formatCurrency(currentPrice)],
+              ["Weight", activePortfolio?.total_value
+                ? `${((position.current_value / activePortfolio.total_value) * 100).toFixed(1)}%`
+                : "—"],
+              ["Asset Type", position.asset_type],
+              ["Sector", position.sector || "—"],
+              ["Last Updated", position.price_updated_at
+                ? new Date(position.price_updated_at).toLocaleDateString()
+                : "—"],
             ].map(([label, value]) => (
               <div key={label} className="flex justify-between">
                 <dt className="text-muted-foreground">{label}</dt>
@@ -124,18 +169,22 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
 
         {/* Income Breakdown */}
         <div className="rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-3 text-sm font-medium text-muted-foreground">Monthly Income</h2>
+          <h2 className="mb-3 text-sm font-medium text-muted-foreground">Monthly Income (Est.)</h2>
           <div className="flex items-end gap-1 h-32">
             {["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"].map((month, i) => {
-              const val = ticker.monthly_income[i];
-              const max = Math.max(...ticker.monthly_income);
-              const h = max > 0 ? (val / max) * 100 : 0;
+              const val = monthlyIncome[i];
+              const max = Math.max(...monthlyIncome, 1);
+              const h = (val / max) * 100;
               return (
                 <div key={month} className="flex flex-1 flex-col items-center gap-1">
                   <div className="w-full flex flex-col justify-end" style={{ height: 100 }}>
                     <div
                       className="w-full rounded-t"
-                      style={{ height: `${h}%`, backgroundColor: val > 0 ? "#10b981" : "#252d3d", minHeight: val > 0 ? 4 : 1 }}
+                      style={{
+                        height: `${h}%`,
+                        backgroundColor: val > 0 ? "#10b981" : "#252d3d",
+                        minHeight: val > 0 ? 4 : 1,
+                      }}
                     />
                   </div>
                   <span className="text-[9px] text-muted-foreground">{month}</span>
@@ -145,11 +194,11 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           </div>
           <div className="mt-3 flex justify-between text-xs">
             <span className="text-muted-foreground">Annual</span>
-            <span className="tabular-nums font-medium text-income">{formatCurrency(ticker.annual_income)}</span>
+            <span className="tabular-nums font-medium text-income">{formatCurrency(position.annual_income)}</span>
           </div>
           <div className="flex justify-between text-xs">
             <span className="text-muted-foreground">Monthly Avg</span>
-            <span className="tabular-nums font-medium">{formatCurrency(ticker.annual_income / 12)}</span>
+            <span className="tabular-nums font-medium">{formatCurrency(position.annual_income / 12)}</span>
           </div>
         </div>
 
@@ -159,47 +208,31 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           <dl className="space-y-2.5 text-sm">
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Income Score</dt>
-              <dd><ScorePill score={ticker.score} /></dd>
+              <dd>{position.score > 0 ? <ScorePill score={position.score} /> : <span className="text-muted-foreground">—</span>}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-muted-foreground">Analyst Rating</dt>
-              <dd className="font-medium">{ticker.analyst_rating}</dd>
+              <dt className="text-muted-foreground">Grade</dt>
+              <dd className={cn("font-medium tabular-nums",
+                position.grade === "A" && "text-income",
+                position.grade === "B" && "text-income",
+                position.grade === "C" && "text-yellow-400",
+                position.grade === "D" && "text-orange-400",
+                position.grade === "F" && "text-loss",
+              )}>{position.grade || "—"}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-muted-foreground">Sentiment</dt>
-              <dd className={cn("font-medium",
-                ticker.analyst_sentiment === "Bullish" && "text-income",
-                ticker.analyst_sentiment === "Bearish" && "text-loss"
-              )}>{ticker.analyst_sentiment}</dd>
+              <dt className="text-muted-foreground">Current Yield</dt>
+              <dd className="tabular-nums font-medium">{formatPercent(position.current_yield * 100)}</dd>
             </div>
-            {ticker.nav_discount !== undefined && (
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">NAV Premium/Discount</dt>
-                <dd className={cn("tabular-nums font-medium", ticker.nav_discount < 0 ? "text-income" : "text-loss")}>
-                  {ticker.nav_discount > 0 ? "+" : ""}{ticker.nav_discount.toFixed(1)}%
-                </dd>
-              </div>
-            )}
-            {ticker.coverage_ratio !== undefined && (
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Distribution Coverage</dt>
-                <dd className={cn("tabular-nums font-medium", ticker.coverage_ratio >= 1 ? "text-income" : "text-loss")}>
-                  {ticker.coverage_ratio.toFixed(2)}x
-                </dd>
-              </div>
-            )}
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Yield on Cost</dt>
+              <dd className="tabular-nums font-medium">{formatPercent(position.yield_on_cost * 100)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Annual Income</dt>
+              <dd className="tabular-nums font-medium text-income">{formatCurrency(position.annual_income)}</dd>
+            </div>
           </dl>
-          {ticker.alert_count > 0 && (
-            <div className="mt-4 rounded-md bg-red-400/10 px-3 py-2">
-              <div className="flex items-center gap-2 text-xs font-medium text-red-400">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                {ticker.alert_count} active alert{ticker.alert_count > 1 ? "s" : ""}
-              </div>
-              <Link href="/alerts" className="mt-1 block text-xs text-red-400/80 hover:underline">
-                View alerts →
-              </Link>
-            </div>
-          )}
         </div>
       </div>
     </div>
