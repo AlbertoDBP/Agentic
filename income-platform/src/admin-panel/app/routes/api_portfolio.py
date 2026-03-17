@@ -58,6 +58,7 @@ def list_portfolios():
             portfolios = [dict(r._mapping) for r in rows]
             # Coerce Decimal → float for JSON serialisation
             for p in portfolios:
+                p["id"] = str(p["id"])
                 for k in ("cash_balance", "total_value"):
                     if p[k] is not None:
                         p[k] = float(p[k])
