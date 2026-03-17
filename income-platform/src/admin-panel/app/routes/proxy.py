@@ -32,6 +32,7 @@ def _base(service: str) -> str:
         "scenarios": settings.agent06_url,
         "tax": settings.agent05_url,
         "market-data": settings.agent01_url,
+        "broker": settings.broker_url,
     }[service]
 
 
@@ -55,6 +56,8 @@ async def _proxy(
         async with httpx.AsyncClient(timeout=timeout) as client:
             if method == "GET":
                 resp = await client.get(url, headers=headers)
+            elif method == "DELETE":
+                resp = await client.delete(url, headers=headers)
             else:
                 body = await request.body()
                 resp = await client.post(
@@ -74,6 +77,38 @@ async def _proxy(
     except Exception as exc:
         logger.error("Proxy %s %s → %s", method, url, exc)
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+# ─── Broker Service ──────────────────────────────────────────────────────────
+
+@router.get("/broker/providers")
+async def broker_providers(request: Request):
+    return await _proxy("GET", "broker", "/broker/providers", request)
+
+
+@router.get("/broker/connection")
+async def broker_connection(request: Request):
+    return await _proxy("GET", "broker", "/broker/connection", request)
+
+
+@router.post("/broker/sync")
+async def broker_sync(request: Request):
+    return await _proxy("POST", "broker", "/broker/sync", request, timeout=60)
+
+
+@router.post("/broker/orders")
+async def broker_place_order(request: Request):
+    return await _proxy("POST", "broker", "/broker/orders", request, timeout=30)
+
+
+@router.get("/broker/orders/{order_id}")
+async def broker_get_order(order_id: str, request: Request):
+    return await _proxy("GET", "broker", f"/broker/orders/{order_id}", request)
+
+
+@router.delete("/broker/orders/{order_id}")
+async def broker_cancel_order(order_id: str, request: Request):
+    return await _proxy("DELETE", "broker", f"/broker/orders/{order_id}", request)
 
 
 # ─── Market Data (Agent 01) ───────────────────────────────────────────────────

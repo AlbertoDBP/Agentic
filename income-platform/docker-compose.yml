@@ -338,6 +338,35 @@ services:
     restart: unless-stopped
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Broker Service — multi-provider account sync + order execution
+# ─────────────────────────────────────────────────────────────────────────────
+  broker-service:
+    build:
+      context: src/broker-service
+      dockerfile: Dockerfile
+    container_name: broker-service
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_BASE_URL=${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8013:8013"
+    depends_on:
+      market-data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Scheduler — APScheduler cron for all batch jobs
 # ─────────────────────────────────────────────────────────────────────────────
   scheduler:

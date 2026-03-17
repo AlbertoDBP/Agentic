@@ -20,6 +20,7 @@ class Settings:
     agent10_url: str = os.environ.get("AGENT10_URL", "http://agent-10-nav-monitor:8010")
     agent11_url: str = os.environ.get("AGENT11_URL", "http://agent-11-smart-alert:8011")
     agent12_url: str = os.environ.get("AGENT12_URL", "http://agent-12-proposal:8012")
+    broker_url: str = os.environ.get("BROKER_URL", "http://broker-service:8013")
     scheduler_url: str = os.environ.get("SCHEDULER_URL", "http://scheduler:8099")
 
     # ── Timeouts ──
@@ -39,6 +40,7 @@ class Settings:
         {"num": "10", "port": 8010, "container": "agent-10-nav-monitor", "label": "NAV Monitor"},
         {"num": "11", "port": 8011, "container": "agent-11-smart-alert", "label": "Smart Alert"},
         {"num": "12", "port": 8012, "container": "agent-12-proposal", "label": "Proposal"},
+        {"num": "13", "port": 8013, "container": "broker-service", "label": "Broker"},
         {"num": "99", "port": 8099, "container": "scheduler", "label": "Scheduler"},
     ]
 
