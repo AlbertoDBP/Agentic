@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # ── Market Data (Agent 01 dependency) ────────────────────────────────────
     market_data_service_url: str = "http://localhost:8001"
     market_data_timeout: int = 30
+    service_token: str = ""   # JWT for service-to-service calls (Agent 01 auth)
 
     # ── Asset Classification (Agent 04 dependency) ────────────────────────────
     asset_classification_service_url: str = "http://localhost:8004"

@@ -136,9 +136,12 @@ class MarketDataClient:
 
     async def _get(self, path: str, params: dict = None) -> Any:
         url = f"{self.base_url}{path}"
+        headers = {}
+        if settings.service_token:
+            headers["Authorization"] = f"Bearer {settings.service_token}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.get(url, params=params)
+                resp = await client.get(url, params=params, headers=headers)
                 if resp.status_code != 200:
                     logger.warning(
                         "Market data API %s returned HTTP %s", url, resp.status_code

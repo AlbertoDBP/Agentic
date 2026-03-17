@@ -71,6 +71,7 @@ services:
       - NEWSLETTER_SERVICE_URL=http://agent-02-newsletter-ingestion:8002
       - ASSET_CLASSIFICATION_SERVICE_URL=http://agent-04-asset-classification:8004
       - JWT_SECRET=${JWT_SECRET}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - SERVICE_PORT=8003
