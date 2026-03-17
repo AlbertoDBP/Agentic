@@ -33,6 +33,7 @@ def _base(service: str) -> str:
         "tax": settings.agent05_url,
         "market-data": settings.agent01_url,
         "broker": settings.broker_url,
+        "scoring": settings.agent03_url,
     }[service]
 
 
@@ -193,6 +194,25 @@ async def tax_calculate(request: Request):
 async def tax_calculate_get(symbol: str, request: Request):
     return await _proxy("GET", "tax", f"/tax/calculate/{symbol}", request)
 
+
+# ─── Income Scoring (Agent 03) ───────────────────────────────────────────────
+
+@router.post("/scores/evaluate")
+async def scores_evaluate(request: Request):
+    return await _proxy("POST", "scoring", "/scores/evaluate", request, timeout=60)
+
+
+@router.get("/scores/{ticker}")
+async def scores_get(ticker: str, request: Request):
+    return await _proxy("GET", "scoring", f"/scores/{ticker.upper()}", request)
+
+
+@router.get("/scores")
+async def scores_list(request: Request):
+    return await _proxy("GET", "scoring", "/scores/", request)
+
+
+# ─── Tax (Agent 05) ──────────────────────────────────────────────────────────
 
 @router.post("/tax/optimize")
 async def tax_optimize(request: Request):
