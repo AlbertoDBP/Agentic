@@ -285,29 +285,38 @@ export default function ScannerPage() {
     const totalAmount = Number(proposalAmount);
     const amountPerPosition = Math.round(totalAmount / tickers.length);
 
-    // Fetch live prices; fall back to placeholder if unavailable
-    const priceMap: Record<string, number> = {};
+    // Fetch price + name + yield from scanner quote cache (single DB call per ticker)
+    const quoteMap: Record<string, { price: number; name: string; yield_pct: number }> = {};
     await Promise.all(
       tickers.map(async (ticker) => {
         try {
-          const data = await apiGet<{ price: number }>(`/api/market-data/price/${ticker}`);
-          if (data?.price > 0) priceMap[ticker] = data.price;
+          const data = await apiGet<{ name: string; price: number | null; dividend_yield: number | null }>(
+            `/api/scanner/quote/${ticker}`
+          );
+          if (data) {
+            quoteMap[ticker] = {
+              price: data.price ?? 0,
+              name: data.name || ticker,
+              yield_pct: data.dividend_yield ?? 0,
+            };
+          }
         } catch { /* keep placeholder */ }
       })
     );
 
     const positions = tickers.map((ticker) => {
       const item = results?.items.find((i) => i.ticker === ticker);
-      const price = priceMap[ticker] ?? 0;
+      const quote = quoteMap[ticker];
+      const price = quote?.price ?? 0;
       const shares = price > 0 ? Math.floor(amountPerPosition / price) : 0;
       return {
         symbol: ticker,
-        name: ticker,
+        name: quote?.name ?? ticker,
         asset_type: item?.asset_class ?? "ETF",
         shares: shares > 0 ? shares : 1,
         entry_price: price > 0 ? price : amountPerPosition,
         current_price: price > 0 ? price : amountPerPosition,
-        yield_estimate: 0,
+        yield_estimate: quote?.yield_pct ?? 0,
         score: item?.score ?? 0,
       };
     });

@@ -90,6 +90,11 @@ async def market_data_fundamentals(symbol: str, request: Request):
 
 # ─── Scanner (Agent 07) ───────────────────────────────────────────────────────
 
+@router.get("/scanner/quote/{symbol}")
+async def scanner_quote(symbol: str, request: Request):
+    return await _proxy("GET", "scanner", f"/quote/{symbol.upper()}", request)
+
+
 @router.post("/scanner/scan")
 async def scanner_scan(request: Request):
     return await _proxy("POST", "scanner", "/scan", request, timeout=_SCAN_TIMEOUT)

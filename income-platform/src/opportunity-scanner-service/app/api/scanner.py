@@ -237,6 +237,37 @@ def get_scan(scan_id: UUID, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/quote/{symbol}")
+def get_quote(symbol: str, db: Session = Depends(get_db)):
+    """
+    Return name, price, and dividend_yield for a single symbol from DB cache.
+    Joins market_data_cache (price, yield) with securities (name). No external API call.
+    """
+    sym = symbol.upper()
+    row = db.execute(
+        text("""
+            SELECT
+                COALESCE(s.name, m.symbol)  AS name,
+                m.price,
+                m.dividend_yield
+            FROM platform_shared.market_data_cache m
+            LEFT JOIN platform_shared.securities s ON s.symbol = m.symbol
+            WHERE m.symbol = :sym
+            LIMIT 1
+        """),
+        {"sym": sym},
+    ).fetchone()
+    if row is None:
+        # Symbol not in cache — return nulls so caller can fall back gracefully
+        return {"symbol": sym, "name": sym, "price": None, "dividend_yield": None}
+    return {
+        "symbol": sym,
+        "name": row[0] or sym,
+        "price": row[1],
+        "dividend_yield": row[2],
+    }
+
+
 @router.get("/universe")
 def get_universe(
     asset_type: Optional[str] = Query(None, description="Filter by asset_type"),
