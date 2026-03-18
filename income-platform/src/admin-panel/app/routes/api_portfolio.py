@@ -45,6 +45,19 @@ router = APIRouter(prefix="/api")
 
 _DEFAULT_TENANT = "00000000-0000-0000-0000-000000000001"
 
+# Dividend frequency by asset class (best-effort heuristic)
+_FREQ_BY_CLASS: dict[str, str] = {
+    "CEF":              "Monthly",
+    "COVERED_CALL_ETF": "Monthly",
+    "MORTGAGE_REIT":    "Monthly",
+    "BDC":              "Quarterly",
+    "MLP":              "Quarterly",
+    "PREFERRED":        "Quarterly",
+    "DIVIDEND_STOCK":   "Quarterly",
+    "REIT":             "Quarterly",
+    "BOND":             "Semi-Annual",
+}
+
 _ACCOUNT_TYPE_NORM = {
     "taxable": "taxable", "brokerage": "taxable",
     "traditional ira": "traditional_ira", "traditional_ira": "traditional_ira", "ira": "traditional_ira",
@@ -352,24 +365,25 @@ async def refresh_portfolio_data(portfolio_id: str):
                         if ac and ac.upper() != "UNKNOWN":
                             payload["asset_class"] = ac.upper()
                         async with httpx.AsyncClient(timeout=30) as c:
-                            await c.post(
+                            r = await c.post(
                                 f"{settings.agent03_url}/scores/evaluate",
                                 headers=hdrs,
                                 json=payload,
                             )
-                    except Exception:
-                        pass
+                            if r.status_code >= 400:
+                                logger.warning("score %s → %d: %s", sym, r.status_code, r.text[:200])
+                    except Exception as ex:
+                        logger.warning("score_one %s failed: %s", sym, ex)
 
             await asyncio.gather(*[_score_one(s) for s in tickers])
 
         asyncio.create_task(_score_background(ticker_list, headers, asset_class_map))
         scored = len(ticker_list)  # all queued for background scoring
 
-        # 4. Sync positions.current_value from market_data_cache prices, then recalculate totals.
-        #    positions.current_value = shares * current market price (if price available in cache).
+        # 4. Sync positions from market_data_cache: price → value → income → yield → frequency.
         prices_updated = 0
         with _db().connect() as conn:
-            # Update current_price for all positions with market data (even quantity=0)
+            # 4a. Update current_price for all positions with market data (even quantity=0)
             result = conn.execute(text("""
                 UPDATE platform_shared.positions p
                 SET current_price = c.price,
@@ -382,7 +396,8 @@ async def refresh_portfolio_data(portfolio_id: str):
                   AND c.price         > 0
             """), {"pid": portfolio_id})
             prices_updated = result.rowcount if hasattr(result, 'rowcount') else 0
-            # Update current_value only when quantity is set (can't calculate value otherwise)
+
+            # 4b. Update current_value = quantity × current_price
             conn.execute(text("""
                 UPDATE platform_shared.positions p
                 SET current_value = ROUND((p.quantity * p.current_price)::numeric, 2)
@@ -391,6 +406,53 @@ async def refresh_portfolio_data(portfolio_id: str):
                   AND p.quantity     > 0
                   AND p.current_price > 0
             """), {"pid": portfolio_id})
+
+            # 4c. Compute annual_income = quantity × price × (dividend_yield / 100)
+            #     Only overwrite when cache has a real dividend_yield for this symbol.
+            conn.execute(text("""
+                UPDATE platform_shared.positions p
+                SET annual_income = ROUND(
+                        (p.quantity * c.price * c.dividend_yield / 100.0)::numeric, 2),
+                    updated_at    = NOW()
+                FROM platform_shared.market_data_cache c
+                WHERE p.symbol       = c.symbol
+                  AND p.portfolio_id = :pid
+                  AND p.status       = 'ACTIVE'
+                  AND c.dividend_yield > 0
+                  AND c.price         > 0
+                  AND p.quantity      > 0
+            """), {"pid": portfolio_id})
+
+            # 4d. Recompute yield_on_cost = annual_income / total_cost_basis
+            conn.execute(text("""
+                UPDATE platform_shared.positions p
+                SET yield_on_cost = ROUND(
+                        (p.annual_income / NULLIF(p.total_cost_basis, 0))::numeric, 6)
+                WHERE p.portfolio_id = :pid
+                  AND p.status       = 'ACTIVE'
+                  AND p.annual_income > 0
+                  AND p.total_cost_basis > 0
+            """), {"pid": portfolio_id})
+
+            # 4e. Set dividend_frequency from asset class heuristic (only when blank/null)
+            if asset_class_map:
+                for sym, ac in asset_class_map.items():
+                    freq = _FREQ_BY_CLASS.get(ac.upper(), "Quarterly")
+                    conn.execute(text("""
+                        UPDATE platform_shared.positions
+                        SET dividend_frequency = :freq, updated_at = NOW()
+                        WHERE symbol       = :sym
+                          AND portfolio_id = :pid
+                          AND status       = 'ACTIVE'
+                    """), {"freq": freq, "sym": sym, "pid": portfolio_id})
+                    # Mirror to securities so future positions inherit the right value
+                    conn.execute(text("""
+                        UPDATE platform_shared.securities
+                        SET dividend_frequency = :freq, updated_at = NOW()
+                        WHERE symbol = :sym
+                    """), {"freq": freq, "sym": sym})
+
+            # 4f. Recalculate portfolio total_value
             conn.execute(text("""
                 UPDATE platform_shared.portfolios
                 SET total_value = (
@@ -574,14 +636,14 @@ def get_positions(portfolio_id: str):
 class PositionUpsertItem(BaseModel):
     symbol: str
     name: str = ""
-    asset_type: str = "Common Stock"
+    asset_type: str = ""           # left blank — classification fills it in during refresh
     shares: float = 0
     cost_basis: float = 0          # total cost basis (shares × avg_cost)
     current_value: float = 0
     annual_income: float = 0
     yield_on_cost: float = 0       # percentage, e.g. 5.0 for 5%
     sector: str = ""
-    dividend_frequency: str = "Quarterly"
+    dividend_frequency: str = ""   # left blank — derived from asset class during refresh
 
 
 def _upsert_position(conn, portfolio_id: str, item: PositionUpsertItem) -> str:
@@ -591,11 +653,11 @@ def _upsert_position(conn, portfolio_id: str, item: PositionUpsertItem) -> str:
     cur_price = round(item.current_value / item.shares, 4) if item.shares else avg_cb
     yoc_fraction = item.yield_on_cost / 100.0
 
-    # Ensure security record exists
+    # Ensure security record exists — NULLIF('', '') so empty strings don't overwrite existing data
     conn.execute(text("""
         INSERT INTO platform_shared.securities
             (symbol, name, asset_type, is_active, created_at, updated_at)
-        VALUES (:sym, :name, :at, TRUE, NOW(), NOW())
+        VALUES (:sym, :name, NULLIF(:at, ''), TRUE, NOW(), NOW())
         ON CONFLICT (symbol) DO UPDATE SET
             name       = COALESCE(NULLIF(EXCLUDED.name, ''), platform_shared.securities.name),
             asset_type = COALESCE(NULLIF(EXCLUDED.asset_type, ''), platform_shared.securities.asset_type),
@@ -642,7 +704,7 @@ def _upsert_position(conn, portfolio_id: str, item: PositionUpsertItem) -> str:
         "cur_val": item.current_value or item.cost_basis,
         "annual_income": item.annual_income,
         "yoc": yoc_fraction,
-        "freq": item.dividend_frequency,
+        "freq": item.dividend_frequency or None,
         "sector": item.sector,
     })
     return pos_id
