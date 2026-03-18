@@ -285,12 +285,15 @@ async def refresh_portfolio_data(portfolio_id: str):
         scored, score_errors, cache_refreshed = 0, [], False
 
         async with httpx.AsyncClient(timeout=120) as client:
-            # 2. Refresh market_data_cache for all held symbols (synchronous — needed before recalc)
+            # 2. Refresh market_data_cache for all held symbols — always force=true so previously
+            #    stale/NULL entries (e.g. from earlier 401 run today) get re-fetched with real data.
             try:
-                scanner_url = f"{settings.agent07_url}/cache/refresh"
+                scanner_url = f"{settings.agent07_url}/cache/refresh?force=true"
                 resp = await client.post(scanner_url, headers=headers,
                                          json={"symbols": ticker_list})
                 cache_refreshed = resp.status_code < 400
+                if cache_refreshed:
+                    logger.info("cache/refresh OK: %s", resp.text[:200])
             except Exception as e:
                 logger.warning("cache/refresh failed: %s", e)
 
@@ -316,8 +319,23 @@ async def refresh_portfolio_data(portfolio_id: str):
         asyncio.create_task(_score_background(ticker_list, headers))
         scored = len(ticker_list)  # all queued for background scoring
 
-        # 4. Recalculate portfolio totals from current position values
+        # 4. Sync positions.current_value from market_data_cache prices, then recalculate totals.
+        #    positions.current_value = shares * current market price (if price available in cache).
+        prices_updated = 0
         with _db().connect() as conn:
+            result = conn.execute(text("""
+                UPDATE platform_shared.positions p
+                SET current_value = ROUND((p.shares * c.price)::numeric, 2),
+                    updated_at    = NOW()
+                FROM platform_shared.market_data_cache c
+                WHERE p.symbol        = c.symbol
+                  AND p.portfolio_id  = :pid
+                  AND p.status        = 'ACTIVE'
+                  AND c.price         IS NOT NULL
+                  AND c.price         > 0
+                  AND p.shares        > 0
+            """), {"pid": portfolio_id})
+            prices_updated = result.rowcount if hasattr(result, 'rowcount') else 0
             conn.execute(text("""
                 UPDATE platform_shared.portfolios
                 SET total_value = (
@@ -334,6 +352,7 @@ async def refresh_portfolio_data(portfolio_id: str):
             "symbols": ticker_list,
             "total": len(ticker_list),
             "cache_refreshed": cache_refreshed,
+            "prices_updated": prices_updated,
             "scored": scored,
             "score_errors": [],
             "scoring": "background",
