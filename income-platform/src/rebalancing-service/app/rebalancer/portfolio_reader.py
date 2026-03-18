@@ -17,19 +17,22 @@ logger = logging.getLogger(__name__)
 _pool: Optional[asyncpg.Pool] = None
 
 
-def _strip_query_params(url: str) -> str:
-    """Remove ?sslmode=require from DB URL for asyncpg."""
-    return re.sub(r"\?.+$", "", url)
+def _strip_query_params(url: str) -> tuple[str, bool]:
+    """Strip sslmode from URL for asyncpg; return (clean_url, ssl_required)."""
+    ssl_required = "sslmode=require" in url
+    clean = re.sub(r"\?.+$", "", url)
+    return clean, ssl_required
 
 
 async def init_pool() -> None:
     global _pool
+    dsn, ssl_required = _strip_query_params(settings.database_url)
     try:
         _pool = await asyncpg.create_pool(
-            _strip_query_params(settings.database_url),
+            dsn,
             min_size=1,
             max_size=5,
-            ssl="require",
+            ssl="require" if ssl_required else None,
         )
         logger.info("asyncpg pool initialised")
     except Exception as exc:

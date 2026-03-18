@@ -18,20 +18,23 @@ logger = logging.getLogger(__name__)
 _pool: Optional[asyncpg.Pool] = None
 
 
-def _build_dsn() -> str:
+def _build_dsn() -> tuple[str, bool]:
+    """Return (clean_dsn, ssl_required). Strip ?sslmode=* from URL; detect ssl from it."""
     url = settings.database_url
     url = url.replace("postgresql+psycopg2://", "postgresql://")
     url = url.replace("postgresql+asyncpg://", "postgresql://")
+    ssl_required = "sslmode=require" in url
     if "?" in url:
         url = url.split("?")[0]
-    return url
+    return url, ssl_required
 
 
 async def init_pool() -> None:
     global _pool
+    dsn, ssl_required = _build_dsn()
     _pool = await asyncpg.create_pool(
-        _build_dsn(),
-        ssl="require",
+        dsn,
+        ssl="require" if ssl_required else None,
         min_size=2,
         max_size=10,
     )

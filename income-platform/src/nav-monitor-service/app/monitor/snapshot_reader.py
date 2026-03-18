@@ -23,6 +23,7 @@ async def init_pool() -> None:
     from app.config import settings
 
     raw_url = settings.database_url
+    ssl_required = "sslmode=require" in raw_url
     db_url = re.sub(r"\?.+$", "", raw_url)
 
     try:
@@ -30,7 +31,7 @@ async def init_pool() -> None:
             db_url,
             min_size=1,
             max_size=5,
-            ssl="require",
+            ssl="require" if ssl_required else None,
         )
         logger.info("asyncpg pool initialised")
     except Exception as exc:
