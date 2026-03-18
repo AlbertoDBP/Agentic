@@ -8,6 +8,7 @@ export interface Portfolio {
   cash_balance?: number;
   sync_method?: "manual" | "csv_upload" | "broker_api";
   broker_api_key?: string;
+  broker_secret_key?: string;
   sync_interval_hours?: number;
   last_synced?: string;
 }

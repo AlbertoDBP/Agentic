@@ -85,7 +85,7 @@ export default function SettingsPage() {
 
   // Portfolio edit state
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", account_type: "", broker: "", sync_method: "manual" as "manual" | "csv_upload" | "broker_api", broker_api_key: "", sync_interval_hours: 24 });
+  const [editForm, setEditForm] = useState({ name: "", account_type: "", broker: "", sync_method: "manual" as "manual" | "csv_upload" | "broker_api", broker_api_key: "", broker_secret_key: "", sync_interval_hours: 24 });
 
   // Add portfolio state
   const [showAdd, setShowAdd] = useState(false);
@@ -93,7 +93,7 @@ export default function SettingsPage() {
 
   const startEdit = (p: typeof portfolios[0]) => {
     setEditingId(p.id);
-    setEditForm({ name: p.name, account_type: p.account_type, broker: p.broker || "", sync_method: p.sync_method || "manual", broker_api_key: p.broker_api_key || "", sync_interval_hours: p.sync_interval_hours || 24 });
+    setEditForm({ name: p.name, account_type: p.account_type, broker: p.broker || "", sync_method: p.sync_method || "manual", broker_api_key: p.broker_api_key || "", broker_secret_key: p.broker_secret_key || "", sync_interval_hours: p.sync_interval_hours || 24 });
   };
 
   const saveEdit = () => {
@@ -104,6 +104,7 @@ export default function SettingsPage() {
       broker: editForm.broker,
       sync_method: editForm.sync_method,
       broker_api_key: editForm.sync_method === "broker_api" ? editForm.broker_api_key : undefined,
+      broker_secret_key: editForm.sync_method === "broker_api" ? editForm.broker_secret_key : undefined,
       sync_interval_hours: editForm.sync_method === "broker_api" ? editForm.sync_interval_hours : undefined,
     });
     setEditingId(null);
@@ -302,7 +303,7 @@ export default function SettingsPage() {
                       {editForm.sync_method === "broker_api" && (
                         <>
                           <div>
-                            <label className="mb-0.5 block text-[10px] text-muted-foreground">API Key</label>
+                            <label className="mb-0.5 block text-[10px] text-muted-foreground">API Key ID</label>
                             <input
                               type="password"
                               value={editForm.broker_api_key}
@@ -311,6 +312,22 @@ export default function SettingsPage() {
                               className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                             />
                           </div>
+                          <div>
+                            <label className="mb-0.5 block text-[10px] text-muted-foreground">Secret Key</label>
+                            <input
+                              type="password"
+                              value={editForm.broker_secret_key}
+                              onChange={(e) => setEditForm({ ...editForm, broker_secret_key: e.target.value })}
+                              placeholder="••••••••"
+                              className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {editForm.sync_method === "broker_api" && (
+                      <>
+                        <div className="grid grid-cols-3 gap-2">
                           <div>
                             <label className="mb-0.5 block text-[10px] text-muted-foreground">Sync Interval (hours)</label>
                             <select
@@ -325,9 +342,12 @@ export default function SettingsPage() {
                               <option value={24}>Every 24h</option>
                             </select>
                           </div>
-                        </>
-                      )}
-                    </div>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Alpaca: provide both API Key ID and Secret Key from alpaca.markets → Paper Trading → API Keys
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   <div className="flex gap-2">

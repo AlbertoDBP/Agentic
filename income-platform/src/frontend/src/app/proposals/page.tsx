@@ -34,62 +34,7 @@ interface Proposal {
   positions: ProposalPosition[];
 }
 
-const INITIAL_PROPOSALS: Proposal[] = [
-  {
-    id: "pr1", portfolio_id: "p1", proposal_type: "BUY",
-    summary: "Add 3 high-quality BDC/CEF positions to increase income yield and diversification",
-    status: "PENDING", created_at: "2026-03-13T10:00:00Z",
-    analyst_source: "Seeking Alpha + Platform Analysis", analyst_sentiment: "Bullish",
-    risk_flags: [],
-    positions: [
-      { symbol: "HTGC", name: "Hercules Capital", asset_type: "BDC", shares: 100, entry_price: 19.50, current_price: 20.10, yield_estimate: 10.5, score: 87 },
-      { symbol: "BXSL", name: "Blue Owl Capital", asset_type: "BDC", shares: 75, entry_price: 26.80, current_price: 27.40, yield_estimate: 9.8, score: 91 },
-      { symbol: "PTY", name: "PIMCO Corporate & Income", asset_type: "CEF", shares: 200, entry_price: 13.20, current_price: 13.55, yield_estimate: 8.9, score: 82 },
-    ],
-  },
-  {
-    id: "pr2", portfolio_id: "p1", proposal_type: "TRIM",
-    summary: "Reduce overweight CEF positions with NAV erosion warnings",
-    status: "PENDING", created_at: "2026-03-12T16:00:00Z",
-    analyst_source: "Agent 10 NAV Monitor", analyst_sentiment: "Bearish",
-    risk_flags: ["NAV erosion", "Excessive premium"],
-    positions: [
-      { symbol: "GOF", name: "Guggenheim Strategic Opp", asset_type: "CEF", shares: -150, entry_price: 14.80, current_price: 15.20, yield_estimate: 14.4, score: 38 },
-      { symbol: "PDI", name: "PIMCO Dynamic Income", asset_type: "CEF", shares: -50, entry_price: 18.60, current_price: 19.10, yield_estimate: 11.4, score: 45 },
-    ],
-  },
-  {
-    id: "pr3", portfolio_id: "p2", proposal_type: "BUY",
-    summary: "Start Roth IRA income positions — 2 diversified BDCs",
-    status: "PENDING", created_at: "2026-03-11T09:00:00Z",
-    analyst_source: "Platform Analysis", analyst_sentiment: "Bullish",
-    risk_flags: [],
-    positions: [
-      { symbol: "ARCC", name: "Ares Capital", asset_type: "BDC", shares: 50, entry_price: 21.30, current_price: 21.80, yield_estimate: 9.2, score: 89 },
-      { symbol: "MAIN", name: "Main Street Capital", asset_type: "BDC", shares: 30, entry_price: 49.50, current_price: 50.20, yield_estimate: 6.8, score: 94 },
-    ],
-  },
-  {
-    id: "pr4", portfolio_id: "p1", proposal_type: "BUY",
-    summary: "Add preferred stock positions for stable income",
-    status: "ACCEPTED", created_at: "2026-03-08T11:00:00Z",
-    analyst_source: "Seeking Alpha",
-    risk_flags: [],
-    positions: [
-      { symbol: "PSA-H", name: "Public Storage Pref H", asset_type: "Preferred", shares: 100, entry_price: 25.40, current_price: 25.80, yield_estimate: 5.2, score: 85 },
-    ],
-  },
-  {
-    id: "pr5", portfolio_id: "p1", proposal_type: "TRIM",
-    summary: "Exit underperforming MLP position",
-    status: "REJECTED", created_at: "2026-03-07T14:30:00Z",
-    analyst_source: "Agent 11 Alert",
-    risk_flags: ["Declining distribution"],
-    positions: [
-      { symbol: "MPLX", name: "MPLX LP", asset_type: "MLP", shares: -80, entry_price: 38.50, current_price: 39.00, yield_estimate: 7.9, score: 52 },
-    ],
-  },
-];
+const INITIAL_PROPOSALS: Proposal[] = [];
 
 type Tab = "PENDING" | "ACCEPTED" | "REJECTED";
 
@@ -115,16 +60,7 @@ export default function ProposalsPage() {
   // Cash available for the proposal's portfolio
   const getCashBalance = (portfolioId: string): number | undefined =>
     portfolios.find((p) => p.id === portfolioId)?.cash_balance;
-  const [proposals, setProposals] = useState<Proposal[]>(() => {
-    // Restore persisted statuses on mount
-    try {
-      const saved = JSON.parse(localStorage.getItem("proposalStatuses") ?? "{}") as Record<string, Proposal["status"]>;
-      if (Object.keys(saved).length > 0) {
-        return INITIAL_PROPOSALS.map((p) => saved[p.id] ? { ...p, status: saved[p.id] } : p);
-      }
-    } catch { /* ignore */ }
-    return INITIAL_PROPOSALS;
-  });
+  const [proposals, setProposals] = useState<Proposal[]>([]);
 
   // Persist status changes to localStorage whenever proposals change
   useEffect(() => {

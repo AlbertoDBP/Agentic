@@ -154,12 +154,13 @@ export function DataTable<TData, TValue>({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    updateScrollState();
+    // Defer so layout is complete before measuring overflow
+    const id = requestAnimationFrame(updateScrollState);
     el.addEventListener("scroll", updateScrollState, { passive: true });
     const ro = new ResizeObserver(updateScrollState);
     ro.observe(el);
-    return () => { el.removeEventListener("scroll", updateScrollState); ro.disconnect(); };
-  }, [updateScrollState, data]);
+    return () => { cancelAnimationFrame(id); el.removeEventListener("scroll", updateScrollState); ro.disconnect(); };
+  }, [updateScrollState, data, columnVisibility, columnOrder]);
 
   const doScroll = (dir: "left" | "right" | "up" | "down") => {
     const el = scrollRef.current;
