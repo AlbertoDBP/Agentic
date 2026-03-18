@@ -16,13 +16,20 @@ def _build_url(raw_url: str) -> tuple[str, dict]:
     m = re.search(r'[?&]sslmode=([^&]+)', raw_url)
     sslmode = m.group(1) if m else "disable"
     clean = raw_url.split("?")[0] if "?" in raw_url else raw_url
-    return clean, {"sslmode": sslmode}
+    return clean, {
+        "sslmode": sslmode,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    }
 
 
 _db_url, _connect_args = _build_url(settings.database_url)
 engine = create_engine(
     _db_url,
     pool_pre_ping=True,
+    pool_recycle=300,
     connect_args=_connect_args,
 )
 

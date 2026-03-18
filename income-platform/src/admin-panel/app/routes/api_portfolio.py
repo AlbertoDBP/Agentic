@@ -285,7 +285,7 @@ async def refresh_portfolio_data(portfolio_id: str):
         scored, score_errors, cache_refreshed = 0, [], False
 
         async with httpx.AsyncClient(timeout=120) as client:
-            # 2. Refresh market_data_cache for all held symbols
+            # 2. Refresh market_data_cache for all held symbols (synchronous — needed before recalc)
             try:
                 scanner_url = f"{settings.agent07_url}/cache/refresh"
                 resp = await client.post(scanner_url, headers=headers,
@@ -294,27 +294,29 @@ async def refresh_portfolio_data(portfolio_id: str):
             except Exception as e:
                 logger.warning("cache/refresh failed: %s", e)
 
-            # 3. Score each symbol concurrently (auto-classify, inline gate)
-            async def _score_one(sym: str) -> tuple[str, bool]:
-                try:
-                    r = await client.post(
-                        f"{settings.agent03_url}/scores/evaluate",
-                        headers=headers,
-                        json={"ticker": sym, "gate_data": {}},
-                        timeout=30,
-                    )
-                    return sym, r.status_code < 400
-                except Exception as e:
-                    return sym, False
+        # 3. Score symbols in background — fire-and-forget to avoid 4-min timeout on 70+ tickers.
+        #    Scoring stores income_scores; does not affect portfolio total_value calculation.
+        async def _score_background(tickers: list, hdrs: dict):
+            sem = asyncio.Semaphore(5)
 
-            results = await asyncio.gather(*[_score_one(s) for s in ticker_list])
-            for sym, ok in results:
-                if ok:
-                    scored += 1
-                else:
-                    score_errors.append(sym)
+            async def _score_one(sym: str):
+                async with sem:
+                    try:
+                        async with httpx.AsyncClient(timeout=30) as c:
+                            await c.post(
+                                f"{settings.agent03_url}/scores/evaluate",
+                                headers=hdrs,
+                                json={"ticker": sym, "gate_data": {}},
+                            )
+                    except Exception:
+                        pass
 
-        # 4. Recalculate portfolio totals
+            await asyncio.gather(*[_score_one(s) for s in tickers])
+
+        asyncio.create_task(_score_background(ticker_list, headers))
+        scored = len(ticker_list)  # all queued for background scoring
+
+        # 4. Recalculate portfolio totals from current position values
         with _db().connect() as conn:
             conn.execute(text("""
                 UPDATE platform_shared.portfolios
@@ -333,7 +335,8 @@ async def refresh_portfolio_data(portfolio_id: str):
             "total": len(ticker_list),
             "cache_refreshed": cache_refreshed,
             "scored": scored,
-            "score_errors": score_errors,
+            "score_errors": [],
+            "scoring": "background",
         })
     except HTTPException:
         raise

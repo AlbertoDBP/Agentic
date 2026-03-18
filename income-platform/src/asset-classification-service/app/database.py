@@ -12,12 +12,20 @@ class Base(DeclarativeBase):
 
 
 def _build_url(raw_url: str) -> tuple[str, dict]:
-    """Strip query params from URL; return (clean_url, connect_args with sslmode)."""
+    """Strip query params from URL; return (clean_url, connect_args with sslmode + keepalives)."""
     import re
     m = re.search(r'[?&]sslmode=([^&]+)', raw_url)
     sslmode = m.group(1) if m else "disable"
     clean = raw_url.split("?")[0] if "?" in raw_url else raw_url
-    return clean, {"sslmode": sslmode}
+    connect_args = {
+        "sslmode": sslmode,
+        # TCP keepalives prevent Docker/pgbouncer from silently dropping idle connections
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    }
+    return clean, connect_args
 
 
 _db_url, _connect_args = _build_url(settings.database_url)
@@ -27,6 +35,7 @@ engine = create_engine(
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_pre_ping=True,
+    pool_recycle=300,  # recycle connections every 5 min, below pgbouncer server_idle_timeout
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

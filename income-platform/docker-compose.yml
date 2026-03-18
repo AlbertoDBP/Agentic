@@ -213,6 +213,9 @@ services:
       - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - INCOME_SCORING_URL=http://agent-03-income-scoring:8003
+      - FMP_API_KEY=${FMP_API_KEY}
+      - MARKET_DATA_API_KEY=${MARKET_DATA_API_KEY}
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
     ports:
