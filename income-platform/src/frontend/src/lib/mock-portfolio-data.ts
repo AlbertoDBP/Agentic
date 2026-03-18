@@ -87,23 +87,24 @@ export interface MarketData {
   price: number;
   change: number;
   change_pct: number;
-  volume: string;
-  avg_volume: string;
-  day_high: number;
-  day_low: number;
-  week52_high: number;
-  week52_low: number;
-  market_cap: string;
+  volume: string | number;
+  avg_volume?: string;
+  day_high?: number;
+  day_low?: number;
+  week52_high?: number;
+  week52_low?: number;
+  market_cap: string | number;
   pe_ratio: number | null;
-  eps: number | null;
+  eps?: number | null;
   dividend_yield: number;
   payout_ratio: number | null;
-  dividend_growth_5y: number | null;
-  ex_date: string;
-  nav: number | null;
-  premium_discount: number | null;
-  beta: number;
-  last_updated: string;
+  dividend_growth_5y?: number | null;
+  ex_date?: string;
+  nav?: number | null;
+  premium_discount?: number | null;
+  beta?: number;
+  last_updated?: string;
+  snapshot_date?: string;
 }
 
 export const HD_MARKET_DATA: MarketData[] = [

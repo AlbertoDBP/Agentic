@@ -41,31 +41,20 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!activePortfolio?.id) return;
-
     setLoading(true);
     setError(null);
 
-    fetch(`${API_BASE_URL}/api/portfolios/${activePortfolio.id}/positions`, {
+    fetch(`${API_BASE_URL}/api/positions/${symbol.toUpperCase()}`, {
       credentials: "include",
     })
       .then((res) => {
-        if (!res.ok) throw new Error(`API ${res.status}`);
-        return res.json() as Promise<Position[]>;
+        if (!res.ok) throw new Error(`Position not found: ${symbol.toUpperCase()}`);
+        return res.json() as Promise<Position>;
       })
-      .then((positions) => {
-        const match = positions.find(
-          (p) => p.symbol.toUpperCase() === symbol.toUpperCase()
-        );
-        if (match) {
-          setPosition(match);
-        } else {
-          setError(`Position not found: ${symbol.toUpperCase()}`);
-        }
-      })
+      .then((pos) => setPosition(pos))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [activePortfolio?.id, symbol]);
+  }, [symbol]);
 
   const backLink = (
     <Link

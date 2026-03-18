@@ -437,10 +437,11 @@ services:
     build:
       context: src/frontend
       dockerfile: Dockerfile
+      args:
+        - ADMIN_PANEL_URL=http://admin-panel:8100
     container_name: frontend
     environment:
       - JWT_SECRET=${JWT_SECRET}
-      - NEXT_PUBLIC_API_BASE=http://admin-panel:8100
       - DATABASE_URL=${DATABASE_URL}
     ports:
       - "8200:8200"

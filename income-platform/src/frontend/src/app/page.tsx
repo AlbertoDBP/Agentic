@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import {
   DollarSign,
   Briefcase,
@@ -24,45 +25,61 @@ import { TickerBadge } from "@/components/ticker-badge";
 import { formatCurrency, formatPercent, formatDate, cn } from "@/lib/utils";
 import { ASSET_CLASS_COLORS } from "@/lib/config";
 import { usePortfolio } from "@/lib/portfolio-context";
-import type {
-  PortfolioMetrics,
-  IncomeProjection,
-  AllocationItem,
-  DividendEvent,
-} from "@/lib/types";
+import { API_BASE_URL } from "@/lib/config";
+import type { DividendEvent } from "@/lib/types";
 import Link from "next/link";
 
-const MOCK_METRICS: PortfolioMetrics = {
-  total_value: 612000,
-  annual_income: 47200,
-  blended_yield: 7.72,
-  active_alerts: 3,
-  positions_count: 70,
-};
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-const MOCK_INCOME: IncomeProjection[] = [
-  { month: "Apr", projected: 3800, actual: 3800 },
-  { month: "May", projected: 4100, actual: 4100 },
-  { month: "Jun", projected: 3600, actual: 3600 },
-  { month: "Jul", projected: 4200, actual: 4200 },
-  { month: "Aug", projected: 3900, actual: 3900 },
-  { month: "Sep", projected: 4400 },
-  { month: "Oct", projected: 3700 },
-  { month: "Nov", projected: 4000 },
-  { month: "Dec", projected: 4300 },
-  { month: "Jan", projected: 3800 },
-  { month: "Feb", projected: 4100 },
-  { month: "Mar", projected: 3500 },
-];
+interface DashboardMetrics {
+  total_value: number;
+  annual_income: number;
+  blended_yield: number;
+  active_alerts: number;
+  positions_count: number;
+  pending_proposals: number;
+}
 
-const MOCK_ALLOCATION: AllocationItem[] = [
-  { name: "Common Stock", value: 245000, percentage: 40, color: ASSET_CLASS_COLORS["Common Stock"] },
-  { name: "BDC", value: 122000, percentage: 20, color: ASSET_CLASS_COLORS["BDC"] },
-  { name: "CEF", value: 98000, percentage: 16, color: ASSET_CLASS_COLORS["CEF"] },
-  { name: "Preferred", value: 61000, percentage: 10, color: ASSET_CLASS_COLORS["Preferred"] },
-  { name: "MLP", value: 49000, percentage: 8, color: ASSET_CLASS_COLORS["MLP"] },
-  { name: "ETF", value: 37000, percentage: 6, color: ASSET_CLASS_COLORS["ETF"] },
-];
+interface PortfolioSummary {
+  id: string;
+  name: string;
+  account_type: string;
+  broker: string;
+  positions_count: number;
+  total_value: number;
+  cost_basis: number;
+  annual_income: number;
+  blended_yield: number;
+  gain_pct: number;
+}
+
+interface AllocationItem {
+  name: string;
+  value: number;
+  percentage: number;
+}
+
+interface QualityData {
+  high: number;
+  medium: number;
+  low: number;
+}
+
+interface MonthlyIncome {
+  month: string;
+  projected: number;
+  actual?: number;
+}
+
+interface DashboardData {
+  metrics: DashboardMetrics;
+  portfolios: PortfolioSummary[];
+  allocation: AllocationItem[];
+  quality: QualityData;
+  income_by_month: MonthlyIncome[];
+}
+
+// ─── Static fallback data ─────────────────────────────────────────────────────
 
 const MOCK_DIVIDENDS: DividendEvent[] = [
   { symbol: "MAIN", asset_type: "BDC", ex_date: "2026-03-20", pay_date: "2026-03-27", amount: 72.5 },
@@ -72,39 +89,55 @@ const MOCK_DIVIDENDS: DividendEvent[] = [
   { symbol: "PFF", asset_type: "ETF", ex_date: "2026-04-01", pay_date: "2026-04-07", amount: 55.0 },
 ];
 
-// Per-portfolio mock summaries
-const PORTFOLIO_SUMMARIES = [
-  { id: "p1", name: "Income Fortress", account_type: "Taxable", positions: 70, value: 612000, income: 47200, yield: 7.72, gainPct: 4.3 },
-  { id: "p2", name: "Roth IRA", account_type: "Roth IRA", positions: 15, value: 85000, income: 5100, yield: 6.0, gainPct: 8.1 },
-  { id: "p3", name: "401(k)", account_type: "401(k)", positions: 8, value: 142000, income: 7100, yield: 5.0, gainPct: 12.5 },
-];
+const EMPTY_METRICS: DashboardMetrics = {
+  total_value: 0, annual_income: 0, blended_yield: 0,
+  active_alerts: 0, positions_count: 0, pending_proposals: 0,
+};
 
-const QUALITY_TIERS = [
-  { label: "High (80+)", count: 42, pct: 60, color: "bg-emerald-400", filter: "high" },
-  { label: "Medium (50-79)", count: 21, pct: 30, color: "bg-amber-400", filter: "medium" },
-  { label: "Review (<50)", count: 7, pct: 10, color: "bg-red-400", filter: "low" },
-];
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const { portfolios, activePortfolio, setActiveId } = usePortfolio();
-  const metrics = MOCK_METRICS;
-  const incomeData = MOCK_INCOME;
-  const allocation = MOCK_ALLOCATION;
-  const upcomingDividends = MOCK_DIVIDENDS;
-  const pendingProposals = 2;
+  const { activePortfolio, setActiveId } = usePortfolio();
+  const [data, setData] = useState<DashboardData | null>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/dashboard`, { credentials: "include" })
+      .then((r) => r.ok ? r.json() : Promise.reject(r.status))
+      .then((d: DashboardData) => setData(d))
+      .catch((e) => console.warn("Dashboard API unavailable:", e));
+  }, []);
+
+  const metrics       = data?.metrics        ?? EMPTY_METRICS;
+  const portfolios    = data?.portfolios      ?? [];
+  const incomeData    = data?.income_by_month ?? [];
+  const qualityRaw    = data?.quality         ?? { high: 0, medium: 0, low: 0 };
+  const allocationRaw = data?.allocation      ?? [];
+  const pendingProposals = metrics.pending_proposals;
+
+  // Apply colors to allocation items
+  const allocation = allocationRaw.map((a) => ({
+    ...a,
+    color: ASSET_CLASS_COLORS[a.name] ?? "#64748b",
+  }));
+
+  // Build quality tiers display
+  const qualityTotal = qualityRaw.high + qualityRaw.medium + qualityRaw.low;
+  const qualityTiers = [
+    { label: "High (80+)",     count: qualityRaw.high,   pct: qualityTotal > 0 ? Math.round((qualityRaw.high   / qualityTotal) * 100) : 0, color: "bg-emerald-400", filter: "high" },
+    { label: "Medium (50-79)", count: qualityRaw.medium, pct: qualityTotal > 0 ? Math.round((qualityRaw.medium / qualityTotal) * 100) : 0, color: "bg-amber-400",   filter: "medium" },
+    { label: "Review (<50)",   count: qualityRaw.low,    pct: qualityTotal > 0 ? Math.round((qualityRaw.low    / qualityTotal) * 100) : 0, color: "bg-red-400",     filter: "low" },
+  ];
 
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">Dashboard</h1>
 
-      {/* KPI Cards — clickable */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-4 gap-4">
         <Link href="/portfolio">
           <MetricCard
             label="Annual Income"
             value={formatCurrency(metrics.annual_income, true)}
-            delta="+$1,200 vs last quarter"
-            deltaType="positive"
             icon={DollarSign}
           />
         </Link>
@@ -112,8 +145,6 @@ export default function DashboardPage() {
           <MetricCard
             label="Portfolio Value"
             value={formatCurrency(metrics.total_value, true)}
-            delta="+2.1% MTD"
-            deltaType="positive"
             icon={Briefcase}
           />
         </Link>
@@ -121,8 +152,6 @@ export default function DashboardPage() {
           <MetricCard
             label="Blended Yield"
             value={formatPercent(metrics.blended_yield)}
-            delta="+0.12% vs target"
-            deltaType="positive"
             icon={Percent}
           />
         </Link>
@@ -130,14 +159,13 @@ export default function DashboardPage() {
           <MetricCard
             label="Active Alerts"
             value={String(metrics.active_alerts)}
-            delta="1 critical"
-            deltaType="negative"
+            deltaType={metrics.active_alerts > 0 ? "negative" : "positive"}
             icon={Bell}
           />
         </Link>
       </div>
 
-      {/* Portfolio Summary — compact table */}
+      {/* Portfolio Summary Table */}
       <div className="rounded-lg border border-border bg-card overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -155,45 +183,50 @@ export default function DashboardPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {PORTFOLIO_SUMMARIES.map((p) => {
-              const gain = p.value - (p.value / (1 + p.gainPct / 100));
-              return (
-                <tr
-                  key={p.id}
-                  onClick={() => { setActiveId(p.id); window.location.href = "/portfolio"; }}
-                  className={cn(
-                    "cursor-pointer transition-colors hover:bg-secondary/50",
-                    activePortfolio?.id === p.id && "bg-primary/5"
-                  )}
-                >
-                  <td className="px-4 py-2.5 font-medium">{p.name}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{p.account_type}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">{p.positions}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(p.value, true)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{formatCurrency(p.value / (1 + p.gainPct / 100), true)}</td>
-                  <td className={cn("px-3 py-2.5 text-right tabular-nums", p.gainPct >= 0 ? "text-income" : "text-loss")}>
-                    {p.gainPct >= 0 ? "+" : ""}{p.gainPct.toFixed(1)}%
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-income">{formatCurrency(p.income, true)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(p.income / 12, true)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">{formatPercent(p.yield)}</td>
-                  <td className="px-3 py-2.5 text-right"><ArrowRight className="inline h-3.5 w-3.5 text-muted-foreground" /></td>
-                </tr>
-              );
-            })}
-            {/* Totals row */}
-            <tr className="bg-secondary/30 font-medium">
-              <td className="px-4 py-2.5">All Portfolios</td>
-              <td className="px-3 py-2.5"></td>
-              <td className="px-3 py-2.5 text-right tabular-nums">{PORTFOLIO_SUMMARIES.reduce((s, p) => s + p.positions, 0)}</td>
-              <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(PORTFOLIO_SUMMARIES.reduce((s, p) => s + p.value, 0), true)}</td>
-              <td className="px-3 py-2.5"></td>
-              <td className="px-3 py-2.5"></td>
-              <td className="px-3 py-2.5 text-right tabular-nums text-income">{formatCurrency(PORTFOLIO_SUMMARIES.reduce((s, p) => s + p.income, 0), true)}</td>
-              <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(PORTFOLIO_SUMMARIES.reduce((s, p) => s + p.income, 0) / 12, true)}</td>
-              <td className="px-3 py-2.5"></td>
-              <td className="px-3 py-2.5"></td>
-            </tr>
+            {portfolios.map((p) => (
+              <tr
+                key={p.id}
+                onClick={() => { setActiveId(p.id); window.location.href = "/portfolio"; }}
+                className={cn(
+                  "cursor-pointer transition-colors hover:bg-secondary/50",
+                  activePortfolio?.id === p.id && "bg-primary/5"
+                )}
+              >
+                <td className="px-4 py-2.5 font-medium">{p.name}</td>
+                <td className="px-3 py-2.5 text-muted-foreground">{p.account_type}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{p.positions_count}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(p.total_value, true)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{formatCurrency(p.cost_basis, true)}</td>
+                <td className={cn("px-3 py-2.5 text-right tabular-nums", p.gain_pct >= 0 ? "text-income" : "text-loss")}>
+                  {p.gain_pct >= 0 ? "+" : ""}{p.gain_pct.toFixed(1)}%
+                </td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-income">{formatCurrency(p.annual_income, true)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(p.annual_income / 12, true)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{formatPercent(p.blended_yield)}</td>
+                <td className="px-3 py-2.5 text-right"><ArrowRight className="inline h-3.5 w-3.5 text-muted-foreground" /></td>
+              </tr>
+            ))}
+            {portfolios.length > 0 && (
+              <tr className="bg-secondary/30 font-medium">
+                <td className="px-4 py-2.5">All Portfolios</td>
+                <td className="px-3 py-2.5"></td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{portfolios.reduce((s, p) => s + p.positions_count, 0)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(portfolios.reduce((s, p) => s + p.total_value, 0), true)}</td>
+                <td className="px-3 py-2.5"></td>
+                <td className="px-3 py-2.5"></td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-income">{formatCurrency(portfolios.reduce((s, p) => s + p.annual_income, 0), true)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(portfolios.reduce((s, p) => s + p.annual_income, 0) / 12, true)}</td>
+                <td className="px-3 py-2.5"></td>
+                <td className="px-3 py-2.5"></td>
+              </tr>
+            )}
+            {portfolios.length === 0 && (
+              <tr>
+                <td colSpan={10} className="px-4 py-6 text-center text-sm text-muted-foreground">
+                  {data === null ? "Loading portfolios…" : "No portfolios found."}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -233,7 +266,7 @@ export default function DashboardPage() {
         <Link href="/calendar" className="col-span-2 rounded-lg border border-border bg-card p-4 transition-colors hover:border-border/80">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Upcoming Dividends</h2>
           <div className="space-y-3">
-            {upcomingDividends.map((d) => (
+            {MOCK_DIVIDENDS.map((d) => (
               <div key={`${d.symbol}-${d.ex_date}`} className="flex items-center justify-between">
                 <div>
                   <TickerBadge symbol={d.symbol} assetType={d.asset_type} />
@@ -285,11 +318,11 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        {/* Income Quality — clickable tiers navigate to filtered positions */}
+        {/* Income Quality */}
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="mb-4 text-sm font-medium text-muted-foreground">Income Quality</h2>
           <div className="space-y-4">
-            {QUALITY_TIERS.map((tier) => (
+            {qualityTiers.map((tier) => (
               <Link
                 key={tier.label}
                 href={`/portfolio?quality=${tier.filter}`}

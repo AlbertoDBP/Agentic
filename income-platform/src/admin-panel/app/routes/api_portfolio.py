@@ -5,6 +5,8 @@ Reads directly from platform_shared tables.
 Routes:
   GET /api/portfolios                    → list all active portfolios
   GET /api/portfolios/{id}/positions     → all active positions for a portfolio
+  GET /api/positions/{symbol}            → single position by symbol (any portfolio)
+  GET /api/market-data/positions         → market_data_cache for all portfolio symbols
   POST /api/portfolios/{id}/prices       → update market_data_cache prices (manual entry for bonds etc.)
 """
 from __future__ import annotations
@@ -156,6 +158,149 @@ def get_positions(portfolio_id: str):
         raise
     except Exception as exc:
         logger.error("get_positions error (%s): %s", portfolio_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Single position by symbol (searches all portfolios) ───────────────────────
+
+@router.get("/positions/{symbol}")
+def get_position_by_symbol(symbol: str):
+    """Return the first active position matching the symbol across all portfolios."""
+    try:
+        with _db().connect() as conn:
+            row = conn.execute(text("""
+                SELECT
+                    p.id,
+                    p.portfolio_id,
+                    p.symbol,
+                    COALESCE(s.name, p.symbol)          AS name,
+                    COALESCE(s.asset_type, 'Unknown')   AS asset_type,
+                    COALESCE(s.sector, '')               AS sector,
+                    p.quantity                           AS shares,
+                    COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0)
+                                                         AS cost_basis,
+                    COALESCE(p.current_value, 0)         AS current_value,
+                    COALESCE(p.current_price, p.avg_cost_basis, 0)
+                                                         AS market_price,
+                    COALESCE(p.avg_cost_basis, 0)        AS avg_cost,
+                    COALESCE(p.annual_income, 0)         AS annual_income,
+                    COALESCE(p.yield_on_cost, 0)         AS yield_on_cost,
+                    COALESCE(m.dividend_yield, 0)        AS current_yield,
+                    COALESCE(sc.total_score, 0)          AS score,
+                    COALESCE(sc.grade, '')               AS grade,
+                    p.price_updated_at,
+                    p.updated_at
+                FROM platform_shared.positions p
+                LEFT JOIN platform_shared.securities s
+                       ON s.symbol = p.symbol
+                LEFT JOIN platform_shared.market_data_cache m
+                       ON m.symbol = p.symbol
+                LEFT JOIN LATERAL (
+                    SELECT total_score, grade
+                    FROM platform_shared.income_scores
+                    WHERE ticker = p.symbol
+                    ORDER BY scored_at DESC
+                    LIMIT 1
+                ) sc ON TRUE
+                WHERE UPPER(p.symbol) = UPPER(:sym)
+                  AND p.status = 'ACTIVE'
+                ORDER BY p.current_value DESC NULLS LAST
+                LIMIT 1
+            """), {"sym": symbol}).fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Position not found: {symbol.upper()}")
+
+            pos = dict(row._mapping)
+            for k in ("id", "portfolio_id"):
+                if pos.get(k) is not None:
+                    pos[k] = str(pos[k])
+            for k in ("shares", "cost_basis", "current_value", "market_price",
+                      "avg_cost", "annual_income", "yield_on_cost", "current_yield", "score"):
+                if pos.get(k) is not None:
+                    pos[k] = float(pos[k])
+            for k in ("price_updated_at", "updated_at"):
+                if pos.get(k):
+                    pos[k] = pos[k].isoformat()
+            return JSONResponse(content=pos)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_position_by_symbol error (%s): %s", symbol, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Market data for all portfolio symbols ─────────────────────────────────────
+
+@router.get("/market-data/positions")
+def get_market_data_for_positions():
+    """Return market_data_cache rows for all symbols held in active portfolios."""
+    try:
+        with _db().connect() as conn:
+            rows = conn.execute(text("""
+                SELECT
+                    m.symbol,
+                    COALESCE(s.name, m.symbol)          AS name,
+                    COALESCE(s.asset_type, 'Unknown')   AS asset_type,
+                    COALESCE(m.price, 0)                AS price,
+                    COALESCE(m.price_change_pct, 0)     AS change_pct,
+                    COALESCE(m.volume_avg_10d, 0)       AS volume,
+                    m.week52_high,
+                    m.week52_low,
+                    COALESCE(m.market_cap_m, 0)         AS market_cap,
+                    m.pe_ratio,
+                    COALESCE(m.dividend_yield, 0)       AS dividend_yield,
+                    m.payout_ratio,
+                    m.beta,
+                    m.snapshot_date
+                FROM platform_shared.market_data_cache m
+                INNER JOIN (
+                    SELECT DISTINCT symbol
+                    FROM platform_shared.positions
+                    WHERE status = 'ACTIVE'
+                ) held ON held.symbol = m.symbol
+                LEFT JOIN platform_shared.securities s ON s.symbol = m.symbol
+                ORDER BY m.symbol
+            """)).fetchall()
+
+            result = []
+            for r in rows:
+                item = dict(r._mapping)
+                for k in ("price", "change_pct", "dividend_yield"):
+                    if item.get(k) is not None:
+                        item[k] = float(item[k])
+                    else:
+                        item[k] = 0.0
+                for k in ("week52_high", "week52_low", "pe_ratio", "payout_ratio", "beta"):
+                    item[k] = float(item[k]) if item.get(k) is not None else None
+                # Absolute price change from pct (approx)
+                price = item["price"]
+                pct = item["change_pct"]
+                item["change"] = round(price - price / (1 + pct / 100), 4) if price and pct else 0.0
+                # market_cap: convert from millions to display value
+                mc = item.get("market_cap")
+                item["market_cap"] = round(float(mc), 2) if mc else 0.0
+                # volume: keep as number
+                vol = item.get("volume")
+                item["volume"] = int(vol) if vol else 0
+                # Null-fill fields not available from cache
+                item["day_high"] = None
+                item["day_low"] = None
+                item["eps"] = None
+                item["dividend_growth_5y"] = None
+                item["nav"] = None
+                item["premium_discount"] = None
+                item["avg_volume"] = None
+                item["ex_date"] = None
+                if item.get("snapshot_date"):
+                    item["snapshot_date"] = item["snapshot_date"].isoformat()
+                result.append(item)
+
+            return JSONResponse(content=result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_market_data_for_positions error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

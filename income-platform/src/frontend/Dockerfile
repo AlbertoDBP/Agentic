@@ -3,6 +3,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+ARG ADMIN_PANEL_URL=http://localhost:8100
+ENV ADMIN_PANEL_URL=$ADMIN_PANEL_URL
 RUN npm run build
 
 FROM node:20-alpine

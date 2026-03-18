@@ -1,5 +1,8 @@
+// API calls go through Next.js rewrites (/api/* → admin panel).
+// Use empty string so all fetch() calls use relative paths (same origin).
+// For local dev without Docker, set NEXT_PUBLIC_API_BASE to override.
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8100";
+  process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 export const POLLING = {
   dashboard: 60_000,

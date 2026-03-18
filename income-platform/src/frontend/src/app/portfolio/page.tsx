@@ -9,7 +9,7 @@ import { AlertBadge } from "@/components/alert-badge";
 import { MetricCard } from "@/components/metric-card";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
-import { ASSET_CLASS_COLORS } from "@/lib/config";
+import { ASSET_CLASS_COLORS, API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
 import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Trash2, Upload, X, Check, Download, Wallet, RefreshCw } from "lucide-react";
 import { apiPost } from "@/lib/api";
@@ -280,24 +280,27 @@ const marketColumns: ColumnDef<MarketData>[] = [
   {
     id: "day_range",
     header: "Day Range",
-    cell: ({ row }) => (
-      <span className="tabular-nums text-xs">
-        {formatCurrency(row.original.day_low)} — {formatCurrency(row.original.day_high)}
-      </span>
-    ),
+    cell: ({ row }) => {
+      const { day_low, day_high } = row.original;
+      if (day_low == null || day_high == null) return <span className="text-muted-foreground">—</span>;
+      return <span className="tabular-nums text-xs">{formatCurrency(day_low)} — {formatCurrency(day_high)}</span>;
+    },
   },
   {
     id: "week52_range",
     header: "52W Range",
     cell: ({ row }) => {
-      const pct = ((row.original.price - row.original.week52_low) / (row.original.week52_high - row.original.week52_low)) * 100;
+      const { week52_low, week52_high, price } = row.original;
+      if (week52_low == null || week52_high == null) return <span className="text-muted-foreground">—</span>;
+      const range = week52_high - week52_low;
+      const pct = range > 0 ? ((price - week52_low) / range) * 100 : 0;
       return (
         <div className="flex items-center gap-2">
-          <span className="text-[10px] tabular-nums text-muted-foreground">{formatCurrency(row.original.week52_low)}</span>
+          <span className="text-[10px] tabular-nums text-muted-foreground">{formatCurrency(week52_low)}</span>
           <div className="w-16 h-1.5 rounded-full bg-secondary relative">
             <div className="absolute h-1.5 rounded-full bg-primary" style={{ width: `${Math.min(pct, 100)}%` }} />
           </div>
-          <span className="text-[10px] tabular-nums text-muted-foreground">{formatCurrency(row.original.week52_high)}</span>
+          <span className="text-[10px] tabular-nums text-muted-foreground">{formatCurrency(week52_high)}</span>
         </div>
       );
     },
@@ -460,7 +463,7 @@ function PortfolioContent() {
     if (!pid) return;
     setPositionsLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8100"}/api/portfolios/${pid}/positions`, { credentials: "include" });
+      const res = await fetch(`${API_BASE_URL}/api/portfolios/${pid}/positions`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json() as Position[];
         setPositions(data);
@@ -480,6 +483,23 @@ function PortfolioContent() {
   useEffect(() => {
     loadPositions(portfolioId);
   }, [portfolioId, loadPositions]);
+
+  // Market data — loaded from cache API, falls back to mock
+  const [marketData, setMarketData] = useState<MarketData[]>(MOCK_MARKET_DATA);
+  const [marketDataDate, setMarketDataDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/market-data/positions`, { credentials: "include" })
+      .then((r) => r.ok ? r.json() : Promise.reject(r.status))
+      .then((data: MarketData[]) => {
+        if (data.length > 0) {
+          setMarketData(data);
+          const d = data.find((r) => r.snapshot_date);
+          if (d?.snapshot_date) setMarketDataDate(d.snapshot_date);
+        }
+      })
+      .catch(() => { /* keep mock fallback */ });
+  }, []);
 
   const persistPositions = useCallback((next: Position[]) => {
     setPositions(next);
@@ -1059,11 +1079,13 @@ function PortfolioContent() {
         <>
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              Latest market data for {MOCK_MARKET_DATA.length} holdings — as of last market close
+              Market data for {marketData.length} holdings — as of last cache refresh
             </p>
-            <span className="text-[10px] text-muted-foreground">Last updated: 2026-03-15 16:00 ET</span>
+            {marketDataDate && (
+              <span className="text-[10px] text-muted-foreground">Snapshot: {marketDataDate}</span>
+            )}
           </div>
-          <DataTable columns={marketColumns} data={MOCK_MARKET_DATA} storageKey="portfolio-market" onRowClick={(row) => router.push(`/portfolio/${row.symbol}`)} />
+          <DataTable columns={marketColumns} data={marketData} storageKey="portfolio-market" onRowClick={(row) => router.push(`/portfolio/${row.symbol}`)} />
         </>
       )}
 
