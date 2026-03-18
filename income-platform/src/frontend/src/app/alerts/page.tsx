@@ -9,13 +9,7 @@ import { AlertBadge } from "@/components/alert-badge";
 import { formatDateTime } from "@/lib/utils";
 import type { Alert } from "@/lib/types";
 
-const INITIAL_ALERTS: Alert[] = [
-  { id: "a1", symbol: "PDI", alert_type: "NAV_EROSION", severity: "CRITICAL", status: "ACTIVE", description: "NAV declined 8.2% in 30 days, exceeding -5% threshold", created_at: "2026-03-12T14:30:00Z" },
-  { id: "a2", symbol: "GOF", alert_type: "PREMIUM_SPIKE", severity: "HIGH", status: "ACTIVE", description: "Trading at 12.5% premium to NAV, above 10% threshold", created_at: "2026-03-11T09:15:00Z" },
-  { id: "a3", symbol: "ARCC", alert_type: "COVERAGE_DROP", severity: "MEDIUM", status: "ACTIVE", description: "Dividend coverage ratio dropped to 1.05x from 1.18x", created_at: "2026-03-10T16:00:00Z" },
-  { id: "a4", symbol: "MAIN", alert_type: "NAV_EROSION", severity: "LOW", status: "RESOLVED", description: "Minor NAV fluctuation resolved after earnings", created_at: "2026-03-08T11:00:00Z" },
-  { id: "a5", symbol: "ET", alert_type: "DISTRIBUTION_CUT", severity: "MEDIUM", status: "RESOLVED", description: "Distribution growth slowed to 1% YoY", created_at: "2026-03-05T08:30:00Z" },
-];
+const INITIAL_ALERTS: Alert[] = [];
 
 export default function AlertsPage() {
   const router = useRouter();
