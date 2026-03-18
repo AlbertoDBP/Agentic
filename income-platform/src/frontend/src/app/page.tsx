@@ -95,7 +95,7 @@ export default function DashboardPage() {
       .then((r) => r.ok ? r.json() : Promise.reject(r.status))
       .then((d: DashboardData) => setData(d))
       .catch((e) => console.warn("Dashboard API unavailable:", e));
-  }, []);
+  }, [activePortfolio?.id, activePortfolio?.position_count]);
 
   const metrics       = data?.metrics        ?? EMPTY_METRICS;
   const portfolios    = data?.portfolios      ?? [];

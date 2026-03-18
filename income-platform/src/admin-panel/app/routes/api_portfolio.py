@@ -23,17 +23,21 @@ Notes:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 from typing import Optional
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from app.auth import auth_headers
+from app.config import settings
 from app.database import engine
 
 logger = logging.getLogger("admin.api_portfolio")
@@ -246,6 +250,95 @@ def recalculate_portfolio(portfolio_id: str):
         raise
     except Exception as exc:
         logger.error("recalculate_portfolio error (%s): %s", portfolio_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Portfolio data refresh pipeline ──────────────────────────────────────────
+
+@router.post("/portfolios/{portfolio_id}/refresh")
+async def refresh_portfolio_data(portfolio_id: str):
+    """
+    Trigger full data refresh pipeline for a manually managed portfolio:
+      1. Ensure all position symbols exist in platform_shared.securities
+      2. Batch-refresh market_data_cache via opportunity-scanner service
+      3. Score all symbols via income-scoring service (auto-classify + gate_data={})
+      4. Recalculate portfolio totals
+    Returns a summary of what was processed.
+    """
+    try:
+        # 1. Fetch symbols for this portfolio
+        with _db().connect() as conn:
+            rows = conn.execute(text("""
+                SELECT DISTINCT p.symbol, COALESCE(s.asset_type, 'Unknown') AS asset_type
+                FROM platform_shared.positions p
+                LEFT JOIN platform_shared.securities s ON s.symbol = p.symbol
+                WHERE p.portfolio_id = :pid AND p.status = 'ACTIVE'
+                ORDER BY p.symbol
+            """), {"pid": portfolio_id}).fetchall()
+
+        symbols = [dict(r._mapping) for r in rows]
+        if not symbols:
+            return JSONResponse(content={"status": "ok", "symbols": [], "message": "No active positions to refresh"})
+
+        ticker_list = [r["symbol"] for r in symbols]
+        headers = auth_headers()
+        scored, score_errors, cache_refreshed = 0, [], False
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            # 2. Refresh market_data_cache for all held symbols
+            try:
+                scanner_url = f"{settings.agent07_url}/cache/refresh"
+                resp = await client.post(scanner_url, headers=headers,
+                                         json={"symbols": ticker_list})
+                cache_refreshed = resp.status_code < 400
+            except Exception as e:
+                logger.warning("cache/refresh failed: %s", e)
+
+            # 3. Score each symbol concurrently (auto-classify, inline gate)
+            async def _score_one(sym: str) -> tuple[str, bool]:
+                try:
+                    r = await client.post(
+                        f"{settings.agent03_url}/scores/evaluate",
+                        headers=headers,
+                        json={"ticker": sym, "gate_data": {}},
+                        timeout=30,
+                    )
+                    return sym, r.status_code < 400
+                except Exception as e:
+                    return sym, False
+
+            results = await asyncio.gather(*[_score_one(s) for s in ticker_list])
+            for sym, ok in results:
+                if ok:
+                    scored += 1
+                else:
+                    score_errors.append(sym)
+
+        # 4. Recalculate portfolio totals
+        with _db().connect() as conn:
+            conn.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET total_value = (
+                    SELECT COALESCE(SUM(current_value), 0)
+                    FROM platform_shared.positions
+                    WHERE portfolio_id = :pid AND status = 'ACTIVE'
+                ), updated_at = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id})
+            conn.commit()
+
+        return JSONResponse(content={
+            "status": "ok",
+            "symbols": ticker_list,
+            "total": len(ticker_list),
+            "cache_refreshed": cache_refreshed,
+            "scored": scored,
+            "score_errors": score_errors,
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("refresh_portfolio_data error (%s): %s", portfolio_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

@@ -442,23 +442,32 @@ function PortfolioContent() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
 
+  const isBrokerLinked = activePortfolio?.sync_method === "broker_api";
+
   const syncBroker = async () => {
     if (!activePortfolio) return;
     setSyncLoading(true);
     try {
-      const result = await apiPost<{ cash_balance?: number; portfolio_id?: string }>("/api/broker/sync", {
-        broker: "alpaca",
-        portfolio_id: activePortfolio.id,
-      });
-      if (result?.cash_balance !== undefined) {
-        updatePortfolio(activePortfolio.id, { cash_balance: result.cash_balance });
+      if (isBrokerLinked) {
+        // Broker-connected portfolio: sync positions from Alpaca
+        const result = await apiPost<{ cash_balance?: number }>("/api/broker/sync", {
+          broker: "alpaca",
+          portfolio_id: activePortfolio.id,
+        });
+        if (result?.cash_balance !== undefined) {
+          await updatePortfolio(activePortfolio.id, { cash_balance: result.cash_balance });
+        }
+      } else {
+        // Manually managed portfolio: run full data refresh pipeline
+        await fetch(`${API_BASE_URL}/api/portfolios/${activePortfolio.id}/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
       }
-      // Reload positions and portfolio totals from DB
       await loadPositions(activePortfolio.id);
       await reloadPortfolios();
-      const now = new Date().toLocaleTimeString();
-      setLastSynced(now);
-    } catch { /* silent — broker may not be configured */ }
+      setLastSynced(new Date().toLocaleTimeString());
+    } catch { /* silent */ }
     finally { setSyncLoading(false); }
   };
 
@@ -729,11 +738,11 @@ function PortfolioContent() {
           <button
             onClick={syncBroker}
             disabled={syncLoading}
-            title={lastSynced ? `Last synced: ${lastSynced}` : "Sync positions from broker"}
+            title={lastSynced ? `Last synced: ${lastSynced}` : isBrokerLinked ? "Sync positions from broker" : "Refresh market data and scores"}
             className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", syncLoading && "animate-spin")} />
-            {syncLoading ? "Syncing…" : "Sync from Broker"}
+            {syncLoading ? "Syncing…" : isBrokerLinked ? "Sync from Broker" : "Refresh Data"}
           </button>
           <select
             value={activePortfolio?.id || ""}
