@@ -616,17 +616,37 @@ function PortfolioContent() {
       const lines = text.split("\n").filter((l) => l.trim());
       if (lines.length < 2) return;
 
-      // Parse header
-      const headers = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/['"]/g, ""));
+      // RFC-4180 CSV parser — handles quoted fields containing commas
+      const parseCsvLine = (line: string): string[] => {
+        const fields: string[] = [];
+        let cur = "", inQuote = false;
+        for (let ci = 0; ci < line.length; ci++) {
+          const ch = line[ci];
+          if (ch === '"') { inQuote = !inQuote; }
+          else if (ch === "," && !inQuote) { fields.push(cur.trim()); cur = ""; }
+          else { cur += ch; }
+        }
+        fields.push(cur.trim());
+        return fields;
+      };
+
+      // Parse header — normalize: lowercase, strip quotes/dollar signs/parens and contents
+      const normalizeHeader = (h: string) =>
+        h.toLowerCase().replace(/['"$]/g, "").replace(/\s*\(.*?\)/g, "").trim();
+      const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+
       const symbolIdx = headers.findIndex((h) => h === "symbol" || h === "ticker");
-      const nameIdx = headers.findIndex((h) => h === "name" || h === "company" || h === "description");
-      const typeIdx = headers.findIndex((h) => h === "type" || h === "asset_type" || h === "asset type");
-      const sharesIdx = headers.findIndex((h) => h === "shares" || h === "quantity" || h === "qty");
-      const costIdx = headers.findIndex((h) => h === "cost_basis" || h === "cost basis" || h === "cost" || h === "total cost");
-      const valueIdx = headers.findIndex((h) => h === "current_value" || h === "value" || h === "market value" || h === "market_value");
+      const nameIdx   = headers.findIndex((h) => h === "name" || h === "company" || h === "description");
+      const typeIdx   = headers.findIndex((h) => h === "type" || h === "asset_type" || h === "asset type");
+      // Match "qty", "quantity", "shares", or anything starting with "qty"
+      const sharesIdx = headers.findIndex((h) => h === "shares" || h === "quantity" || h === "qty" || h.startsWith("qty"));
+      // "cost/share" and "cost per share" → treat as per-share cost (multiply by qty later)
+      const costPerShareIdx = headers.findIndex((h) => h === "cost/share" || h === "cost per share" || h === "avg cost" || h === "avg_cost" || h === "average cost");
+      const costTotalIdx    = headers.findIndex((h) => h === "cost_basis" || h === "cost basis" || h === "total cost" || h === "cost");
+      const valueIdx  = headers.findIndex((h) => h === "current_value" || h === "value" || h === "market value" || h === "market_value");
       const incomeIdx = headers.findIndex((h) => h === "annual_income" || h === "income" || h === "annual income");
       const sectorIdx = headers.findIndex((h) => h === "sector");
-      const freqIdx = headers.findIndex((h) => h === "frequency" || h === "dividend_frequency" || h === "div frequency");
+      const freqIdx   = headers.findIndex((h) => h === "frequency" || h === "dividend_frequency" || h === "div frequency");
 
       if (symbolIdx === -1) {
         alert("CSV must have a 'Symbol' or 'Ticker' column.");
@@ -635,40 +655,41 @@ function PortfolioContent() {
 
       let added = 0;
       let updated = 0;
-      const nextPositions = [...positions];
+      // Only include positions from this CSV (don't carry forward all existing positions)
+      const nextPositions: Position[] = [];
 
       for (let i = 1; i < lines.length; i++) {
-        const vals = lines[i].split(",").map((v) => v.trim().replace(/['"$]/g, ""));
+        const vals = parseCsvLine(lines[i]).map((v) => v.replace(/[$,"]/g, "").trim());
         const symbol = vals[symbolIdx]?.toUpperCase();
         if (!symbol) continue;
 
-        const parseNum = (idx: number) => idx >= 0 && vals[idx] ? parseFloat(vals[idx].replace(/,/g, "")) || 0 : 0;
+        const parseNum = (idx: number) => idx >= 0 && vals[idx] ? parseFloat(vals[idx]) || 0 : 0;
 
-        const existing = nextPositions.findIndex((p) => p.symbol === symbol);
-        const pos: Position = {
-          id: existing >= 0 ? nextPositions[existing].id : `pos-${Date.now()}-${i}`,
+        const qty = parseNum(sharesIdx);
+        const costPerShare = parseNum(costPerShareIdx);
+        // total cost_basis: prefer explicit total column, else qty × cost/share
+        const costBasis = costTotalIdx >= 0 ? parseNum(costTotalIdx) : (qty > 0 && costPerShare > 0 ? Math.round(qty * costPerShare * 100) / 100 : 0);
+        const currentValue = parseNum(valueIdx) || costBasis;
+        const annualIncome = parseNum(incomeIdx);
+        const yoc = costBasis > 0 ? (annualIncome / costBasis) * 100 : 0;
+
+        const existing = positions.findIndex((p) => p.symbol === symbol);
+        nextPositions.push({
+          id: existing >= 0 ? positions[existing].id : `pos-${Date.now()}-${i}`,
           portfolio_id: portfolioId,
           symbol,
           name: nameIdx >= 0 ? vals[nameIdx] || "" : "",
           asset_type: typeIdx >= 0 ? vals[typeIdx] || "Common Stock" : "Common Stock",
-          shares: parseNum(sharesIdx),
-          cost_basis: parseNum(costIdx),
-          current_value: parseNum(valueIdx),
-          annual_income: parseNum(incomeIdx),
-          yield_on_cost: 0,
+          shares: qty,
+          cost_basis: costBasis,
+          current_value: currentValue,
+          annual_income: annualIncome,
+          yield_on_cost: yoc,
           sector: sectorIdx >= 0 ? vals[sectorIdx] || "" : "",
           dividend_frequency: freqIdx >= 0 ? vals[freqIdx] || "Quarterly" : "Quarterly",
           alert_count: 0,
-        };
-        if (pos.cost_basis > 0) pos.yield_on_cost = (pos.annual_income / pos.cost_basis) * 100;
-
-        if (existing >= 0) {
-          nextPositions[existing] = pos;
-          updated++;
-        } else {
-          nextPositions.push(pos);
-          added++;
-        }
+        });
+        if (existing >= 0) updated++; else added++;
       }
 
       // Persist to DB
