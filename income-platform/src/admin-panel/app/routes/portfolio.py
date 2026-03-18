@@ -35,7 +35,10 @@ async def portfolio_page(request: Request):
 
             # Positions
             rows = conn.execute(text("""
-                SELECT p.symbol, p.shares, p.cost_basis, p.current_value,
+                SELECT p.symbol,
+                       p.quantity                                       AS shares,
+                       COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0) AS cost_basis,
+                       p.current_value,
                        p.annual_income, p.yield_on_cost,
                        COALESCE(s.asset_type, 'Unknown') as asset_type,
                        COALESCE(s.name, p.symbol) as name

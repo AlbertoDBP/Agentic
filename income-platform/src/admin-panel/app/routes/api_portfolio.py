@@ -3,11 +3,13 @@ Admin Panel — JSON API routes for portfolio + position data.
 Reads directly from platform_shared tables.
 
 Routes:
-  GET /api/portfolios                    → list all active portfolios
-  GET /api/portfolios/{id}/positions     → all active positions for a portfolio
-  GET /api/positions/{symbol}            → single position by symbol (any portfolio)
-  GET /api/market-data/positions         → market_data_cache for all portfolio symbols
-  POST /api/portfolios/{id}/prices       → update market_data_cache prices (manual entry for bonds etc.)
+  GET  /api/portfolios                    → list all active portfolios
+  GET  /api/portfolios/{id}/positions     → all active positions for a portfolio
+  POST /api/portfolios/{id}/recalculate   → recompute portfolio total_value from positions
+  GET  /api/positions/{symbol}            → single position by symbol (any portfolio)
+  PATCH /api/positions/{id}              → update position qty/cost/income fields
+  GET  /api/market-data/positions         → market_data_cache for all portfolio symbols
+  POST /api/portfolios/{id}/prices        → update market_data_cache prices (manual entry for bonds etc.)
 """
 from __future__ import annotations
 
@@ -72,6 +74,55 @@ def list_portfolios():
         raise
     except Exception as exc:
         logger.error("list_portfolios error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Portfolio recalculate ─────────────────────────────────────────────────────
+
+@router.post("/portfolios/{portfolio_id}/recalculate")
+def recalculate_portfolio(portfolio_id: str):
+    """
+    Recompute portfolio.total_value from sum of active position current_values.
+    Also updates annual_income aggregate. Call this after manually editing positions.
+    """
+    try:
+        with _db().connect() as conn:
+            conn.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET total_value = (
+                    SELECT COALESCE(SUM(current_value), 0) + COALESCE(
+                        (SELECT cash_balance FROM platform_shared.portfolios WHERE id = :pid), 0
+                    )
+                    FROM platform_shared.positions
+                    WHERE portfolio_id = :pid AND status = 'ACTIVE'
+                ),
+                updated_at = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id})
+            # Recompute portfolio_weight_pct for each position
+            conn.execute(text("""
+                UPDATE platform_shared.positions p
+                SET portfolio_weight_pct = ROUND(
+                    100.0 * p.current_value / NULLIF(
+                        (SELECT SUM(current_value)
+                         FROM platform_shared.positions
+                         WHERE portfolio_id = :pid AND status = 'ACTIVE'),
+                        0
+                    ), 3
+                )
+                WHERE p.portfolio_id = :pid AND p.status = 'ACTIVE'
+            """), {"pid": portfolio_id})
+            conn.commit()
+            row = conn.execute(text("""
+                SELECT total_value, cash_balance FROM platform_shared.portfolios WHERE id = :pid
+            """), {"pid": portfolio_id}).fetchone()
+            return {"recalculated": True, "portfolio_id": portfolio_id,
+                    "total_value": float(row[0]) if row and row[0] else 0,
+                    "cash_balance": float(row[1]) if row and row[1] else 0}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("recalculate_portfolio error (%s): %s", portfolio_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -227,6 +278,74 @@ def get_position_by_symbol(symbol: str):
         raise
     except Exception as exc:
         logger.error("get_position_by_symbol error (%s): %s", symbol, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Update a position (quantity, cost, income) ────────────────────────────────
+
+class PositionUpdate(BaseModel):
+    quantity: Optional[float] = None
+    avg_cost_basis: Optional[float] = None
+    annual_income: Optional[float] = None
+    yield_on_cost: Optional[float] = None
+    current_price: Optional[float] = None
+
+
+@router.patch("/positions/{position_id}")
+def update_position(position_id: str, update: PositionUpdate):
+    """
+    Partially update a position's quantity, cost basis, income, or price.
+    Automatically recalculates derived fields (total_cost_basis, current_value)
+    and refreshes the parent portfolio's total_value.
+    """
+    try:
+        with _db().connect() as conn:
+            row = conn.execute(text("""
+                SELECT id, portfolio_id, quantity, avg_cost_basis, current_price
+                FROM platform_shared.positions
+                WHERE id = :id AND status = 'ACTIVE'
+            """), {"id": position_id}).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Position not found: {position_id}")
+
+            qty = update.quantity if update.quantity is not None else float(row[2] or 0)
+            avg_cb = update.avg_cost_basis if update.avg_cost_basis is not None else float(row[3] or 0)
+            cur_price = update.current_price if update.current_price is not None else float(row[4] or avg_cb)
+            portfolio_id = str(row[1])
+
+            conn.execute(text("""
+                UPDATE platform_shared.positions SET
+                    quantity          = :qty,
+                    avg_cost_basis    = :avg_cb,
+                    total_cost_basis  = ROUND(:qty * :avg_cb, 2),
+                    current_price     = :cur_price,
+                    current_value     = ROUND(:qty * :cur_price, 2),
+                    annual_income     = COALESCE(:annual_income, annual_income),
+                    yield_on_cost     = COALESCE(:yoc, yield_on_cost),
+                    updated_at        = NOW()
+                WHERE id = :id AND status = 'ACTIVE'
+            """), {
+                "qty": qty, "avg_cb": avg_cb, "cur_price": cur_price,
+                "annual_income": update.annual_income, "yoc": update.yield_on_cost,
+                "id": position_id,
+            })
+
+            # Refresh portfolio total
+            conn.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET total_value = (
+                    SELECT COALESCE(SUM(current_value), 0) + COALESCE(cash_balance, 0)
+                    FROM platform_shared.positions
+                    WHERE portfolio_id = :pid AND status = 'ACTIVE'
+                ), updated_at = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id})
+            conn.commit()
+            return {"updated": True, "position_id": position_id, "portfolio_id": portfolio_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("update_position error (%s): %s", position_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

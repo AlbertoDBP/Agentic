@@ -242,8 +242,12 @@ async def sync_broker(req: SyncRequest, db: Session = Depends(get_db)):
 
         upserted_positions += 1
 
-    # 7. Mark positions NOT returned by broker as CLOSED
-    if positions:
+    # 7. Mark positions NOT returned by broker as CLOSED.
+    # Only do this for auto-resolved portfolios (no explicit portfolio_id in request).
+    # If the user explicitly targeted a portfolio (e.g. a manual HDO portfolio),
+    # we upsert broker positions into it without wiping the existing holdings.
+    auto_resolved = req.portfolio_id is None
+    if positions and auto_resolved:
         live_symbols = [p.symbol for p in positions]
         placeholders = ", ".join(f":s{i}" for i in range(len(live_symbols)))
         params = {f"s{i}": s for i, s in enumerate(live_symbols)}
