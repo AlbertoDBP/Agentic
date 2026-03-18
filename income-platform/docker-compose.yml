@@ -8,24 +8,22 @@ services:
 # If PGBOUNCER_URL is not set, services fall back to DATABASE_URL (direct connection).
 # ─────────────────────────────────────────────────────────────────────────────
   pgbouncer:
-    image: bitnami/pgbouncer:latest
+    image: edoburu/pgbouncer:1.22.0-p0
     container_name: pgbouncer
     environment:
-      - POSTGRESQL_HOST=${PG_HOST}
-      - POSTGRESQL_PORT=${PG_PORT:-25060}
-      - POSTGRESQL_DATABASE=${PG_DATABASE}
-      - POSTGRESQL_USERNAME=${PG_USER}
-      - POSTGRESQL_PASSWORD=${PG_PASSWORD}
-      - PGBOUNCER_PORT=5432
-      - PGBOUNCER_POOL_MODE=transaction
-      - PGBOUNCER_MAX_CLIENT_CONN=200
-      - PGBOUNCER_DEFAULT_POOL_SIZE=25
-      - PGBOUNCER_MIN_POOL_SIZE=2
-      - PGBOUNCER_RESERVE_POOL_SIZE=5
-      - PGBOUNCER_SERVER_TLS_SSLMODE=require
+      # URL without ?sslmode=... query string — SSL handled by SERVER_TLS_SSLMODE below
+      - DATABASE_URL=postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT:-25060}/${PG_DATABASE}
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=200
+      - DEFAULT_POOL_SIZE=25
+      - MIN_POOL_SIZE=2
+      - RESERVE_POOL_SIZE=5
+      - SERVER_TLS_SSLMODE=require
+      - LOG_CONNECTIONS=0
+      - LOG_DISCONNECTIONS=0
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${PG_USER} || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
