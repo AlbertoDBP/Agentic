@@ -256,7 +256,6 @@ const healthColumns: ColumnDef<Position>[] = [
   { accessorKey: "dividend_frequency", header: "Frequency" },
 ];
 
-const MOCK_MARKET_DATA = HD_MARKET_DATA;
 
 const marketColumns: ColumnDef<MarketData>[] = [
   {
