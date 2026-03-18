@@ -19,7 +19,7 @@ if _url:
     engine = create_engine(
         _url,
         pool_pre_ping=True,
-        connect_args={"sslmode": "require"},
+        connect_args={},  # sslmode driven by DATABASE_URL (?sslmode=require or ?sslmode=disable)
     )
     # Startup connectivity check
     try:

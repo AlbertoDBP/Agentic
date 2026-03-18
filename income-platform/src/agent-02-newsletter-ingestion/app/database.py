@@ -33,7 +33,7 @@ engine = create_engine(
     pool_pre_ping=True,                    # validate connections before use
     pool_recycle=3600,                     # recycle connections every hour
     echo=(settings.log_level == "DEBUG"),  # SQL logging in debug mode only
-    connect_args={"sslmode": "require"},
+    connect_args={},  # sslmode driven by DATABASE_URL (?sslmode=require or ?sslmode=disable)
 )
 
 

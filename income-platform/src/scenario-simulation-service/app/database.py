@@ -18,7 +18,7 @@ def _build_url(raw_url: str) -> str:
 engine = create_engine(
     _build_url(settings.database_url),
     pool_pre_ping=True,
-    connect_args={"sslmode": "require"},
+    connect_args={},  # sslmode driven by DATABASE_URL (?sslmode=require or ?sslmode=disable)
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -22,12 +22,11 @@ class DatabaseManager:
             database_url = database_url.replace(
                 "postgresql://", "postgresql+asyncpg://", 1
             )
-        # asyncpg doesn't understand ?sslmode=require — strip it and pass ssl
+        # asyncpg doesn't understand ?sslmode=* — strip it and pass ssl
         # via connect_args instead (handled in connect())
+        import re as _re
         self._ssl_required = "sslmode=require" in database_url
-        database_url = database_url.replace("?sslmode=require", "").replace(
-            "&sslmode=require", ""
-        )
+        database_url = _re.sub(r"[?&]sslmode=[^&]*", "", database_url)
         self.database_url = database_url
         self.engine: Optional[AsyncEngine] = None
         self.session_factory: Optional[async_sessionmaker] = None

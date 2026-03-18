@@ -32,7 +32,7 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_recycle=3600,
     echo=(settings.log_level == "DEBUG"),
-    connect_args={"sslmode": "require"},
+    connect_args={},  # sslmode driven by DATABASE_URL (?sslmode=require or ?sslmode=disable)
 )
 
 

@@ -19,7 +19,7 @@ def _build_url(raw_url: str) -> str:
 
 engine = create_engine(
     _build_url(settings.database_url),
-    connect_args={"sslmode": "require"},
+    connect_args={},  # sslmode driven by DATABASE_URL (?sslmode=require or ?sslmode=disable)
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_pre_ping=True,
