@@ -574,21 +574,22 @@ def get_income_by_month(portfolio_id: str):
 # ── Market data for all held symbols (cache + fallback from positions) ────────
 
 @router.get("/market-data/positions")
-def get_market_data_for_positions():
+def get_market_data_for_positions(portfolio_id: Optional[str] = None):
     """
-    Return market data for all symbols held in active portfolios.
+    Return market data for symbols held in a specific portfolio (or all portfolios).
     Uses positions as the base set so ALL held symbols appear — even those not
     yet in market_data_cache. Cache data is merged where available.
     """
     try:
         with _db().connect() as conn:
-            rows = conn.execute(text("""
+            portfolio_filter = "AND portfolio_id = :pid" if portfolio_id else ""
+            rows = conn.execute(text(f"""
                 WITH pos_agg AS (
                     SELECT symbol,
                            SUM(current_value)  AS current_value,
                            SUM(annual_income)  AS annual_income
                     FROM platform_shared.positions
-                    WHERE status = 'ACTIVE'
+                    WHERE status = 'ACTIVE' {portfolio_filter}
                     GROUP BY symbol
                 )
                 SELECT
@@ -619,14 +620,14 @@ def get_market_data_for_positions():
                     SELECT DISTINCT ON (symbol)
                         symbol, current_price, price_updated_at
                     FROM platform_shared.positions
-                    WHERE status = 'ACTIVE'
+                    WHERE status = 'ACTIVE' {portfolio_filter}
                     ORDER BY symbol, current_value DESC NULLS LAST
                 ) p
                 LEFT JOIN platform_shared.market_data_cache m ON m.symbol = p.symbol
                 LEFT JOIN platform_shared.securities s ON s.symbol = p.symbol
                 LEFT JOIN pos_agg pa ON pa.symbol = p.symbol
                 ORDER BY p.symbol
-            """)).fetchall()
+            """), {"pid": portfolio_id} if portfolio_id else {}).fetchall()
 
             result = []
             for r in rows:

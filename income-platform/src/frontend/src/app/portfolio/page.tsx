@@ -494,22 +494,21 @@ function PortfolioContent() {
     loadPositions(portfolioId);
   }, [portfolioId, loadPositions]);
 
-  // Market data — loaded from cache API, falls back to mock
-  const [marketData, setMarketData] = useState<MarketData[]>(MOCK_MARKET_DATA);
+  // Market data — loaded from cache API, filtered to active portfolio
+  const [marketData, setMarketData] = useState<MarketData[]>([]);
   const [marketDataDate, setMarketDataDate] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/market-data/positions`, { credentials: "include" })
+    if (!portfolioId) return;
+    fetch(`${API_BASE_URL}/api/market-data/positions?portfolio_id=${portfolioId}`, { credentials: "include" })
       .then((r) => r.ok ? r.json() : Promise.reject(r.status))
       .then((data: MarketData[]) => {
-        if (data.length > 0) {
-          setMarketData(data);
-          const d = data.find((r) => r.snapshot_date);
-          if (d?.snapshot_date) setMarketDataDate(d.snapshot_date);
-        }
+        setMarketData(data);
+        const d = data.find((r) => r.snapshot_date);
+        if (d?.snapshot_date) setMarketDataDate(d.snapshot_date);
       })
-      .catch(() => { /* keep mock fallback */ });
-  }, []);
+      .catch(() => setMarketData([]));
+  }, [portfolioId]);
 
   const persistPositions = useCallback((next: Position[]) => {
     setPositions(next);
