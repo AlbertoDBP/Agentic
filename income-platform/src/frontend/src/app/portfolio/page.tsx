@@ -551,8 +551,15 @@ function PortfolioContent() {
     setEditingPositionId(null);
   };
 
-  const deletePosition = (id: string) => {
+  const deletePosition = async (id: string) => {
+    try {
+      await fetch(`${API_BASE_URL}/api/positions/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+    } catch { /* fall through — still remove locally */ }
     persistPositions(positions.filter((p) => p.id !== id));
+    await reloadPortfolios();
   };
 
   const addPosition = () => {

@@ -133,24 +133,25 @@ def recalculate_portfolio(portfolio_id: str):
 
 # ── Positions ─────────────────────────────────────────────────────────────────
 
-# Helper: ensure dividend_frequency column exists on positions table
-_freq_col_checked = False
+# Helper: ensure extra columns exist on positions / securities tables
+_extra_cols_checked = False
 
 def _ensure_freq_column(conn):
-    """Add dividend_frequency to positions and securities tables if not already present."""
-    global _freq_col_checked
-    if _freq_col_checked:
+    """Add dividend_frequency and sector to positions/securities tables if not already present."""
+    global _extra_cols_checked
+    if _extra_cols_checked:
         return
     for ddl in [
         "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS dividend_frequency VARCHAR(30) DEFAULT NULL",
         "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS dividend_frequency VARCHAR(30) DEFAULT NULL",
+        "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS sector VARCHAR(100) DEFAULT NULL",
     ]:
         try:
             conn.execute(text(ddl))
             conn.commit()
         except Exception:
             pass
-    _freq_col_checked = True
+    _extra_cols_checked = True
 
 
 def _row_to_position(pos: dict) -> dict:
@@ -193,7 +194,7 @@ def get_positions(portfolio_id: str):
                     p.symbol,
                     COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(s.asset_type, 'Unknown')   AS asset_type,
-                    COALESCE(s.sector, '')               AS sector,
+                    COALESCE(p.sector, s.sector, '')     AS sector,
                     p.quantity                           AS shares,
                     COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0)
                                                          AS cost_basis,
@@ -203,7 +204,12 @@ def get_positions(portfolio_id: str):
                     COALESCE(p.avg_cost_basis, 0)        AS avg_cost,
                     COALESCE(p.annual_income, 0)         AS annual_income,
                     COALESCE(p.yield_on_cost, 0)         AS yield_on_cost,
-                    COALESCE(m.dividend_yield, 0)        AS current_yield,
+                    CASE
+                        WHEN COALESCE(m.dividend_yield, 0) > 0 THEN m.dividend_yield
+                        WHEN COALESCE(p.current_value, 0) > 0 AND COALESCE(p.annual_income, 0) > 0
+                             THEN ROUND((p.annual_income / p.current_value) * 100, 2)
+                        ELSE 0
+                    END                                  AS current_yield,
                     COALESCE(sc.total_score, 0)          AS score,
                     COALESCE(sc.grade, '')               AS grade,
                     COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
@@ -260,7 +266,7 @@ def get_position_by_symbol(symbol: str):
                     p.symbol,
                     COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(s.asset_type, 'Unknown')   AS asset_type,
-                    COALESCE(s.sector, '')               AS sector,
+                    COALESCE(p.sector, s.sector, '')     AS sector,
                     p.quantity                           AS shares,
                     COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0)
                                                          AS cost_basis,
@@ -270,7 +276,12 @@ def get_position_by_symbol(symbol: str):
                     COALESCE(p.avg_cost_basis, 0)        AS avg_cost,
                     COALESCE(p.annual_income, 0)         AS annual_income,
                     COALESCE(p.yield_on_cost, 0)         AS yield_on_cost,
-                    COALESCE(m.dividend_yield, 0)        AS current_yield,
+                    CASE
+                        WHEN COALESCE(m.dividend_yield, 0) > 0 THEN m.dividend_yield
+                        WHEN COALESCE(p.current_value, 0) > 0 AND COALESCE(p.annual_income, 0) > 0
+                             THEN ROUND((p.annual_income / p.current_value) * 100, 2)
+                        ELSE 0
+                    END                                  AS current_yield,
                     COALESCE(sc.total_score, 0)          AS score,
                     COALESCE(sc.grade, '')               AS grade,
                     COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
@@ -357,6 +368,7 @@ def update_position(position_id: str, update: PositionUpdate):
                     annual_income     = COALESCE(:annual_income, annual_income),
                     yield_on_cost     = COALESCE(:yoc, yield_on_cost),
                     dividend_frequency = COALESCE(:freq, dividend_frequency),
+                    sector            = COALESCE(:sector, sector),
                     updated_at        = NOW()
                 WHERE id = :id AND status = 'ACTIVE'
             """), {
@@ -364,6 +376,7 @@ def update_position(position_id: str, update: PositionUpdate):
                 "annual_income": update.annual_income,
                 "yoc": yoc_frac,
                 "freq": update.dividend_frequency,
+                "sector": update.sector,
                 "id": position_id,
             })
 
@@ -393,6 +406,48 @@ def update_position(position_id: str, update: PositionUpdate):
         raise
     except Exception as exc:
         logger.error("update_position error (%s): %s", position_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Delete (soft-close) a position ───────────────────────────────────────────
+
+@router.delete("/positions/{position_id}")
+def delete_position(position_id: str):
+    """
+    Soft-delete a position: set status = 'CLOSED' and closed_date = today.
+    Refreshes the parent portfolio total_value.
+    """
+    try:
+        with _db().connect() as conn:
+            row = conn.execute(text("""
+                SELECT portfolio_id FROM platform_shared.positions
+                WHERE id = :id AND status = 'ACTIVE'
+            """), {"id": position_id}).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Position not found: {position_id}")
+            portfolio_id = str(row[0])
+
+            conn.execute(text("""
+                UPDATE platform_shared.positions
+                SET status = 'CLOSED', closed_date = CURRENT_DATE, updated_at = NOW()
+                WHERE id = :id
+            """), {"id": position_id})
+
+            conn.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET total_value = (
+                    SELECT COALESCE(SUM(current_value), 0) + COALESCE(cash_balance, 0)
+                    FROM platform_shared.positions
+                    WHERE portfolio_id = :pid AND status = 'ACTIVE'
+                ), updated_at = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id})
+            conn.commit()
+            return {"deleted": True, "position_id": position_id, "portfolio_id": portfolio_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("delete_position error (%s): %s", position_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
