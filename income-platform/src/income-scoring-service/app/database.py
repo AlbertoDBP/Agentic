@@ -18,21 +18,25 @@ logger = logging.getLogger(__name__)
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
-def _build_url(raw_url: str) -> str:
-    if "?" in raw_url:
-        return raw_url.split("?")[0]
-    return raw_url
+def _build_url(raw_url: str) -> tuple[str, dict]:
+    """Strip query params from URL; return (clean_url, connect_args with sslmode)."""
+    import re
+    m = re.search(r'[?&]sslmode=([^&]+)', raw_url)
+    sslmode = m.group(1) if m else "disable"
+    clean = raw_url.split("?")[0] if "?" in raw_url else raw_url
+    return clean, {"sslmode": sslmode}
 
 
+_db_url, _connect_args = _build_url(settings.database_url)
 engine = create_engine(
-    _build_url(settings.database_url),
+    _db_url,
     poolclass=QueuePool,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_pre_ping=True,
     pool_recycle=3600,
     echo=(settings.log_level == "DEBUG"),
-    connect_args={},  # sslmode driven by DATABASE_URL (?sslmode=require or ?sslmode=disable)
+    connect_args=_connect_args,
 )
 
 
