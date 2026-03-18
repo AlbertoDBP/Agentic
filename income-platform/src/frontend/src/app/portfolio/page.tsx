@@ -15,12 +15,11 @@ import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Tras
 import { apiPost } from "@/lib/api";
 import { useState, useMemo, useEffect, useRef, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { HD_POSITIONS, HD_MARKET_DATA, type MarketData } from "@/lib/mock-portfolio-data";
+import { type MarketData } from "@/lib/mock-portfolio-data";
 import { VulnerabilityContent } from "@/app/vulnerability/page";
 import { StressTestContent } from "@/app/stress-test/page";
 import { SimulationContent } from "@/app/income-simulation/page";
 
-const MOCK_POSITIONS = HD_POSITIONS;
 
 type PortfolioTab = "summary" | "positions" | "health" | "market" | "vulnerability" | "stress-test" | "simulation";
 
@@ -481,12 +480,7 @@ function PortfolioContent() {
         return;
       }
     } catch { /* fall through */ }
-    // Fallback: localStorage then mock
-    try {
-      const saved = localStorage.getItem(`positions-${pid}`);
-      if (saved) { setPositions(JSON.parse(saved)); setPositionsLoading(false); return; }
-    } catch { /* ignore */ }
-    setPositions(MOCK_POSITIONS);
+    setPositions([]);
     setPositionsLoading(false);
   }, []);
 
@@ -512,8 +506,7 @@ function PortfolioContent() {
 
   const persistPositions = useCallback((next: Position[]) => {
     setPositions(next);
-    localStorage.setItem(`positions-${portfolioId}`, JSON.stringify(next));
-  }, [portfolioId]);
+  }, []);
 
   // Position editing
   const [editingPositionId, setEditingPositionId] = useState<string | null>(null);

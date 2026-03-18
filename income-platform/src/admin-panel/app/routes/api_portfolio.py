@@ -3,9 +3,12 @@ Admin Panel — JSON API routes for portfolio + position data.
 Reads directly from platform_shared tables.
 
 Routes:
-  GET  /api/portfolios                    → list all active portfolios
-  GET  /api/portfolios/{id}/positions     → all active positions for a portfolio
-  POST /api/portfolios/{id}/recalculate   → recompute portfolio total_value from positions
+  GET    /api/portfolios                  → list all active portfolios
+  POST   /api/portfolios                  → create portfolio + account record
+  PATCH  /api/portfolios/{id}             → update portfolio name/account_type/broker
+  DELETE /api/portfolios/{id}             → soft-delete (ARCHIVED) + close positions
+  GET    /api/portfolios/{id}/positions   → all active positions for a portfolio
+  POST   /api/portfolios/{id}/recalculate → recompute portfolio total_value from positions
   GET  /api/positions/{symbol}            → single position by symbol (any portfolio)
   PATCH /api/positions/{id}              → update position qty/cost/income/sector/frequency
   GET  /api/market-data/positions         → market data for all held symbols (cache + fallback from positions)
@@ -24,6 +27,7 @@ import json
 import logging
 import re
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -34,6 +38,21 @@ from app.database import engine
 
 logger = logging.getLogger("admin.api_portfolio")
 router = APIRouter(prefix="/api")
+
+_DEFAULT_TENANT = "00000000-0000-0000-0000-000000000001"
+
+_ACCOUNT_TYPE_NORM = {
+    "taxable": "taxable", "brokerage": "taxable",
+    "traditional ira": "traditional_ira", "traditional_ira": "traditional_ira", "ira": "traditional_ira",
+    "roth ira": "roth_ira", "roth_ira": "roth_ira", "roth": "roth_ira",
+    "401k": "401k", "401(k)": "401k",
+    "403b": "403b", "403(b)": "403b",
+    "hsa": "hsa", "custodial": "custodial",
+}
+
+
+def _normalize_account_type(raw: str) -> str:
+    return _ACCOUNT_TYPE_NORM.get(raw.lower().strip(), "taxable")
 
 
 def _db():
@@ -82,6 +101,102 @@ def list_portfolios():
         raise
     except Exception as exc:
         logger.error("list_portfolios error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class PortfolioCreate(BaseModel):
+    name: str
+    account_type: str = "taxable"
+    broker: str = ""
+
+
+class PortfolioUpdate(BaseModel):
+    name: Optional[str] = None
+    account_type: Optional[str] = None
+    broker: Optional[str] = None
+
+
+@router.post("/portfolios")
+def create_portfolio(body: PortfolioCreate):
+    """Create a new portfolio with an associated account record."""
+    try:
+        pid = str(uuid4())
+        acct_id = str(uuid4())
+        acct_type = _normalize_account_type(body.account_type)
+        with _db().begin() as conn:
+            conn.execute(text("""
+                INSERT INTO platform_shared.accounts
+                    (id, tenant_id, account_name, account_type, broker, currency, is_active, created_at, updated_at)
+                VALUES
+                    (:id, :tid, :name, :acct_type, :broker, 'USD', TRUE, NOW(), NOW())
+            """), {"id": acct_id, "tid": _DEFAULT_TENANT, "name": body.name,
+                   "acct_type": acct_type, "broker": body.broker or ""})
+            conn.execute(text("""
+                INSERT INTO platform_shared.portfolios
+                    (id, tenant_id, account_id, portfolio_name, status, cash_balance, total_value, created_at, updated_at)
+                VALUES
+                    (:id, :tid, :acct_id, :name, 'ACTIVE', 0, 0, NOW(), NOW())
+            """), {"id": pid, "tid": _DEFAULT_TENANT, "acct_id": acct_id, "name": body.name})
+        return JSONResponse(content={
+            "id": pid, "name": body.name, "account_type": acct_type,
+            "broker": body.broker or "", "cash_balance": 0.0,
+            "total_value": 0.0, "position_count": 0,
+        })
+    except Exception as exc:
+        logger.error("create_portfolio error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.patch("/portfolios/{portfolio_id}")
+def update_portfolio(portfolio_id: str, body: PortfolioUpdate):
+    """Update portfolio name and/or account attributes."""
+    try:
+        with _db().begin() as conn:
+            if body.name:
+                conn.execute(text("""
+                    UPDATE platform_shared.portfolios
+                    SET portfolio_name = :name, updated_at = NOW()
+                    WHERE id = :pid
+                """), {"name": body.name, "pid": portfolio_id})
+            if body.account_type is not None or body.broker is not None:
+                updates, params = [], {"pid": portfolio_id}
+                if body.account_type is not None:
+                    updates.append("account_type = :acct_type")
+                    params["acct_type"] = _normalize_account_type(body.account_type)
+                if body.broker is not None:
+                    updates.append("broker = :broker")
+                    params["broker"] = body.broker
+                if updates:
+                    conn.execute(text(f"""
+                        UPDATE platform_shared.accounts a
+                        SET {", ".join(updates)}, updated_at = NOW()
+                        FROM platform_shared.portfolios p
+                        WHERE p.id = :pid AND a.id = p.account_id
+                    """), params)
+        return JSONResponse(content={"status": "ok"})
+    except Exception as exc:
+        logger.error("update_portfolio error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.delete("/portfolios/{portfolio_id}")
+def delete_portfolio(portfolio_id: str):
+    """Soft-delete a portfolio and close all its positions."""
+    try:
+        with _db().begin() as conn:
+            conn.execute(text("""
+                UPDATE platform_shared.positions
+                SET status = 'CLOSED', updated_at = NOW()
+                WHERE portfolio_id = :pid AND status = 'ACTIVE'
+            """), {"pid": portfolio_id})
+            conn.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET status = 'ARCHIVED', updated_at = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id})
+        return JSONResponse(content={"status": "ok"})
+    except Exception as exc:
+        logger.error("delete_portfolio error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

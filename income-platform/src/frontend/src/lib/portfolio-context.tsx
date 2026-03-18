@@ -10,9 +10,9 @@ interface PortfolioContextValue {
   portfolios: Portfolio[];
   activePortfolio: Portfolio | null;
   setActiveId: (id: string) => void;
-  addPortfolio: (p: Omit<Portfolio, "id">) => void;
-  updatePortfolio: (id: string, updates: Partial<Portfolio>) => void;
-  deletePortfolio: (id: string) => void;
+  addPortfolio: (p: Omit<Portfolio, "id">) => Promise<void>;
+  updatePortfolio: (id: string, updates: Partial<Portfolio>) => Promise<void>;
+  deletePortfolio: (id: string) => Promise<void>;
   reloadPortfolios: () => Promise<void>;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
@@ -24,9 +24,9 @@ const PortfolioContext = createContext<PortfolioContextValue>({
   portfolios: [],
   activePortfolio: null,
   setActiveId: () => {},
-  addPortfolio: () => {},
-  updatePortfolio: () => {},
-  deletePortfolio: () => {},
+  addPortfolio: async () => {},
+  updatePortfolio: async () => {},
+  deletePortfolio: async () => {},
   reloadPortfolios: async () => {},
   sidebarCollapsed: false,
   toggleSidebar: () => {},
@@ -123,22 +123,33 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     document.documentElement.className = t;
   };
 
-  // These mutate local state only (no DB write for add/delete — those are broker-initiated)
-  const addPortfolio = (p: Omit<Portfolio, "id">) => {
-    const newP: Portfolio = { ...p, id: `p${Date.now()}` };
-    setPortfolios((prev) => [...prev, newP]);
-  };
-
-  const updatePortfolio = (id: string, updates: Partial<Portfolio>) => {
-    setPortfolios((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
-  };
-
-  const deletePortfolio = (id: string) => {
-    setPortfolios((prev) => {
-      const next = prev.filter((p) => p.id !== id);
-      if (activeId === id && next.length > 0) setActiveId(next[0].id);
-      return next;
+  const addPortfolio = async (p: Omit<Portfolio, "id">) => {
+    await fetch(`${API_BASE_URL}/api/portfolios`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: p.name, account_type: p.account_type, broker: p.broker }),
     });
+    await reloadPortfolios();
+  };
+
+  const updatePortfolio = async (id: string, updates: Partial<Portfolio>) => {
+    // Optimistic local update
+    setPortfolios((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+    await fetch(`${API_BASE_URL}/api/portfolios/${id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: updates.name, account_type: updates.account_type, broker: updates.broker }),
+    });
+  };
+
+  const deletePortfolio = async (id: string) => {
+    await fetch(`${API_BASE_URL}/api/portfolios/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    await reloadPortfolios();
   };
 
   const activePortfolio = portfolios.find((p) => p.id === activeId) || portfolios[0] || null;
