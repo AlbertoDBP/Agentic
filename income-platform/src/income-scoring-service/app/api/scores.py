@@ -37,6 +37,7 @@ from app.scoring.quality_gate import (
     BondGateInput,
     CoveredCallETFGateInput,
     DividendStockGateInput,
+    GateStatus,
     QualityGateEngine,
 )
 
@@ -516,7 +517,10 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Quality gate evaluation error: {e}",
             )
-        if not inline_result.passed:
+        # Hard-veto only when gate actually found failing data.
+        # INSUFFICIENT_DATA means we have no data to evaluate — treat as provisional pass
+        # so income-specific classes (MORTGAGE_REIT, BDC, MLP, CEF, PREFERRED) can still score.
+        if not inline_result.passed and inline_result.status != GateStatus.INSUFFICIENT_DATA:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={

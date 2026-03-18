@@ -261,7 +261,8 @@ async def refresh_portfolio_data(portfolio_id: str):
     Trigger full data refresh pipeline for a manually managed portfolio:
       1. Ensure all position symbols exist in platform_shared.securities
       2. Batch-refresh market_data_cache via opportunity-scanner service
-      3. Score all symbols via income-scoring service (auto-classify + gate_data={})
+      2b. Classify all symbols via asset-classification service; write asset_type to securities
+      3. Score all symbols via income-scoring service (asset_class from step 2b + gate_data={})
       4. Recalculate portfolio totals
     Returns a summary of what was processed.
     """
@@ -297,26 +298,71 @@ async def refresh_portfolio_data(portfolio_id: str):
             except Exception as e:
                 logger.warning("cache/refresh failed: %s", e)
 
+            # 2b. Classify all symbols via agent-04 (batch, up to 100 per call)
+            #     and write asset_type back to platform_shared.securities.
+            asset_class_map: dict[str, str] = {}
+            try:
+                # Standard symbols only (skip slash-format preferreds and bond CUSIPs)
+                classifiable = [t for t in ticker_list if "/" not in t and len(t) <= 8]
+                batch_size = 100
+                for i in range(0, len(classifiable), batch_size):
+                    batch = classifiable[i: i + batch_size]
+                    try:
+                        r = await client.post(
+                            f"{settings.agent04_url}/classify/batch",
+                            headers=headers,
+                            json={"tickers": batch},
+                            timeout=30,
+                        )
+                        if r.status_code == 200:
+                            data = r.json()
+                            for item in data.get("results", []):
+                                sym = item.get("ticker", "").upper()
+                                ac = item.get("asset_class") or item.get("asset_type")
+                                if sym and ac:
+                                    asset_class_map[sym] = ac
+                    except Exception as be:
+                        logger.warning("classify/batch failed (batch %d): %s", i, be)
+
+                # Write classifications back to securities table
+                if asset_class_map:
+                    with _db().connect() as conn:
+                        for sym, ac in asset_class_map.items():
+                            conn.execute(text("""
+                                UPDATE platform_shared.securities
+                                SET asset_type = :ac, updated_at = NOW()
+                                WHERE symbol = :sym
+                            """), {"sym": sym, "ac": ac})
+                        conn.commit()
+                    logger.info("Wrote %d classifications to securities", len(asset_class_map))
+            except Exception as ce:
+                logger.warning("Classification step failed: %s", ce)
+
         # 3. Score symbols in background — fire-and-forget to avoid 4-min timeout on 70+ tickers.
         #    Scoring stores income_scores; does not affect portfolio total_value calculation.
-        async def _score_background(tickers: list, hdrs: dict):
+        #    Pass asset_class from classification so agent-03 doesn't re-classify as UNKNOWN.
+        async def _score_background(tickers: list, hdrs: dict, ac_map: dict):
             sem = asyncio.Semaphore(5)
 
             async def _score_one(sym: str):
                 async with sem:
                     try:
+                        payload: dict = {"ticker": sym, "gate_data": {}}
+                        ac = ac_map.get(sym)
+                        if ac and ac.upper() != "UNKNOWN":
+                            payload["asset_class"] = ac.upper()
                         async with httpx.AsyncClient(timeout=30) as c:
                             await c.post(
                                 f"{settings.agent03_url}/scores/evaluate",
                                 headers=hdrs,
-                                json={"ticker": sym, "gate_data": {}},
+                                json=payload,
                             )
                     except Exception:
                         pass
 
             await asyncio.gather(*[_score_one(s) for s in tickers])
 
-        asyncio.create_task(_score_background(ticker_list, headers))
+        asyncio.create_task(_score_background(ticker_list, headers, asset_class_map))
         scored = len(ticker_list)  # all queued for background scoring
 
         # 4. Sync positions.current_value from market_data_cache prices, then recalculate totals.
