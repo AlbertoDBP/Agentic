@@ -323,10 +323,10 @@ async def refresh_portfolio_data(portfolio_id: str):
         #    positions.current_value = shares * current market price (if price available in cache).
         prices_updated = 0
         with _db().connect() as conn:
+            # Update current_price for all positions with market data (even quantity=0)
             result = conn.execute(text("""
                 UPDATE platform_shared.positions p
-                SET current_value = ROUND((p.quantity * c.price)::numeric, 2),
-                    current_price = c.price,
+                SET current_price = c.price,
                     updated_at    = NOW()
                 FROM platform_shared.market_data_cache c
                 WHERE p.symbol        = c.symbol
@@ -334,9 +334,17 @@ async def refresh_portfolio_data(portfolio_id: str):
                   AND p.status        = 'ACTIVE'
                   AND c.price         IS NOT NULL
                   AND c.price         > 0
-                  AND p.quantity      > 0
             """), {"pid": portfolio_id})
             prices_updated = result.rowcount if hasattr(result, 'rowcount') else 0
+            # Update current_value only when quantity is set (can't calculate value otherwise)
+            conn.execute(text("""
+                UPDATE platform_shared.positions p
+                SET current_value = ROUND((p.quantity * p.current_price)::numeric, 2)
+                WHERE p.portfolio_id = :pid
+                  AND p.status       = 'ACTIVE'
+                  AND p.quantity     > 0
+                  AND p.current_price > 0
+            """), {"pid": portfolio_id})
             conn.execute(text("""
                 UPDATE platform_shared.portfolios
                 SET total_value = (
