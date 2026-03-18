@@ -19,7 +19,9 @@ Notes:
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -136,6 +138,18 @@ def recalculate_portfolio(portfolio_id: str):
 # Helper: ensure extra columns exist on positions / securities tables
 _extra_cols_checked = False
 
+# Preferred stock pattern: PSA-H, BAC-PL, GS-PA, WFC/PL (dash or slash + letter(s))
+_PREFERRED_RE = re.compile(r'^[A-Z0-9]+([-/\.][A-Z]{1,3})$', re.IGNORECASE)
+
+def _infer_asset_type(symbol: str, asset_type: str) -> str:
+    """Infer asset type from symbol pattern when DB returns Unknown."""
+    if asset_type and asset_type not in ("Unknown", ""):
+        return asset_type
+    if _PREFERRED_RE.match(symbol):
+        return "Preferred"
+    return asset_type or "Unknown"
+
+
 def _ensure_freq_column(conn):
     """Add dividend_frequency and sector to positions/securities tables if not already present."""
     global _extra_cols_checked
@@ -172,6 +186,15 @@ def _row_to_position(pos: dict) -> dict:
     for k in ("price_updated_at", "updated_at"):
         if pos.get(k):
             pos[k] = pos[k].isoformat()
+    # Score component fields
+    for k in ("valuation_yield_score", "financial_durability_score",
+              "technical_entry_score", "nav_erosion_penalty", "signal_penalty"):
+        pos[k] = float(pos[k]) if pos.get(k) is not None else 0.0
+    pos.setdefault("recommendation", "")
+    # factor_details and nav_erosion_details: keep as-is (already dict/None from JSON)
+
+    # Infer asset_type from symbol if Unknown
+    pos["asset_type"] = _infer_asset_type(pos.get("symbol", ""), pos.get("asset_type", "Unknown"))
     return pos
 
 
@@ -210,8 +233,16 @@ def get_positions(portfolio_id: str):
                              THEN ROUND((p.annual_income / p.current_value) * 100, 2)
                         ELSE 0
                     END                                  AS current_yield,
-                    COALESCE(sc.total_score, 0)          AS score,
-                    COALESCE(sc.grade, '')               AS grade,
+                    COALESCE(sc.total_score, 0)               AS score,
+                    COALESCE(sc.grade, '')                    AS grade,
+                    COALESCE(sc.recommendation, '')           AS recommendation,
+                    COALESCE(sc.valuation_yield_score, 0)     AS valuation_yield_score,
+                    COALESCE(sc.financial_durability_score, 0) AS financial_durability_score,
+                    COALESCE(sc.technical_entry_score, 0)     AS technical_entry_score,
+                    COALESCE(sc.nav_erosion_penalty, 0)       AS nav_erosion_penalty,
+                    sc.factor_details,
+                    sc.nav_erosion_details,
+                    COALESCE(sc.signal_penalty, 0)            AS signal_penalty,
                     COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
                     p.price_updated_at,
                     p.updated_at
@@ -221,7 +252,10 @@ def get_positions(portfolio_id: str):
                 LEFT JOIN platform_shared.market_data_cache m
                        ON m.symbol = p.symbol
                 LEFT JOIN LATERAL (
-                    SELECT total_score, grade
+                    SELECT total_score, grade, recommendation,
+                           valuation_yield_score, financial_durability_score,
+                           technical_entry_score, nav_erosion_penalty,
+                           factor_details, nav_erosion_details, signal_penalty
                     FROM platform_shared.income_scores
                     WHERE ticker = p.symbol
                     ORDER BY scored_at DESC
@@ -251,7 +285,7 @@ def get_positions(portfolio_id: str):
 
 # ── Single position by symbol (searches all portfolios) ───────────────────────
 
-@router.get("/positions/{symbol}")
+@router.get("/positions/{symbol:path}")
 def get_position_by_symbol(symbol: str):
     """Return the first active position matching the symbol across all portfolios.
     yield_on_cost is returned as percentage (not fraction).
@@ -282,8 +316,16 @@ def get_position_by_symbol(symbol: str):
                              THEN ROUND((p.annual_income / p.current_value) * 100, 2)
                         ELSE 0
                     END                                  AS current_yield,
-                    COALESCE(sc.total_score, 0)          AS score,
-                    COALESCE(sc.grade, '')               AS grade,
+                    COALESCE(sc.total_score, 0)               AS score,
+                    COALESCE(sc.grade, '')                    AS grade,
+                    COALESCE(sc.recommendation, '')           AS recommendation,
+                    COALESCE(sc.valuation_yield_score, 0)     AS valuation_yield_score,
+                    COALESCE(sc.financial_durability_score, 0) AS financial_durability_score,
+                    COALESCE(sc.technical_entry_score, 0)     AS technical_entry_score,
+                    COALESCE(sc.nav_erosion_penalty, 0)       AS nav_erosion_penalty,
+                    sc.factor_details,
+                    sc.nav_erosion_details,
+                    COALESCE(sc.signal_penalty, 0)            AS signal_penalty,
                     COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
                     p.price_updated_at,
                     p.updated_at
@@ -293,7 +335,10 @@ def get_position_by_symbol(symbol: str):
                 LEFT JOIN platform_shared.market_data_cache m
                        ON m.symbol = p.symbol
                 LEFT JOIN LATERAL (
-                    SELECT total_score, grade
+                    SELECT total_score, grade, recommendation,
+                           valuation_yield_score, financial_durability_score,
+                           technical_entry_score, nav_erosion_penalty,
+                           factor_details, nav_erosion_details, signal_penalty
                     FROM platform_shared.income_scores
                     WHERE ticker = p.symbol
                     ORDER BY scored_at DESC
@@ -448,6 +493,80 @@ def delete_position(position_id: str):
         raise
     except Exception as exc:
         logger.error("delete_position error (%s): %s", position_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Monthly income distribution ────────────────────────────────────────────────
+
+@router.get("/portfolios/{portfolio_id}/income-by-month")
+def get_income_by_month(portfolio_id: str):
+    """
+    Return estimated monthly income distribution for a portfolio.
+    Distributes annual_income based on dividend_frequency.
+    Monthly: 1/12 each month. Quarterly: months 3,6,9,12.
+    Semi-Annual: months 6,12. Annual: month 12.
+    """
+    FREQ_MONTHS: dict[str, list[int]] = {
+        "Monthly":     list(range(1, 13)),
+        "Quarterly":   [3, 6, 9, 12],
+        "Semi-Annual": [6, 12],
+        "Annual":      [12],
+    }
+    try:
+        with _db().connect() as conn:
+            rows = conn.execute(text("""
+                SELECT
+                    p.symbol,
+                    COALESCE(s.name, p.symbol)          AS name,
+                    COALESCE(p.annual_income, 0)         AS annual_income,
+                    COALESCE(p.dividend_frequency, s.dividend_frequency, 'Quarterly') AS frequency
+                FROM platform_shared.positions p
+                LEFT JOIN platform_shared.securities s ON s.symbol = p.symbol
+                WHERE p.portfolio_id = :pid AND p.status = 'ACTIVE'
+                  AND COALESCE(p.annual_income, 0) > 0
+                ORDER BY p.annual_income DESC
+            """), {"pid": portfolio_id}).fetchall()
+
+            # Build per-month totals (months 1-12)
+            monthly: dict[int, float] = {m: 0.0 for m in range(1, 13)}
+            positions_by_month: list[dict] = []
+
+            for r in rows:
+                row = dict(r._mapping)
+                annual = float(row["annual_income"])
+                freq_str = (row["frequency"] or "Quarterly").strip()
+                pay_months = FREQ_MONTHS.get(freq_str, FREQ_MONTHS["Quarterly"])
+                per_payment = round(annual / len(pay_months), 2)
+
+                symbol_months = {m: 0.0 for m in range(1, 13)}
+                for m in pay_months:
+                    monthly[m] += per_payment
+                    symbol_months[m] = per_payment
+
+                positions_by_month.append({
+                    "symbol": row["symbol"],
+                    "name": row["name"],
+                    "annual_income": annual,
+                    "frequency": freq_str,
+                    "monthly": symbol_months,
+                })
+
+            MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            monthly_series = [
+                {"month": MONTH_NAMES[m - 1], "month_num": m, "total": round(monthly[m], 2)}
+                for m in range(1, 13)
+            ]
+            return JSONResponse(content={
+                "portfolio_id": portfolio_id,
+                "monthly_totals": monthly_series,
+                "positions": positions_by_month,
+                "annual_total": round(sum(monthly.values()), 2),
+            })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_income_by_month error (%s): %s", portfolio_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

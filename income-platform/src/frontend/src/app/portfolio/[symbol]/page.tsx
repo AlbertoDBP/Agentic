@@ -28,6 +28,14 @@ interface Position {
   current_yield: number;   // returned as percentage
   score: number;
   grade: string;
+  recommendation: string;
+  valuation_yield_score: number;
+  financial_durability_score: number;
+  technical_entry_score: number;
+  nav_erosion_penalty: number;
+  signal_penalty: number;
+  factor_details: Record<string, { value: number; score: number; weight: number }> | null;
+  nav_erosion_details: { prob_erosion_gt_5pct?: number; median_annual_nav_change_pct?: number; risk_classification?: string; penalty_applied?: number } | null;
   dividend_frequency?: string;
   price_updated_at: string | null;
   updated_at: string | null;
@@ -49,7 +57,7 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`${API_BASE_URL}/api/positions/${symbol.toUpperCase()}`, { credentials: "include" })
+    fetch(`${API_BASE_URL}/api/positions/${encodeURIComponent(symbol.toUpperCase())}`, { credentials: "include" })
       .then((res) => {
         if (!res.ok) throw new Error(`Position not found: ${symbol.toUpperCase()}`);
         return res.json() as Promise<Position>;
@@ -70,12 +78,12 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
     if (!position || !editForm) return;
     setSaving(true);
     const shares = Number(editForm.shares ?? position.shares);
-    const cost_basis = Number(editForm.cost_basis ?? position.cost_basis);
-    const current_value = Number(editForm.current_value ?? position.current_value);
+    const avg_cost_basis = Number(editForm.avg_cost ?? position.avg_cost);
+    const cost_basis = shares * avg_cost_basis;
+    const cur_price = position.shares > 0 ? position.current_value / position.shares : avg_cost_basis;
     const annual_income = Number(editForm.annual_income ?? position.annual_income);
-    const avg_cost_basis = shares > 0 ? cost_basis / shares : 0;
-    const cur_price = shares > 0 ? current_value / shares : 0;
     const yoc = cost_basis > 0 ? (annual_income / cost_basis) * 100 : 0;
+    const current_value = shares * cur_price;
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/positions/${position.id}`, {
@@ -190,26 +198,15 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Edit Position</h3>
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
             <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">Shares</label>
+              <label className="text-[10px] text-muted-foreground">Quantity</label>
               <input type="number" step="1" value={editForm.shares ?? ""}
-                onChange={(e) => {
-                  const shares = Number(e.target.value);
-                  const avgCost = (position.shares > 0) ? (editForm.cost_basis ?? position.cost_basis) / (editForm.shares ?? position.shares) : 0;
-                  const curP = (position.shares > 0) ? (editForm.current_value ?? position.current_value) / (editForm.shares ?? position.shares) : 0;
-                  setEditForm({ ...editForm, shares, cost_basis: shares * avgCost, current_value: shares * curP });
-                }}
+                onChange={(e) => setEditForm({ ...editForm, shares: Number(e.target.value) })}
                 className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">Cost Basis (total)</label>
-              <input type="number" step="0.01" value={editForm.cost_basis ?? ""}
-                onChange={(e) => setEditForm({ ...editForm, cost_basis: Number(e.target.value) })}
-                className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">Current Value</label>
-              <input type="number" step="0.01" value={editForm.current_value ?? ""}
-                onChange={(e) => setEditForm({ ...editForm, current_value: Number(e.target.value) })}
+              <label className="text-[10px] text-muted-foreground">Cost/Share</label>
+              <input type="number" step="0.01" value={editForm.avg_cost ?? ""}
+                onChange={(e) => setEditForm({ ...editForm, avg_cost: Number(e.target.value) })}
                 className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
             </div>
             <div className="space-y-1">
@@ -237,14 +234,13 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           <div className="flex gap-6 text-xs text-muted-foreground border-t border-border pt-2">
             {(() => {
               const sh = Number(editForm.shares ?? 0);
-              const cb = Number(editForm.cost_basis ?? 0);
-              const cv = Number(editForm.current_value ?? 0);
+              const avg = Number(editForm.avg_cost ?? 0);
+              const cb = sh * avg;
               const ai = Number(editForm.annual_income ?? 0);
-              const avg = sh > 0 ? cb / sh : 0;
-              const cp = sh > 0 ? cv / sh : 0;
+              const cp = position.shares > 0 ? position.current_value / position.shares : avg;
               const yoc = cb > 0 ? (ai / cb) * 100 : 0;
               return (<>
-                <span>Avg Cost: <strong className="text-foreground">{formatCurrency(avg)}</strong></span>
+                <span>Cost Basis: <strong className="text-foreground">{formatCurrency(cb)}</strong></span>
                 <span>Curr Price: <strong className="text-foreground">{formatCurrency(cp)}</strong></span>
                 <span>YoC: <strong className="text-foreground">{yoc.toFixed(2)}%</strong></span>
                 <span>Monthly: <strong className="text-income">{formatCurrency(ai / 12)}</strong></span>
@@ -326,37 +322,70 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           </div>
         </div>
 
-        {/* Analysis & Ratings */}
+        {/* Score Breakdown */}
         <div className="rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-3 text-sm font-medium text-muted-foreground">Analysis</h2>
-          <dl className="space-y-2.5 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Income Score</dt>
-              <dd>{position.score > 0 ? <ScorePill score={position.score} /> : <span className="text-muted-foreground">—</span>}</dd>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-muted-foreground">Income Score</h2>
+            <div className="flex items-center gap-2">
+              {position.score > 0 && <ScorePill score={position.score} />}
+              {position.grade && (
+                <span className={cn("text-sm font-bold",
+                  position.grade.startsWith("A") && "text-income",
+                  position.grade.startsWith("B") && "text-blue-400",
+                  position.grade.startsWith("C") && "text-yellow-400",
+                  position.grade.startsWith("D") && "text-orange-400",
+                  position.grade === "F" && "text-loss",
+                )}>{position.grade}</span>
+              )}
             </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Grade</dt>
-              <dd className={cn("font-medium",
-                position.grade === "A" && "text-income",
-                position.grade === "B" && "text-blue-400",
-                position.grade === "C" && "text-yellow-400",
-                position.grade === "D" && "text-orange-400",
-                position.grade === "F" && "text-loss",
-              )}>{position.grade || "—"}</dd>
+          </div>
+          {position.score > 0 ? (
+            <div className="space-y-2.5">
+              {[
+                { label: "Valuation/Yield", value: position.valuation_yield_score, max: 40, color: "#3b82f6" },
+                { label: "Financial Durability", value: position.financial_durability_score, max: 40, color: "#10b981" },
+                { label: "Technical Entry", value: position.technical_entry_score, max: 20, color: "#a78bfa" },
+              ].map(({ label, value, max, color }) => (
+                <div key={label}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-muted-foreground">{label}</span>
+                    <span className="tabular-nums font-medium">{value.toFixed(1)}<span className="text-muted-foreground">/{max}</span></span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-secondary">
+                    <div className="h-1.5 rounded-full transition-all" style={{ width: `${(value / max) * 100}%`, backgroundColor: color }} />
+                  </div>
+                </div>
+              ))}
+              {(position.nav_erosion_penalty > 0 || position.signal_penalty > 0) && (
+                <div className="border-t border-border pt-2 mt-2 space-y-1">
+                  {position.nav_erosion_penalty > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">NAV Erosion Penalty</span>
+                      <span className="text-loss tabular-nums">−{position.nav_erosion_penalty.toFixed(1)}</span>
+                    </div>
+                  )}
+                  {position.signal_penalty > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Signal Penalty</span>
+                      <span className="text-loss tabular-nums">−{position.signal_penalty.toFixed(1)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {position.recommendation && (
+                <div className="flex justify-between text-xs pt-1">
+                  <span className="text-muted-foreground">Recommendation</span>
+                  <span className={cn("font-medium",
+                    position.recommendation === "AGGRESSIVE_BUY" && "text-income",
+                    position.recommendation === "ACCUMULATE" && "text-blue-400",
+                    position.recommendation === "WATCH" && "text-yellow-400",
+                  )}>{position.recommendation.replace(/_/g, " ")}</span>
+                </div>
+              )}
             </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Current Yield</dt>
-              <dd className="tabular-nums font-medium">{formatPercent(position.current_yield)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Yield on Cost</dt>
-              <dd className="tabular-nums font-medium">{formatPercent(position.yield_on_cost)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Annual Income</dt>
-              <dd className="tabular-nums font-medium text-income">{formatCurrency(position.annual_income)}</dd>
-            </div>
-          </dl>
+          ) : (
+            <p className="text-xs text-muted-foreground">No score data — run scoring batch from Admin Panel</p>
+          )}
         </div>
       </div>
     </div>
