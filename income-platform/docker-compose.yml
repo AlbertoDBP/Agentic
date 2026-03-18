@@ -8,24 +8,28 @@ services:
 # If PGBOUNCER_URL is not set, services fall back to DATABASE_URL (direct connection).
 # ─────────────────────────────────────────────────────────────────────────────
   pgbouncer:
-    image: edoburu/pgbouncer:latest
+    image: bitnami/pgbouncer:latest
     container_name: pgbouncer
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - POOL_MODE=transaction
-      - MAX_CLIENT_CONN=200
-      - DEFAULT_POOL_SIZE=25
-      - MIN_POOL_SIZE=2
-      - RESERVE_POOL_SIZE=5
-      - LOG_CONNECTIONS=0
-      - LOG_DISCONNECTIONS=0
+      - POSTGRESQL_HOST=${PG_HOST}
+      - POSTGRESQL_PORT=${PG_PORT:-25060}
+      - POSTGRESQL_DATABASE=${PG_DATABASE}
+      - POSTGRESQL_USERNAME=${PG_USER}
+      - POSTGRESQL_PASSWORD=${PG_PASSWORD}
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_POOL_MODE=transaction
+      - PGBOUNCER_MAX_CLIENT_CONN=200
+      - PGBOUNCER_DEFAULT_POOL_SIZE=25
+      - PGBOUNCER_MIN_POOL_SIZE=2
+      - PGBOUNCER_RESERVE_POOL_SIZE=5
+      - PGBOUNCER_SERVER_TLS_SSLMODE=require
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${PG_USER} || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
 
   market-data-service:
     build:
