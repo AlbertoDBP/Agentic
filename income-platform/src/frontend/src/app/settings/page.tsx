@@ -58,14 +58,24 @@ export default function SettingsPage() {
 
   // Per-portfolio config — load from localStorage keyed by portfolio id
   const [config, setConfig] = useState<PortfolioConfig>(DEFAULT_CONFIG);
+  const [configPortfolioId, setConfigPortfolioId] = useState<string>("");
+
+  // Initialize configPortfolioId to activePortfolio once loaded
   useEffect(() => {
-    if (!activePortfolio) return;
+    if (activePortfolio?.id && !configPortfolioId) {
+      setConfigPortfolioId(activePortfolio.id);
+    }
+  }, [activePortfolio, configPortfolioId]);
+
+  // Reload config whenever the selected portfolio changes
+  useEffect(() => {
+    if (!configPortfolioId) return;
     try {
-      const s = localStorage.getItem(`portfolioConfig-${activePortfolio.id}`);
+      const s = localStorage.getItem(`portfolioConfig-${configPortfolioId}`);
       if (s) setConfig(JSON.parse(s));
       else setConfig(DEFAULT_CONFIG);
     } catch { setConfig(DEFAULT_CONFIG); }
-  }, [activePortfolio]);
+  }, [configPortfolioId]);
 
   const saveGlobal = () => {
     localStorage.setItem("globalSettings", JSON.stringify(global));
@@ -73,8 +83,8 @@ export default function SettingsPage() {
   };
 
   const saveConfig = () => {
-    if (!activePortfolio) return;
-    localStorage.setItem(`portfolioConfig-${activePortfolio.id}`, JSON.stringify(config));
+    if (!configPortfolioId) return;
+    localStorage.setItem(`portfolioConfig-${configPortfolioId}`, JSON.stringify(config));
     flash();
   };
 
@@ -463,12 +473,18 @@ export default function SettingsPage() {
       {/* Per-Portfolio Config */}
       {tab === "portfolio-config" && (
         <div className="max-w-lg space-y-4 rounded-lg border border-border bg-card p-5">
-          <p className="text-xs text-muted-foreground">
-            Settings for: <strong className="text-foreground">{activePortfolio?.name || "—"}</strong>
-            {portfolios.length > 1 && (
-              <span className="ml-2 text-[10px]">(switch in Portfolios tab or sidebar)</span>
-            )}
-          </p>
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-muted-foreground whitespace-nowrap">Configure:</label>
+            <select
+              value={configPortfolioId}
+              onChange={(e) => setConfigPortfolioId(e.target.value)}
+              className="rounded-md border border-border bg-secondary px-2 py-1 text-sm flex-1"
+            >
+              {portfolios.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
 
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Target Annual Income ($)</label>

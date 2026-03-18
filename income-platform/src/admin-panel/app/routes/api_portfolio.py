@@ -10,6 +10,7 @@ Routes:
   PATCH /api/positions/{id}              → update position qty/cost/income/sector/frequency
   GET  /api/market-data/positions         → market data for all held symbols (cache + fallback from positions)
   POST /api/portfolios/{id}/prices        → update market_data_cache prices (manual entry for bonds etc.)
+  GET  /api/market-data/quote/{symbol}    → price + yield from DB for any symbol (scanner use)
 
 Notes:
   - yield_on_cost is stored in DB as fraction (0.085) but returned as percentage (8.5) in all endpoints.
@@ -715,4 +716,51 @@ def update_prices(portfolio_id: str, updates: list[PriceUpdate]):
         raise
     except Exception as exc:
         logger.error("update_prices error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Direct market quote (price + yield from DB) ───────────────────────────────
+
+@router.get("/market-data/quote/{symbol:path}")
+def get_market_quote(symbol: str):
+    """
+    Return price, name, asset_type, dividend_yield for a symbol.
+    Reads directly from market_data_cache + securities — no external API call.
+    Used by the frontend scanner to populate proposal yield estimates.
+    """
+    try:
+        with _db().connect() as conn:
+            row = conn.execute(text("""
+                SELECT
+                    COALESCE(s.name, :sym)           AS name,
+                    COALESCE(s.asset_type, 'Unknown') AS asset_type,
+                    COALESCE(m.price, 0)             AS price,
+                    COALESCE(m.dividend_yield, 0)    AS dividend_yield,
+                    m.snapshot_date
+                FROM (SELECT :sym::text AS symbol) base
+                LEFT JOIN platform_shared.securities s ON UPPER(s.symbol) = UPPER(:sym)
+                LEFT JOIN platform_shared.market_data_cache m ON UPPER(m.symbol) = UPPER(:sym)
+                LIMIT 1
+            """), {"sym": symbol.upper()}).fetchone()
+
+            if row:
+                item = dict(row._mapping)
+                return JSONResponse(content={
+                    "symbol": symbol.upper(),
+                    "name": item.get("name") or symbol.upper(),
+                    "asset_type": item.get("asset_type") or "Unknown",
+                    "price": float(item.get("price") or 0),
+                    "dividend_yield": float(item.get("dividend_yield") or 0),
+                })
+            return JSONResponse(content={
+                "symbol": symbol.upper(),
+                "name": symbol.upper(),
+                "asset_type": "Unknown",
+                "price": 0.0,
+                "dividend_yield": 0.0,
+            })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_market_quote error (%s): %s", symbol, exc)
         raise HTTPException(status_code=500, detail=str(exc))

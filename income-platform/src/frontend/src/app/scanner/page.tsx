@@ -159,7 +159,7 @@ export default function ScannerPage() {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [universeCount, setUniverseCount] = useState<number | null>(null);
   const router = useRouter();
-  const { portfolios } = usePortfolio();
+  const { portfolios, activePortfolio } = usePortfolio();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleTickerFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -185,8 +185,15 @@ export default function ScannerPage() {
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
   const [proposalDialogOpen, setProposalDialogOpen] = useState(false);
   const [proposalCreating, setProposalCreating] = useState(false);
-  const [proposalPortfolioId, setProposalPortfolioId] = useState(portfolios[0]?.id ?? "p1");
+  const [proposalPortfolioId, setProposalPortfolioId] = useState<string>("");
   const [proposalAmount, setProposalAmount] = useState("5000");
+
+  // Sync default proposal portfolio to active portfolio once it loads
+  useEffect(() => {
+    if (activePortfolio?.id && !proposalPortfolioId) {
+      setProposalPortfolioId(activePortfolio.id);
+    }
+  }, [activePortfolio, proposalPortfolioId]);
 
   useEffect(() => {
     apiGet<{ total: number; securities: UniverseItem[] }>("/api/scanner/universe?limit=1000")
@@ -313,7 +320,7 @@ export default function ScannerPage() {
       tickers.map(async (ticker) => {
         try {
           const data = await apiGet<{ name: string; price: number | null; dividend_yield: number | null }>(
-            `/api/scanner/quote/${ticker}`
+            `/api/market-data/quote/${encodeURIComponent(ticker)}`
           );
           if (data) {
             quoteMap[ticker] = {
