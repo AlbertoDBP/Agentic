@@ -72,39 +72,6 @@ interface HarvestOpportunity {
   priority: "HIGH" | "MEDIUM" | "LOW";
 }
 
-// ── Mock data ─────────────────────────────────────────────────────────────────
-
-const MOCK_TAX_RESULT: TaxCalcResult = {
-  symbol: "GOF",
-  gross_distribution: 1200,
-  federal_tax: 312,
-  state_tax: 96,
-  total_tax: 408,
-  net_distribution: 792,
-  effective_rate_pct: 34.0,
-  treatment_breakdown: {
-    qualified_pct: 0,
-    ordinary_pct: 75,
-    return_of_capital_pct: 20,
-    long_term_gain_pct: 5,
-  },
-};
-
-const MOCK_HARVEST: HarvestOpportunity[] = [
-  { symbol: "PDI",   asset_class: "CEF",  unrealized_loss: -2840, tax_savings_est: 624,  holding_days: 210, wash_sale_risk: false, priority: "HIGH" },
-  { symbol: "GOF",   asset_class: "CEF",  unrealized_loss: -1650, tax_savings_est: 363,  holding_days: 185, wash_sale_risk: true,  priority: "HIGH" },
-  { symbol: "NLY",   asset_class: "REIT", unrealized_loss: -980,  tax_savings_est: 216,  holding_days: 90,  wash_sale_risk: false, priority: "MEDIUM" },
-  { symbol: "OXLC",  asset_class: "CEF",  unrealized_loss: -620,  tax_savings_est: 136,  holding_days: 310, wash_sale_risk: false, priority: "MEDIUM" },
-  { symbol: "TPVG",  asset_class: "BDC",  unrealized_loss: -440,  tax_savings_est: 97,   holding_days: 45,  wash_sale_risk: true,  priority: "LOW" },
-];
-
-const MOCK_OPTIMIZE = [
-  { action: "MOVE", symbol: "ARCC",  from: "taxable", to: "roth_ira",  reason: "High ordinary income (BDC) — Roth eliminates tax drag", savings_est: 1840 },
-  { action: "MOVE", symbol: "PDI",   from: "taxable", to: "traditional_ira", reason: "CEF distributions are 100% ordinary income",        savings_est: 1260 },
-  { action: "KEEP", symbol: "O",     from: "taxable", to: "taxable",   reason: "REIT qualified dividends benefit from 20% QBI deduction", savings_est: 0 },
-  { action: "MOVE", symbol: "EPD",   from: "taxable", to: "taxable",   reason: "MLP — avoid UBTI in tax-advantaged accounts",             savings_est: 0 },
-];
-
 const PRIORITY_STYLES: Record<string, string> = {
   HIGH: "bg-red-400/10 text-red-400",
   MEDIUM: "bg-amber-400/10 text-amber-400",
@@ -160,8 +127,14 @@ export default function TaxPage() {
   const [loading, setLoading] = useState(false);
   const [selectedHarvest, setSelectedHarvest] = useState<Set<string>>(new Set());
   const [harvestDialogOpen, setHarvestDialogOpen] = useState(false);
-  const [harvestPortfolioId, setHarvestPortfolioId] = useState(portfolios[0]?.id ?? "p1");
+  const [harvestPortfolioId, setHarvestPortfolioId] = useState<string>("");
   const [transferModal, setTransferModal] = useState<TransferModal | null>(null);
+
+  useEffect(() => {
+    if (portfolios.length > 0 && !harvestPortfolioId) {
+      setHarvestPortfolioId(portfolios[0].id);
+    }
+  }, [portfolios, harvestPortfolioId]);
 
   // Calculate tab state
   const [calcInput, setCalcInput] = useState<TaxCalcInput>({
@@ -174,9 +147,9 @@ export default function TaxPage() {
   });
   const [calcResult, setCalcResult] = useState<TaxCalcResult | null>(null);
 
-  // Optimize / Harvest tabs — start with mock, fetch live when available
-  const [optimizeResults, setOptimizeResults] = useState(MOCK_OPTIMIZE);
-  const [harvestResults, setHarvestResults] = useState(MOCK_HARVEST);
+  // Optimize / Harvest tabs — start empty, populate from API
+  const [optimizeResults, setOptimizeResults] = useState<{ action: string; symbol: string; from: string; to: string; reason: string; savings_est: number }[]>([]);
+  const [harvestResults, setHarvestResults] = useState<HarvestOpportunity[]>([]);
   const [optimizeLoading, setOptimizeLoading] = useState(false);
   const [harvestLoading, setHarvestLoading] = useState(false);
 
@@ -198,8 +171,6 @@ export default function TaxPage() {
       setCalcResult(data);
     } catch (err) {
       console.error("Tax calculate failed:", err);
-      // Fall back to mock during development
-      setCalcResult({ ...MOCK_TAX_RESULT, symbol: calcInput.symbol.toUpperCase() });
     } finally {
       setLoading(false);
     }
@@ -212,7 +183,7 @@ export default function TaxPage() {
         .then((data) => {
           if (data.opportunities?.length) setHarvestResults(data.opportunities);
         })
-        .catch(() => { /* keep mock */ })
+        .catch(() => {})
         .finally(() => setHarvestLoading(false));
     }
   }, [tab]);
@@ -592,7 +563,7 @@ export default function TaxPage() {
                 )}
               </div>
             ) : (
-              <div className="flex h-full min-h-[300px] flex-col items-center justify-center gap-2">
+              <div className="flex h-full min-h-75 flex-col items-center justify-center gap-2">
                 <DollarSign className="h-8 w-8 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground">Enter a ticker and click Calculate</p>
               </div>
@@ -622,6 +593,13 @@ export default function TaxPage() {
               </tr>
             </thead>
             <tbody>
+              {optimizeResults.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    No optimization recommendations yet. Run batch scoring to generate suggestions.
+                  </td>
+                </tr>
+              )}
               {optimizeResults.map((row) => (
                 <tr key={row.symbol} className="border-b border-border/50 hover:bg-secondary/20">
                   <td className="px-4 py-3">
@@ -735,6 +713,13 @@ export default function TaxPage() {
                 </tr>
               </thead>
               <tbody>
+                {harvestResults.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                      No harvest opportunities found. Add positions with unrealized losses to identify candidates.
+                    </td>
+                  </tr>
+                )}
                 {harvestResults.map((row) => (
                   <tr key={row.symbol} className="border-b border-border/50 hover:bg-secondary/20">
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>

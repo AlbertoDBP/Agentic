@@ -21,12 +21,10 @@ import {
   Cell,
 } from "recharts";
 import { MetricCard } from "@/components/metric-card";
-import { TickerBadge } from "@/components/ticker-badge";
-import { formatCurrency, formatPercent, formatDate, cn } from "@/lib/utils";
+import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import { ASSET_CLASS_COLORS } from "@/lib/config";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { API_BASE_URL } from "@/lib/config";
-import type { DividendEvent } from "@/lib/types";
 import Link from "next/link";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -80,14 +78,6 @@ interface DashboardData {
 }
 
 // ─── Static fallback data ─────────────────────────────────────────────────────
-
-const MOCK_DIVIDENDS: DividendEvent[] = [
-  { symbol: "MAIN", asset_type: "BDC", ex_date: "2026-03-20", pay_date: "2026-03-27", amount: 72.5 },
-  { symbol: "O", asset_type: "Common Stock", ex_date: "2026-03-22", pay_date: "2026-03-28", amount: 45.0 },
-  { symbol: "ARCC", asset_type: "BDC", ex_date: "2026-03-25", pay_date: "2026-04-01", amount: 120.0 },
-  { symbol: "EPD", asset_type: "MLP", ex_date: "2026-03-28", pay_date: "2026-04-10", amount: 95.0 },
-  { symbol: "PFF", asset_type: "ETF", ex_date: "2026-04-01", pay_date: "2026-04-07", amount: 55.0 },
-];
 
 const EMPTY_METRICS: DashboardMetrics = {
   total_value: 0, annual_income: 0, blended_yield: 0,
@@ -265,19 +255,23 @@ export default function DashboardPage() {
 
         <Link href="/calendar" className="col-span-2 rounded-lg border border-border bg-card p-4 transition-colors hover:border-border/80">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Upcoming Dividends</h2>
-          <div className="space-y-3">
-            {MOCK_DIVIDENDS.map((d) => (
-              <div key={`${d.symbol}-${d.ex_date}`} className="flex items-center justify-between">
-                <div>
-                  <TickerBadge symbol={d.symbol} assetType={d.asset_type} />
-                  <p className="mt-0.5 text-[11px] text-muted-foreground">Ex: {formatDate(d.ex_date)}</p>
+          {incomeData.length === 0 ? (
+            <div className="flex h-full min-h-45 flex-col items-center justify-center gap-1">
+              <p className="text-sm text-muted-foreground">No upcoming dividends</p>
+              <p className="text-[11px] text-muted-foreground/60">Upload a portfolio to populate the calendar.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {incomeData.slice(0, 5).map((d) => (
+                <div key={d.month} className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">{d.month}</span>
+                  <span className="font-mono text-sm font-medium tabular-nums text-income">
+                    {formatCurrency(d.projected ?? d.actual ?? 0)}
+                  </span>
                 </div>
-                <span className="font-mono text-sm font-medium tabular-nums text-income">
-                  {formatCurrency(d.amount)}
-                </span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </Link>
       </div>
 
@@ -346,30 +340,9 @@ export default function DashboardPage() {
         {/* NAV Watch */}
         <Link href="/alerts" className="rounded-lg border border-border bg-card p-4 transition-colors hover:border-border/80">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">NAV Watch</h2>
-          <div className="space-y-2">
-            {[
-              { symbol: "PDI", type: "CEF", discount: -8.2, alert: true },
-              { symbol: "GOF", type: "CEF", discount: 12.5, alert: true },
-              { symbol: "ARCC", type: "BDC", discount: -2.1, alert: false },
-              { symbol: "MAIN", type: "BDC", discount: 18.3, alert: false },
-            ].map((item) => (
-              <div key={item.symbol} className="flex items-center justify-between rounded-md bg-secondary/50 px-2.5 py-1.5">
-                <TickerBadge symbol={item.symbol} assetType={item.type} />
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`font-mono text-xs tabular-nums ${
-                      item.discount < 0 ? "text-income" : "text-loss"
-                    }`}
-                  >
-                    {item.discount > 0 ? "+" : ""}
-                    {item.discount.toFixed(1)}%
-                  </span>
-                  {item.alert && (
-                    <span className="h-2 w-2 rounded-full bg-red-400 animate-pulse" />
-                  )}
-                </div>
-              </div>
-            ))}
+          <div className="flex h-full min-h-32 flex-col items-center justify-center gap-1">
+            <p className="text-sm text-muted-foreground">No NAV alerts</p>
+            <p className="text-[11px] text-muted-foreground/60">CEF/BDC discount alerts appear here after scoring.</p>
           </div>
         </Link>
       </div>

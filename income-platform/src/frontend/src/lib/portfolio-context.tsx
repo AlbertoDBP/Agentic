@@ -61,17 +61,19 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const reloadPortfolios = async () => {
     try {
       const remote = await fetchPortfoliosFromAPI();
+      // API success — always authoritative, even if empty
+      setPortfolios(remote);
       if (remote.length > 0) {
-        setPortfolios(remote);
-        // Set active to saved preference or first portfolio
         setActiveIdState((prev) => {
           if (prev && remote.find((p) => p.id === prev)) return prev;
           const savedId = typeof window !== "undefined" ? localStorage.getItem("activePortfolioId") : null;
           if (savedId && remote.find((p) => p.id === savedId)) return savedId;
           return remote[0].id;
         });
-        return;
+      } else {
+        setActiveIdState("");
       }
+      return;
     } catch { /* fall through to localStorage */ }
 
     // Fallback: localStorage
