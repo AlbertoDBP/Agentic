@@ -492,6 +492,142 @@ def get_positions(portfolio_id: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ── Create / bulk-upsert positions ────────────────────────────────────────────
+
+class PositionUpsertItem(BaseModel):
+    symbol: str
+    name: str = ""
+    asset_type: str = "Common Stock"
+    shares: float = 0
+    cost_basis: float = 0          # total cost basis (shares × avg_cost)
+    current_value: float = 0
+    annual_income: float = 0
+    yield_on_cost: float = 0       # percentage, e.g. 5.0 for 5%
+    sector: str = ""
+    dividend_frequency: str = "Quarterly"
+
+
+def _upsert_position(conn, portfolio_id: str, item: PositionUpsertItem) -> str:
+    """Upsert one position row; returns the position id."""
+    sym = item.symbol.strip().upper()
+    avg_cb = round(item.cost_basis / item.shares, 6) if item.shares else 0.0
+    cur_price = round(item.current_value / item.shares, 4) if item.shares else avg_cb
+    yoc_fraction = item.yield_on_cost / 100.0
+
+    # Ensure security record exists
+    conn.execute(text("""
+        INSERT INTO platform_shared.securities
+            (symbol, name, asset_type, is_active, created_at, updated_at)
+        VALUES (:sym, :name, :at, TRUE, NOW(), NOW())
+        ON CONFLICT (symbol) DO UPDATE SET
+            name       = COALESCE(NULLIF(EXCLUDED.name, ''), platform_shared.securities.name),
+            asset_type = COALESCE(NULLIF(EXCLUDED.asset_type, ''), platform_shared.securities.asset_type),
+            updated_at = NOW()
+    """), {"sym": sym, "name": item.name or sym, "at": item.asset_type})
+
+    # Check if a position already exists (ON CONFLICT on portfolio_id + symbol + status)
+    existing = conn.execute(text("""
+        SELECT id FROM platform_shared.positions
+        WHERE portfolio_id = :pid AND symbol = :sym AND status = 'ACTIVE'
+        LIMIT 1
+    """), {"pid": portfolio_id, "sym": sym}).fetchone()
+
+    pos_id = str(existing[0]) if existing else str(uuid4())
+
+    conn.execute(text("""
+        INSERT INTO platform_shared.positions
+            (id, portfolio_id, symbol, status, quantity, avg_cost_basis, total_cost_basis,
+             current_price, current_value, annual_income, yield_on_cost,
+             dividend_frequency, sector, created_at, updated_at)
+        VALUES
+            (:id, :pid, :sym, 'ACTIVE', :qty, :avg_cb, :total_cb,
+             :cur_price, :cur_val, :annual_income, :yoc,
+             :freq, :sector, NOW(), NOW())
+        ON CONFLICT (portfolio_id, symbol, status) DO UPDATE SET
+            quantity         = EXCLUDED.quantity,
+            avg_cost_basis   = EXCLUDED.avg_cost_basis,
+            total_cost_basis = EXCLUDED.total_cost_basis,
+            current_price    = EXCLUDED.current_price,
+            current_value    = EXCLUDED.current_value,
+            annual_income    = EXCLUDED.annual_income,
+            yield_on_cost    = EXCLUDED.yield_on_cost,
+            dividend_frequency = COALESCE(NULLIF(EXCLUDED.dividend_frequency, ''), platform_shared.positions.dividend_frequency),
+            sector           = COALESCE(NULLIF(EXCLUDED.sector, ''), platform_shared.positions.sector),
+            updated_at       = NOW()
+    """), {
+        "id": pos_id,
+        "pid": portfolio_id,
+        "sym": sym,
+        "qty": item.shares,
+        "avg_cb": avg_cb,
+        "total_cb": item.cost_basis,
+        "cur_price": cur_price,
+        "cur_val": item.current_value or item.cost_basis,
+        "annual_income": item.annual_income,
+        "yoc": yoc_fraction,
+        "freq": item.dividend_frequency,
+        "sector": item.sector,
+    })
+    return pos_id
+
+
+@router.post("/portfolios/{portfolio_id}/positions")
+def create_position(portfolio_id: str, item: PositionUpsertItem):
+    """Create or update a single position in a portfolio."""
+    try:
+        with _db().connect() as conn:
+            _ensure_freq_column(conn)
+            pos_id = _upsert_position(conn, portfolio_id, item)
+            # Recalculate portfolio total_value
+            conn.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET total_value = (
+                    SELECT COALESCE(SUM(current_value), 0)
+                    FROM platform_shared.positions
+                    WHERE portfolio_id = :pid AND status = 'ACTIVE'
+                ), updated_at = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id})
+            conn.commit()
+        return JSONResponse(content={"id": pos_id, "status": "ok"})
+    except Exception as exc:
+        logger.error("create_position error (%s): %s", portfolio_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+from typing import List as _List  # noqa: E402
+
+@router.post("/portfolios/{portfolio_id}/positions/bulk")
+def bulk_create_positions(portfolio_id: str, items: _List[PositionUpsertItem]):
+    """Upsert a batch of positions for a portfolio (CSV upload path)."""
+    if not items:
+        return JSONResponse(content={"upserted": 0})
+    try:
+        with _db().connect() as conn:
+            _ensure_freq_column(conn)
+            count = 0
+            for item in items:
+                if not item.symbol.strip():
+                    continue
+                _upsert_position(conn, portfolio_id, item)
+                count += 1
+            # Recalculate portfolio total_value
+            conn.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET total_value = (
+                    SELECT COALESCE(SUM(current_value), 0)
+                    FROM platform_shared.positions
+                    WHERE portfolio_id = :pid AND status = 'ACTIVE'
+                ), updated_at = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id})
+            conn.commit()
+        return JSONResponse(content={"upserted": count, "status": "ok"})
+    except Exception as exc:
+        logger.error("bulk_create_positions error (%s): %s", portfolio_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 # ── Single position by symbol (searches all portfolios) ───────────────────────
 
 @router.get("/positions/{symbol:path}")

@@ -575,16 +575,32 @@ function PortfolioContent() {
     await reloadPortfolios();
   };
 
-  const addPosition = () => {
-    if (!addForm.symbol.trim()) return;
-    const newPos = { ...addForm, id: `pos-${Date.now()}`, portfolio_id: portfolioId };
-    // Calculate YoC
-    if (newPos.cost_basis > 0) {
-      newPos.yield_on_cost = (newPos.annual_income / newPos.cost_basis) * 100;
-    }
-    persistPositions([...positions, newPos]);
+  const addPosition = async () => {
+    if (!addForm.symbol.trim() || !portfolioId) return;
+    const yoc = addForm.cost_basis > 0 ? (addForm.annual_income / addForm.cost_basis) * 100 : 0;
+    try {
+      await fetch(`${API_BASE_URL}/api/portfolios/${portfolioId}/positions`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: addForm.symbol.trim().toUpperCase(),
+          name: addForm.name || "",
+          asset_type: addForm.asset_type || "Common Stock",
+          shares: addForm.shares,
+          cost_basis: addForm.cost_basis,
+          current_value: addForm.current_value || addForm.cost_basis,
+          annual_income: addForm.annual_income,
+          yield_on_cost: yoc,
+          sector: addForm.sector || "",
+          dividend_frequency: addForm.dividend_frequency || "Quarterly",
+        }),
+      });
+    } catch { /* fall through */ }
     setAddForm(emptyPosition(portfolioId));
     setShowAddPosition(false);
+    await loadPositions(portfolioId);
+    await reloadPortfolios();
   };
 
   // CSV parsing
@@ -593,7 +609,7 @@ function PortfolioContent() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const text = ev.target?.result as string;
       if (!text) return;
 
@@ -655,7 +671,33 @@ function PortfolioContent() {
         }
       }
 
-      persistPositions(nextPositions);
+      // Persist to DB
+      if (portfolioId && nextPositions.length > 0) {
+        const payload = nextPositions.map((p) => ({
+          symbol: p.symbol,
+          name: p.name || "",
+          asset_type: p.asset_type || "Common Stock",
+          shares: p.shares,
+          cost_basis: p.cost_basis,
+          current_value: p.current_value || p.cost_basis,
+          annual_income: p.annual_income,
+          yield_on_cost: p.yield_on_cost,
+          sector: p.sector || "",
+          dividend_frequency: p.dividend_frequency || "Quarterly",
+        }));
+        try {
+          await fetch(`${API_BASE_URL}/api/portfolios/${portfolioId}/positions/bulk`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+        } catch { /* fall through */ }
+        await loadPositions(portfolioId);
+        await reloadPortfolios();
+      } else {
+        persistPositions(nextPositions);
+      }
       setUploadResult({ added, updated });
       setTimeout(() => setUploadResult(null), 4000);
     };

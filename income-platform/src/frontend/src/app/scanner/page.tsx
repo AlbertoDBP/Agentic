@@ -154,6 +154,7 @@ export default function ScannerPage() {
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<ScanResult | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [sortCol, setSortCol] = useState<keyof ScanItem>("rank");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -208,6 +209,7 @@ export default function ScannerPage() {
     setScanning(true);
     setProgress(10);
     setResults(null);
+    setScanError(null);
 
     try {
       // Resolve tickers: universe or custom list
@@ -255,8 +257,7 @@ export default function ScannerPage() {
       setResults(data);
     } catch (err) {
       console.error("Scan failed:", err);
-      // Fall back to mock on error during development
-      setResults(MOCK_RESULTS);
+      setScanError(err instanceof Error ? err.message : "Scan failed — check the console for details.");
     } finally {
       setScanning(false);
     }
@@ -906,8 +907,16 @@ export default function ScannerPage() {
         </div>
       )}
 
+      {/* Error state */}
+      {scanError && !scanning && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 py-10 text-center">
+          <p className="text-sm font-medium text-red-400">Scan failed</p>
+          <p className="mt-1 text-xs text-muted-foreground">{scanError}</p>
+        </div>
+      )}
+
       {/* Empty state */}
-      {!results && !scanning && (
+      {!results && !scanning && !scanError && (
         <div className="rounded-lg border border-border bg-card py-16 text-center">
           <ScanLine className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
           <p className="text-sm text-muted-foreground">Configure your criteria and click Run Scan</p>
