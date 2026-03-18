@@ -115,7 +115,25 @@ export default function ProposalsPage() {
   // Cash available for the proposal's portfolio
   const getCashBalance = (portfolioId: string): number | undefined =>
     portfolios.find((p) => p.id === portfolioId)?.cash_balance;
-  const [proposals, setProposals] = useState<Proposal[]>(INITIAL_PROPOSALS);
+  const [proposals, setProposals] = useState<Proposal[]>(() => {
+    // Restore persisted statuses on mount
+    try {
+      const saved = JSON.parse(localStorage.getItem("proposalStatuses") ?? "{}") as Record<string, Proposal["status"]>;
+      if (Object.keys(saved).length > 0) {
+        return INITIAL_PROPOSALS.map((p) => saved[p.id] ? { ...p, status: saved[p.id] } : p);
+      }
+    } catch { /* ignore */ }
+    return INITIAL_PROPOSALS;
+  });
+
+  // Persist status changes to localStorage whenever proposals change
+  useEffect(() => {
+    try {
+      const statuses: Record<string, Proposal["status"]> = {};
+      proposals.forEach((p) => { statuses[p.id] = p.status; });
+      localStorage.setItem("proposalStatuses", JSON.stringify(statuses));
+    } catch { /* ignore */ }
+  }, [proposals]);
 
   // Load proposals created from scanner/tax pages
   useEffect(() => {
@@ -192,7 +210,7 @@ export default function ProposalsPage() {
     setEditingId(null);
   };
 
-  const portfolioName = (id: string) => portfolios.find((p) => p.id === id)?.name || id;
+  const portfolioName = (id: string) => portfolios.find((p) => p.id === id)?.name || (id.startsWith("p") && id.length <= 3 ? `Portfolio ${id.slice(1)}` : id);
 
   const totalCost = (positions: ProposalPosition[]) =>
     positions.reduce((s, p) => s + Math.abs(p.shares) * p.entry_price, 0);

@@ -4,6 +4,9 @@ import { useState, useMemo } from "react";
 import {
   AreaChart,
   Area,
+  BarChart,
+  Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -162,6 +165,29 @@ export default function ProjectionPage() {
             <Area type="monotone" dataKey="projected" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} strokeWidth={2} />
           </AreaChart>
         </ResponsiveContainer>
+      </div>
+
+      {/* Monthly Income Bar Chart */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h2 className="mb-4 text-sm font-medium text-muted-foreground">Monthly Income Breakdown — {scopeLabel}</h2>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={data} barCategoryGap="20%">
+            <CartesianGrid strokeDasharray="3 3" stroke="#252d3d" vertical={false} />
+            <XAxis dataKey="month" tick={{ fill: "#8891a8", fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: "#8891a8", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(1)}K`} />
+            <Tooltip
+              contentStyle={{ background: "#111520", border: "1px solid #252d3d", borderRadius: 8, fontSize: 12 }}
+              labelStyle={{ color: "#e8eaf0" }}
+              formatter={(value) => [formatCurrency(Number(value)), "Projected"]}
+            />
+            <Bar dataKey="projected" radius={[4, 4, 0, 0]}>
+              {data.map((entry, index) => (
+                <Cell key={index} fill={entry.projected >= monthlyAvg ? "#10b981" : "#3b82f6"} fillOpacity={0.85} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+        <p className="mt-2 text-[11px] text-muted-foreground text-center">Green bars = above monthly average · Blue = below</p>
       </div>
 
       {/* Goal Tracker */}

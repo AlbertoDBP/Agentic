@@ -863,6 +863,47 @@ function PortfolioContent() {
             </div>
           </div>
 
+          {/* Income Quality by Score Grade */}
+          {(() => {
+            const gradeMap: Record<string, { label: string; color: string; income: number; count: number }> = {
+              A: { label: "A — Excellent", color: "#10b981", income: 0, count: 0 },
+              B: { label: "B — Good",      color: "#3b82f6", income: 0, count: 0 },
+              C: { label: "C — Fair",      color: "#f59e0b", income: 0, count: 0 },
+              D: { label: "D — Weak",      color: "#f97316", income: 0, count: 0 },
+              F: { label: "F — Poor",      color: "#ef4444", income: 0, count: 0 },
+              "?": { label: "Unscored",    color: "#64748b", income: 0, count: 0 },
+            };
+            positions.forEach((p) => {
+              const s = p.score ?? -1;
+              const g = s >= 80 ? "A" : s >= 60 ? "B" : s >= 40 ? "C" : s >= 20 ? "D" : s >= 0 ? "F" : "?";
+              gradeMap[g].income += p.annual_income;
+              gradeMap[g].count += 1;
+            });
+            const total = Object.values(gradeMap).reduce((s, g) => s + g.income, 0);
+            const grades = Object.entries(gradeMap).filter(([, g]) => g.count > 0);
+            return (
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="mb-3 text-sm font-medium text-muted-foreground">Income Quality by Score</h3>
+                <div className="space-y-2">
+                  {grades.map(([key, g]) => {
+                    const pct = total > 0 ? (g.income / total) * 100 : 0;
+                    return (
+                      <div key={key} className="flex items-center gap-3">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: g.color }} />
+                        <span className="w-28 text-sm">{g.label}</span>
+                        <div className="flex-1"><div className="h-1.5 rounded-full bg-secondary"><div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: g.color }} /></div></div>
+                        <span className="w-10 text-right text-xs tabular-nums">{pct.toFixed(0)}%</span>
+                        <span className="w-16 text-right text-xs tabular-nums text-income">{formatCurrency(g.income, true)}</span>
+                        <span className="w-8 text-right text-[10px] tabular-nums text-muted-foreground">{g.count}x</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {grades.length === 0 && <p className="text-xs text-muted-foreground">No scored positions yet</p>}
+              </div>
+            );
+          })()}
+
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-lg border border-border bg-card p-4">
               <h3 className="mb-3 text-sm font-medium text-muted-foreground">By Asset Type</h3>

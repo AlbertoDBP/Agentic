@@ -9,6 +9,28 @@ import { TickerBadge } from "@/components/ticker-badge";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { useRouter } from "next/navigation";
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const US_STATES = [
+  { code: "AL", name: "Alabama" }, { code: "AK", name: "Alaska" }, { code: "AZ", name: "Arizona" },
+  { code: "AR", name: "Arkansas" }, { code: "CA", name: "California" }, { code: "CO", name: "Colorado" },
+  { code: "CT", name: "Connecticut" }, { code: "DE", name: "Delaware" }, { code: "FL", name: "Florida" },
+  { code: "GA", name: "Georgia" }, { code: "HI", name: "Hawaii" }, { code: "ID", name: "Idaho" },
+  { code: "IL", name: "Illinois" }, { code: "IN", name: "Indiana" }, { code: "IA", name: "Iowa" },
+  { code: "KS", name: "Kansas" }, { code: "KY", name: "Kentucky" }, { code: "LA", name: "Louisiana" },
+  { code: "ME", name: "Maine" }, { code: "MD", name: "Maryland" }, { code: "MA", name: "Massachusetts" },
+  { code: "MI", name: "Michigan" }, { code: "MN", name: "Minnesota" }, { code: "MS", name: "Mississippi" },
+  { code: "MO", name: "Missouri" }, { code: "MT", name: "Montana" }, { code: "NE", name: "Nebraska" },
+  { code: "NV", name: "Nevada" }, { code: "NH", name: "New Hampshire" }, { code: "NJ", name: "New Jersey" },
+  { code: "NM", name: "New Mexico" }, { code: "NY", name: "New York" }, { code: "NC", name: "North Carolina" },
+  { code: "ND", name: "North Dakota" }, { code: "OH", name: "Ohio" }, { code: "OK", name: "Oklahoma" },
+  { code: "OR", name: "Oregon" }, { code: "PA", name: "Pennsylvania" }, { code: "RI", name: "Rhode Island" },
+  { code: "SC", name: "South Carolina" }, { code: "SD", name: "South Dakota" }, { code: "TN", name: "Tennessee" },
+  { code: "TX", name: "Texas" }, { code: "UT", name: "Utah" }, { code: "VT", name: "Vermont" },
+  { code: "VA", name: "Virginia" }, { code: "WA", name: "Washington" }, { code: "WV", name: "West Virginia" },
+  { code: "WI", name: "Wisconsin" }, { code: "WY", name: "Wyoming" }, { code: "DC", name: "District of Columbia" },
+];
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Tab = "calculate" | "optimize" | "harvest";
@@ -148,7 +170,7 @@ export default function TaxPage() {
     distribution_amount: "1200",
     account_type: "taxable",
     filing_status: "single",
-    state_code: "",
+    state_code: "FL",
   });
   const [calcResult, setCalcResult] = useState<TaxCalcResult | null>(null);
 
@@ -469,15 +491,16 @@ export default function TaxPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">State Code (optional)</label>
-                <input
-                  type="text"
-                  maxLength={2}
-                  placeholder="e.g. CA, NY, TX"
+                <label className="block text-xs font-medium text-muted-foreground mb-1">State (2-letter code)</label>
+                <select
                   value={calcInput.state_code}
-                  onChange={(e) => updCalc("state_code", e.target.value.toUpperCase())}
-                  className="w-32 rounded-md border border-border bg-secondary px-3 py-2 text-sm uppercase focus:outline-none focus:ring-1 focus:ring-ring"
-                />
+                  onChange={(e) => updCalc("state_code", e.target.value)}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {US_STATES.map(({ code, name }) => (
+                    <option key={code} value={code}>{code} - {name}</option>
+                  ))}
+                </select>
               </div>
             </div>
 

@@ -408,6 +408,14 @@ def get_market_data_for_positions():
     try:
         with _db().connect() as conn:
             rows = conn.execute(text("""
+                WITH pos_agg AS (
+                    SELECT symbol,
+                           SUM(current_value)  AS current_value,
+                           SUM(annual_income)  AS annual_income
+                    FROM platform_shared.positions
+                    WHERE status = 'ACTIVE'
+                    GROUP BY symbol
+                )
                 SELECT
                     p.symbol,
                     COALESCE(s.name, p.symbol)          AS name,
@@ -419,9 +427,18 @@ def get_market_data_for_positions():
                     m.week52_low,
                     COALESCE(m.market_cap_m, 0)          AS market_cap,
                     m.pe_ratio,
-                    COALESCE(m.dividend_yield, 0)        AS dividend_yield,
+                    CASE
+                        WHEN COALESCE(m.dividend_yield, 0) > 0 THEN m.dividend_yield
+                        WHEN COALESCE(pa.current_value, 0) > 0 AND COALESCE(pa.annual_income, 0) > 0
+                             THEN ROUND((pa.annual_income / pa.current_value) * 100, 2)
+                        ELSE 0
+                    END                                  AS dividend_yield,
                     m.payout_ratio,
                     m.beta,
+                    m.chowder_number,
+                    m.nav_value                          AS nav,
+                    m.nav_discount_pct                   AS premium_discount,
+                    m.ex_div_date                        AS ex_date,
                     COALESCE(m.snapshot_date, p.price_updated_at::date) AS snapshot_date
                 FROM (
                     SELECT DISTINCT ON (symbol)
@@ -432,6 +449,7 @@ def get_market_data_for_positions():
                 ) p
                 LEFT JOIN platform_shared.market_data_cache m ON m.symbol = p.symbol
                 LEFT JOIN platform_shared.securities s ON s.symbol = p.symbol
+                LEFT JOIN pos_agg pa ON pa.symbol = p.symbol
                 ORDER BY p.symbol
             """)).fetchall()
 
@@ -440,7 +458,7 @@ def get_market_data_for_positions():
                 item = dict(r._mapping)
                 for k in ("price", "change_pct", "dividend_yield"):
                     item[k] = float(item[k]) if item.get(k) is not None else 0.0
-                for k in ("week52_high", "week52_low", "pe_ratio", "payout_ratio", "beta"):
+                for k in ("week52_high", "week52_low", "pe_ratio", "payout_ratio", "beta", "chowder_number", "nav", "premium_discount"):
                     item[k] = float(item[k]) if item.get(k) is not None else None
                 price = item["price"]
                 pct = item["change_pct"]
@@ -449,15 +467,14 @@ def get_market_data_for_positions():
                 item["market_cap"] = round(float(mc), 2) if mc else 0.0
                 vol = item.get("volume")
                 item["volume"] = int(vol) if vol else 0
-                # Null-fill fields not available from cache
+                # Null-fill fields not in DB
                 item["day_high"] = None
                 item["day_low"] = None
                 item["eps"] = None
                 item["dividend_growth_5y"] = None
-                item["nav"] = None
-                item["premium_discount"] = None
                 item["avg_volume"] = None
-                item["ex_date"] = None
+                ex = item.get("ex_date")
+                item["ex_date"] = ex.isoformat() if ex and hasattr(ex, "isoformat") else (str(ex) if ex else None)
                 sd = item.get("snapshot_date")
                 if sd:
                     item["snapshot_date"] = sd.isoformat() if hasattr(sd, "isoformat") else str(sd)
