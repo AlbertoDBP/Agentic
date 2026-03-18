@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { Search, ScanLine, Filter, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Search, ScanLine, Filter, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, RefreshCw, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TickerBadge } from "@/components/ticker-badge";
 import { ScorePill } from "@/components/score-pill";
@@ -160,6 +160,28 @@ export default function ScannerPage() {
   const [universeCount, setUniverseCount] = useState<number | null>(null);
   const router = useRouter();
   const { portfolios } = usePortfolio();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleTickerFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      // Parse tickers: split on commas, semicolons, whitespace, newlines
+      const tickers = text
+        .split(/[\s,;\n\r]+/)
+        .map((t) => t.trim().toUpperCase())
+        .filter((t) => /^[A-Z0-9.^-]{1,10}$/.test(t));
+      if (tickers.length > 0) {
+        upd("custom_tickers", tickers.join(", "));
+        upd("use_universe", false);
+      }
+    };
+    reader.readAsText(file);
+    // Reset so same file can be re-uploaded
+    e.target.value = "";
+  };
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
   const [proposalDialogOpen, setProposalDialogOpen] = useState(false);
   const [proposalCreating, setProposalCreating] = useState(false);
@@ -454,15 +476,32 @@ export default function ScannerPage() {
           </div>
 
           {!filters.use_universe && (
-            <div className="flex-1 relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <div className="flex-1 flex items-center gap-2">
+              <div className="flex-1 relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="ARCC, MAIN, O, JEPI, PTY, ..."
+                  value={filters.custom_tickers}
+                  onChange={(e) => upd("custom_tickers", e.target.value)}
+                  className="w-full rounded-md border border-border bg-secondary pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
               <input
-                type="text"
-                placeholder="ARCC, MAIN, O, JEPI, PTY, ..."
-                value={filters.custom_tickers}
-                onChange={(e) => upd("custom_tickers", e.target.value)}
-                className="w-full rounded-md border border-border bg-secondary pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.csv"
+                onChange={handleTickerFileUpload}
+                className="hidden"
               />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                title="Upload ticker list (.txt or .csv)"
+                className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Upload List
+              </button>
             </div>
           )}
           {filters.use_universe && (

@@ -520,9 +520,33 @@ function PortfolioContent() {
     setEditForm({ ...pos });
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingPositionId) return;
-    const next = positions.map((p) => (p.id === editingPositionId ? { ...editForm } : p));
+    // Recalculate derived fields before saving
+    const avg_cost_basis = editForm.shares > 0 ? editForm.cost_basis / editForm.shares : editForm.avg_cost ?? 0;
+    const current_price = editForm.shares > 0 ? editForm.current_value / editForm.shares : 0;
+    const yoc = editForm.cost_basis > 0 ? (editForm.annual_income / editForm.cost_basis) * 100 : 0;
+    const updated = { ...editForm, yield_on_cost: yoc };
+
+    // Persist to DB via API
+    try {
+      await fetch(`${API_BASE_URL}/api/positions/${editingPositionId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quantity: updated.shares,
+          avg_cost_basis,
+          current_price,
+          annual_income: updated.annual_income,
+          yield_on_cost: yoc,
+          sector: updated.sector ?? "",
+          dividend_frequency: updated.dividend_frequency ?? "",
+        }),
+      });
+    } catch { /* fall through — still update local state */ }
+
+    const next = positions.map((p) => (p.id === editingPositionId ? updated : p));
     persistPositions(next);
     setEditingPositionId(null);
   };
@@ -1010,22 +1034,49 @@ function PortfolioContent() {
                   className="rounded-md border border-border bg-secondary px-2 py-1 text-sm">
                   {ASSET_TYPES.map((t) => <option key={t}>{t}</option>)}
                 </select>
-                <input type="number" value={editForm.shares} onChange={(e) => setEditForm({ ...editForm, shares: Number(e.target.value) })} placeholder="Shares"
+                <input type="number" step="1" value={editForm.shares} onChange={(e) => {
+                  const shares = Number(e.target.value);
+                  const avgCost = editForm.shares > 0 ? editForm.cost_basis / editForm.shares : 0;
+                  const curPrice = editForm.shares > 0 ? editForm.current_value / editForm.shares : 0;
+                  setEditForm({
+                    ...editForm, shares,
+                    cost_basis: shares * avgCost,
+                    current_value: shares * curPrice,
+                  });
+                }} placeholder="Shares"
                   className="rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
                 <input value={editForm.sector || ""} onChange={(e) => setEditForm({ ...editForm, sector: e.target.value })} placeholder="Sector"
                   className="rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
               </div>
               <div className="grid grid-cols-6 gap-2">
-                <input type="number" step="0.01" value={editForm.cost_basis} onChange={(e) => setEditForm({ ...editForm, cost_basis: Number(e.target.value) })} placeholder="Cost Basis"
-                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
-                <input type="number" step="0.01" value={editForm.current_value} onChange={(e) => setEditForm({ ...editForm, current_value: Number(e.target.value) })} placeholder="Current Value"
-                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
-                <input type="number" step="0.01" value={editForm.annual_income} onChange={(e) => setEditForm({ ...editForm, annual_income: Number(e.target.value) })} placeholder="Annual Income"
-                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
+                <div className="space-y-0.5">
+                  <p className="text-[10px] text-muted-foreground">Cost Basis (total)</p>
+                  <input type="number" step="0.01" value={editForm.cost_basis} onChange={(e) => setEditForm({ ...editForm, cost_basis: Number(e.target.value) })} placeholder="Cost Basis"
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-[10px] text-muted-foreground">Current Value</p>
+                  <input type="number" step="0.01" value={editForm.current_value} onChange={(e) => setEditForm({ ...editForm, current_value: Number(e.target.value) })} placeholder="Current Value"
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-[10px] text-muted-foreground">Annual Income</p>
+                  <input type="number" step="0.01" value={editForm.annual_income} onChange={(e) => {
+                    const annual_income = Number(e.target.value);
+                    const yoc = editForm.cost_basis > 0 ? (annual_income / editForm.cost_basis) * 100 : 0;
+                    setEditForm({ ...editForm, annual_income, yield_on_cost: yoc });
+                  }} placeholder="Annual Income"
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
+                </div>
                 <select value={editForm.dividend_frequency || "Quarterly"} onChange={(e) => setEditForm({ ...editForm, dividend_frequency: e.target.value })}
                   className="rounded-md border border-border bg-secondary px-2 py-1 text-sm">
                   {FREQUENCIES.map((f) => <option key={f}>{f}</option>)}
                 </select>
+                <div className="space-y-0.5 col-span-2 flex items-end text-xs text-muted-foreground gap-3 pb-0.5">
+                  <span>YoC: <strong className="text-foreground">{editForm.cost_basis > 0 ? ((editForm.annual_income / editForm.cost_basis) * 100).toFixed(2) : "0.00"}%</strong></span>
+                  <span>Avg: <strong className="text-foreground">{editForm.shares > 0 ? formatCurrency(editForm.cost_basis / editForm.shares) : "—"}</strong></span>
+                  <span>Price: <strong className="text-foreground">{editForm.shares > 0 ? formatCurrency(editForm.current_value / editForm.shares) : "—"}</strong></span>
+                </div>
               </div>
             </div>
           ) : null}

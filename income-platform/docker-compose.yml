@@ -1,11 +1,39 @@
 services:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PgBouncer — Connection pooler for DO managed PostgreSQL
+# Upstream:  DATABASE_URL (real DO Postgres, set in .env)
+# Services connect to:  PGBOUNCER_URL (e.g. postgresql://user:pass@pgbouncer:5432/dbname)
+# Add PGBOUNCER_URL to .env — same credentials as DATABASE_URL but host=pgbouncer port=5432 sslmode=disable
+# If PGBOUNCER_URL is not set, services fall back to DATABASE_URL (direct connection).
+# ─────────────────────────────────────────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: pgbouncer
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=200
+      - DEFAULT_POOL_SIZE=25
+      - MIN_POOL_SIZE=2
+      - RESERVE_POOL_SIZE=5
+      - LOG_CONNECTIONS=0
+      - LOG_DISCONNECTIONS=0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   market-data-service:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: market-data-service
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - REDIS_URL=${REDIS_URL}
       - MARKET_DATA_API_KEY=${MARKET_DATA_API_KEY}
       - POLYGON_API_KEY=${POLYGON_API_KEY}
@@ -16,6 +44,9 @@ services:
       - PYTHONUNBUFFERED=1
     ports:
       - "8001:8001"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
     restart: unless-stopped
     command: python3 src/market-data-service/main.py
     healthcheck:
@@ -31,7 +62,7 @@ services:
       dockerfile: Dockerfile
     container_name: agent-02-newsletter-ingestion
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - REDIS_URL=${REDIS_URL}
       - APIDOJO_SA_API_KEY=${APIDOJO_SA_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -64,7 +95,7 @@ services:
       dockerfile: Dockerfile
     container_name: agent-03-income-scoring
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - REDIS_URL=${REDIS_URL}
       - FMP_API_KEY=${FMP_API_KEY}
       - MARKET_DATA_SERVICE_URL=http://market-data-service:8001
@@ -99,7 +130,7 @@ services:
       dockerfile: src/asset-classification-service/Dockerfile
     container_name: agent-04-asset-classification
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - REDIS_URL=${REDIS_URL}
       - FMP_API_KEY=${FMP_API_KEY}
       - JWT_SECRET=${JWT_SECRET}
@@ -130,7 +161,7 @@ services:
     ports:
       - "8005:8005"
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - ASSET_CLASSIFICATION_URL=http://agent-04-asset-classification:8004
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -153,13 +184,16 @@ services:
       dockerfile: Dockerfile
     container_name: agent-06-scenario-simulation
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - SERVICE_PORT=8006
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
     ports:
       - "8006:8006"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')"]
       interval: 30s
@@ -174,7 +208,7 @@ services:
       dockerfile: Dockerfile
     container_name: agent-07-opportunity-scanner
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - INCOME_SCORING_URL=http://agent-03-income-scoring:8003
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -201,7 +235,7 @@ services:
       dockerfile: Dockerfile
     container_name: agent-08-rebalancing
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - INCOME_SCORING_URL=http://agent-03-income-scoring:8003
       - TAX_OPTIMIZATION_URL=http://tax-optimization-service:8005
@@ -231,7 +265,7 @@ services:
       dockerfile: Dockerfile
     container_name: agent-09-income-projection
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
@@ -257,7 +291,7 @@ services:
       dockerfile: Dockerfile
     container_name: agent-10-nav-monitor
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
@@ -283,7 +317,7 @@ services:
       dockerfile: Dockerfile
     container_name: agent-11-smart-alert
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
@@ -309,7 +343,7 @@ services:
       dockerfile: Dockerfile
     container_name: agent-12-proposal
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - AGENT02_URL=http://agent-02-newsletter-ingestion:8002
       - AGENT03_URL=http://agent-03-income-scoring:8003
@@ -347,7 +381,7 @@ services:
       dockerfile: Dockerfile
     container_name: broker-service
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - ALPACA_API_KEY=${ALPACA_API_KEY}
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
@@ -411,7 +445,7 @@ services:
       dockerfile: Dockerfile
     container_name: admin-panel
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
@@ -442,7 +476,7 @@ services:
     container_name: frontend
     environment:
       - JWT_SECRET=${JWT_SECRET}
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
     ports:
       - "8200:8200"
     depends_on:

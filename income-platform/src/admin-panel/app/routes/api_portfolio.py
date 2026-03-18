@@ -7,9 +7,15 @@ Routes:
   GET  /api/portfolios/{id}/positions     → all active positions for a portfolio
   POST /api/portfolios/{id}/recalculate   → recompute portfolio total_value from positions
   GET  /api/positions/{symbol}            → single position by symbol (any portfolio)
-  PATCH /api/positions/{id}              → update position qty/cost/income fields
-  GET  /api/market-data/positions         → market_data_cache for all portfolio symbols
+  PATCH /api/positions/{id}              → update position qty/cost/income/sector/frequency
+  GET  /api/market-data/positions         → market data for all held symbols (cache + fallback from positions)
   POST /api/portfolios/{id}/prices        → update market_data_cache prices (manual entry for bonds etc.)
+
+Notes:
+  - yield_on_cost is stored in DB as fraction (0.085) but returned as percentage (8.5) in all endpoints.
+  - PATCH endpoint accepts yield_on_cost as percentage and divides by 100 before storing.
+  - market-data endpoint uses positions as the base row set (LEFT JOIN cache), so all
+    held symbols always appear even if cache is sparse.
 """
 from __future__ import annotations
 
@@ -60,7 +66,6 @@ def list_portfolios():
                 ORDER BY po.total_value DESC NULLS LAST
             """)).fetchall()
             portfolios = [dict(r._mapping) for r in rows]
-            # Coerce Decimal → float for JSON serialisation
             for p in portfolios:
                 p["id"] = str(p["id"])
                 for k in ("cash_balance", "total_value"):
@@ -83,7 +88,8 @@ def list_portfolios():
 def recalculate_portfolio(portfolio_id: str):
     """
     Recompute portfolio.total_value from sum of active position current_values.
-    Also updates annual_income aggregate. Call this after manually editing positions.
+    Also recalculates portfolio_weight_pct for each position.
+    Call this after manually editing positions.
     """
     try:
         with _db().connect() as conn:
@@ -99,7 +105,6 @@ def recalculate_portfolio(portfolio_id: str):
                 updated_at = NOW()
                 WHERE id = :pid
             """), {"pid": portfolio_id})
-            # Recompute portfolio_weight_pct for each position
             conn.execute(text("""
                 UPDATE platform_shared.positions p
                 SET portfolio_weight_pct = ROUND(
@@ -128,16 +133,59 @@ def recalculate_portfolio(portfolio_id: str):
 
 # ── Positions ─────────────────────────────────────────────────────────────────
 
+# Helper: ensure dividend_frequency column exists on positions table
+_freq_col_checked = False
+
+def _ensure_freq_column(conn):
+    """Add dividend_frequency to positions and securities tables if not already present."""
+    global _freq_col_checked
+    if _freq_col_checked:
+        return
+    for ddl in [
+        "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS dividend_frequency VARCHAR(30) DEFAULT NULL",
+        "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS dividend_frequency VARCHAR(30) DEFAULT NULL",
+    ]:
+        try:
+            conn.execute(text(ddl))
+            conn.commit()
+        except Exception:
+            pass
+    _freq_col_checked = True
+
+
+def _row_to_position(pos: dict) -> dict:
+    """Normalize a position row dict: coerce types, convert yield_on_cost fraction→percent."""
+    for k in ("id", "portfolio_id"):
+        if pos.get(k) is not None:
+            pos[k] = str(pos[k])
+    for k in ("shares", "cost_basis", "current_value", "market_price",
+              "avg_cost", "annual_income", "score"):
+        if pos.get(k) is not None:
+            pos[k] = float(pos[k])
+    # yield_on_cost stored as fraction → return as percentage
+    yoc = pos.get("yield_on_cost")
+    pos["yield_on_cost"] = round(float(yoc) * 100, 4) if yoc else 0.0
+    # current_yield from market_data_cache is already percentage
+    cy = pos.get("current_yield")
+    pos["current_yield"] = float(cy) if cy else 0.0
+    for k in ("price_updated_at", "updated_at"):
+        if pos.get(k):
+            pos[k] = pos[k].isoformat()
+    return pos
+
+
 @router.get("/portfolios/{portfolio_id}/positions")
 def get_positions(portfolio_id: str):
     """
     Return all active positions for a portfolio, enriched with:
-    - securities: name, asset_type, sector
+    - securities: name, asset_type, sector, dividend_frequency
     - market_data_cache: current price, dividend_yield
     - income_scores: total_score, grade
+    yield_on_cost is returned as percentage (not fraction).
     """
     try:
         with _db().connect() as conn:
+            _ensure_freq_column(conn)
             rows = conn.execute(text("""
                 SELECT
                     p.id,
@@ -158,6 +206,7 @@ def get_positions(portfolio_id: str):
                     COALESCE(m.dividend_yield, 0)        AS current_yield,
                     COALESCE(sc.total_score, 0)          AS score,
                     COALESCE(sc.grade, '')               AS grade,
+                    COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
                     p.price_updated_at,
                     p.updated_at
                 FROM platform_shared.positions p
@@ -178,7 +227,6 @@ def get_positions(portfolio_id: str):
             """), {"pid": portfolio_id}).fetchall()
 
             if not rows and portfolio_id:
-                # Check if portfolio exists
                 exists = conn.execute(
                     text("SELECT 1 FROM platform_shared.portfolios WHERE id = :id"),
                     {"id": portfolio_id}
@@ -186,24 +234,7 @@ def get_positions(portfolio_id: str):
                 if not exists:
                     raise HTTPException(status_code=404, detail="Portfolio not found")
 
-            positions = []
-            for r in rows:
-                pos = dict(r._mapping)
-                # Coerce UUIDs to str
-                for k in ("id", "portfolio_id"):
-                    if pos.get(k) is not None:
-                        pos[k] = str(pos[k])
-                # Coerce Decimal/float
-                for k in ("shares", "cost_basis", "current_value", "market_price",
-                          "avg_cost", "annual_income", "yield_on_cost", "current_yield", "score"):
-                    if pos.get(k) is not None:
-                        pos[k] = float(pos[k])
-                # Coerce datetimes
-                for k in ("price_updated_at", "updated_at"):
-                    if pos.get(k):
-                        pos[k] = pos[k].isoformat()
-                positions.append(pos)
-
+            positions = [_row_to_position(dict(r._mapping)) for r in rows]
             return JSONResponse(content=positions)
     except HTTPException:
         raise
@@ -216,9 +247,12 @@ def get_positions(portfolio_id: str):
 
 @router.get("/positions/{symbol}")
 def get_position_by_symbol(symbol: str):
-    """Return the first active position matching the symbol across all portfolios."""
+    """Return the first active position matching the symbol across all portfolios.
+    yield_on_cost is returned as percentage (not fraction).
+    """
     try:
         with _db().connect() as conn:
+            _ensure_freq_column(conn)
             row = conn.execute(text("""
                 SELECT
                     p.id,
@@ -239,6 +273,7 @@ def get_position_by_symbol(symbol: str):
                     COALESCE(m.dividend_yield, 0)        AS current_yield,
                     COALESCE(sc.total_score, 0)          AS score,
                     COALESCE(sc.grade, '')               AS grade,
+                    COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
                     p.price_updated_at,
                     p.updated_at
                 FROM platform_shared.positions p
@@ -262,17 +297,7 @@ def get_position_by_symbol(symbol: str):
             if not row:
                 raise HTTPException(status_code=404, detail=f"Position not found: {symbol.upper()}")
 
-            pos = dict(row._mapping)
-            for k in ("id", "portfolio_id"):
-                if pos.get(k) is not None:
-                    pos[k] = str(pos[k])
-            for k in ("shares", "cost_basis", "current_value", "market_price",
-                      "avg_cost", "annual_income", "yield_on_cost", "current_yield", "score"):
-                if pos.get(k) is not None:
-                    pos[k] = float(pos[k])
-            for k in ("price_updated_at", "updated_at"):
-                if pos.get(k):
-                    pos[k] = pos[k].isoformat()
+            pos = _row_to_position(dict(row._mapping))
             return JSONResponse(content=pos)
     except HTTPException:
         raise
@@ -281,37 +306,46 @@ def get_position_by_symbol(symbol: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ── Update a position (quantity, cost, income) ────────────────────────────────
+# ── Update a position (quantity, cost, income, sector, frequency) ─────────────
 
 class PositionUpdate(BaseModel):
     quantity: Optional[float] = None
-    avg_cost_basis: Optional[float] = None
+    avg_cost_basis: Optional[float] = None       # per-share cost basis
     annual_income: Optional[float] = None
-    yield_on_cost: Optional[float] = None
+    yield_on_cost: Optional[float] = None        # as percentage (e.g. 8.5); stored as fraction
     current_price: Optional[float] = None
+    sector: Optional[str] = None                 # updates securities.sector
+    dividend_frequency: Optional[str] = None     # stored in positions.dividend_frequency
 
 
 @router.patch("/positions/{position_id}")
 def update_position(position_id: str, update: PositionUpdate):
     """
-    Partially update a position's quantity, cost basis, income, or price.
-    Automatically recalculates derived fields (total_cost_basis, current_value)
-    and refreshes the parent portfolio's total_value.
+    Partially update a position's quantity, cost basis, income, price, sector, or frequency.
+    - Recalculates total_cost_basis = qty * avg_cost_basis
+    - Recalculates current_value = qty * current_price
+    - Stores yield_on_cost as fraction (input percentage / 100)
+    - Updates securities.sector if sector provided
+    - Refreshes parent portfolio's total_value
     """
     try:
         with _db().connect() as conn:
+            _ensure_freq_column(conn)
             row = conn.execute(text("""
-                SELECT id, portfolio_id, quantity, avg_cost_basis, current_price
+                SELECT id, portfolio_id, symbol, quantity, avg_cost_basis, current_price
                 FROM platform_shared.positions
                 WHERE id = :id AND status = 'ACTIVE'
             """), {"id": position_id}).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail=f"Position not found: {position_id}")
 
-            qty = update.quantity if update.quantity is not None else float(row[2] or 0)
-            avg_cb = update.avg_cost_basis if update.avg_cost_basis is not None else float(row[3] or 0)
-            cur_price = update.current_price if update.current_price is not None else float(row[4] or avg_cb)
-            portfolio_id = str(row[1])
+            pos_id, portfolio_id, sym = str(row[0]), str(row[1]), str(row[2])
+            qty = update.quantity if update.quantity is not None else float(row[3] or 0)
+            avg_cb = update.avg_cost_basis if update.avg_cost_basis is not None else float(row[4] or 0)
+            cur_price = update.current_price if update.current_price is not None else float(row[5] or avg_cb)
+
+            # yield_on_cost: receive as percentage, store as fraction
+            yoc_frac = (update.yield_on_cost / 100.0) if update.yield_on_cost is not None else None
 
             conn.execute(text("""
                 UPDATE platform_shared.positions SET
@@ -322,13 +356,26 @@ def update_position(position_id: str, update: PositionUpdate):
                     current_value     = ROUND(:qty * :cur_price, 2),
                     annual_income     = COALESCE(:annual_income, annual_income),
                     yield_on_cost     = COALESCE(:yoc, yield_on_cost),
+                    dividend_frequency = COALESCE(:freq, dividend_frequency),
                     updated_at        = NOW()
                 WHERE id = :id AND status = 'ACTIVE'
             """), {
                 "qty": qty, "avg_cb": avg_cb, "cur_price": cur_price,
-                "annual_income": update.annual_income, "yoc": update.yield_on_cost,
+                "annual_income": update.annual_income,
+                "yoc": yoc_frac,
+                "freq": update.dividend_frequency,
                 "id": position_id,
             })
+
+            # Update sector and/or dividend_frequency in securities if provided
+            if update.sector is not None or update.dividend_frequency is not None:
+                conn.execute(text("""
+                    UPDATE platform_shared.securities
+                    SET sector             = COALESCE(:sector, sector),
+                        dividend_frequency = COALESCE(:freq, dividend_frequency),
+                        updated_at         = NOW()
+                    WHERE symbol = :sym
+                """), {"sector": update.sector, "freq": update.dividend_frequency, "sym": sym})
 
             # Refresh portfolio total
             conn.execute(text("""
@@ -349,57 +396,57 @@ def update_position(position_id: str, update: PositionUpdate):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ── Market data for all portfolio symbols ─────────────────────────────────────
+# ── Market data for all held symbols (cache + fallback from positions) ────────
 
 @router.get("/market-data/positions")
 def get_market_data_for_positions():
-    """Return market_data_cache rows for all symbols held in active portfolios."""
+    """
+    Return market data for all symbols held in active portfolios.
+    Uses positions as the base set so ALL held symbols appear — even those not
+    yet in market_data_cache. Cache data is merged where available.
+    """
     try:
         with _db().connect() as conn:
             rows = conn.execute(text("""
                 SELECT
-                    m.symbol,
-                    COALESCE(s.name, m.symbol)          AS name,
+                    p.symbol,
+                    COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(s.asset_type, 'Unknown')   AS asset_type,
-                    COALESCE(m.price, 0)                AS price,
+                    COALESCE(m.price, p.current_price, 0) AS price,
                     COALESCE(m.price_change_pct, 0)     AS change_pct,
-                    COALESCE(m.volume_avg_10d, 0)       AS volume,
+                    COALESCE(m.volume_avg_10d, 0)        AS volume,
                     m.week52_high,
                     m.week52_low,
-                    COALESCE(m.market_cap_m, 0)         AS market_cap,
+                    COALESCE(m.market_cap_m, 0)          AS market_cap,
                     m.pe_ratio,
-                    COALESCE(m.dividend_yield, 0)       AS dividend_yield,
+                    COALESCE(m.dividend_yield, 0)        AS dividend_yield,
                     m.payout_ratio,
                     m.beta,
-                    m.snapshot_date
-                FROM platform_shared.market_data_cache m
-                INNER JOIN (
-                    SELECT DISTINCT symbol
+                    COALESCE(m.snapshot_date, p.price_updated_at::date) AS snapshot_date
+                FROM (
+                    SELECT DISTINCT ON (symbol)
+                        symbol, current_price, price_updated_at
                     FROM platform_shared.positions
                     WHERE status = 'ACTIVE'
-                ) held ON held.symbol = m.symbol
-                LEFT JOIN platform_shared.securities s ON s.symbol = m.symbol
-                ORDER BY m.symbol
+                    ORDER BY symbol, current_value DESC NULLS LAST
+                ) p
+                LEFT JOIN platform_shared.market_data_cache m ON m.symbol = p.symbol
+                LEFT JOIN platform_shared.securities s ON s.symbol = p.symbol
+                ORDER BY p.symbol
             """)).fetchall()
 
             result = []
             for r in rows:
                 item = dict(r._mapping)
                 for k in ("price", "change_pct", "dividend_yield"):
-                    if item.get(k) is not None:
-                        item[k] = float(item[k])
-                    else:
-                        item[k] = 0.0
+                    item[k] = float(item[k]) if item.get(k) is not None else 0.0
                 for k in ("week52_high", "week52_low", "pe_ratio", "payout_ratio", "beta"):
                     item[k] = float(item[k]) if item.get(k) is not None else None
-                # Absolute price change from pct (approx)
                 price = item["price"]
                 pct = item["change_pct"]
                 item["change"] = round(price - price / (1 + pct / 100), 4) if price and pct else 0.0
-                # market_cap: convert from millions to display value
                 mc = item.get("market_cap")
                 item["market_cap"] = round(float(mc), 2) if mc else 0.0
-                # volume: keep as number
                 vol = item.get("volume")
                 item["volume"] = int(vol) if vol else 0
                 # Null-fill fields not available from cache
@@ -411,8 +458,9 @@ def get_market_data_for_positions():
                 item["premium_discount"] = None
                 item["avg_volume"] = None
                 item["ex_date"] = None
-                if item.get("snapshot_date"):
-                    item["snapshot_date"] = item["snapshot_date"].isoformat()
+                sd = item.get("snapshot_date")
+                if sd:
+                    item["snapshot_date"] = sd.isoformat() if hasattr(sd, "isoformat") else str(sd)
                 result.append(item)
 
             return JSONResponse(content=result)
