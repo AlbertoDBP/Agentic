@@ -1,18 +1,18 @@
 """
 Agent 07 — Opportunity Scanner Service
-Market Data Cache: batch-fetch FMP quotes/profiles, upsert to platform_shared.market_data_cache.
+Market Data Cache: fetch FMP data per symbol, upsert to platform_shared.market_data_cache.
 
 Flow:
   1. get_stale_tickers()   — split tickers into fresh (today) vs stale/missing
-  2. fetch_and_upsert()    — batch-call FMP, upsert cache, mark is_tracked=True
+  2. fetch_and_upsert()    — call FMP per symbol (stable API is single-symbol only), upsert cache
   3. pre_filter_sql()      — SQL query against cache applying Group 2 criteria
 
-FMP batch endpoints used:
-  GET /quote?symbol=A,B,C&apikey=KEY   → price, volume, marketCap, pe, change%
-  GET /profile?symbol=A,B,C&apikey=KEY → dividendYield, payoutRatio, beta, exchange
+FMP stable API endpoints (single symbol per call — batch returns empty):
+  GET /profile?symbol=X&apikey=KEY → price, marketCap, beta, lastDividend, averageVolume
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timezone
 from typing import Any, Optional
@@ -42,48 +42,48 @@ def _safe_int(v: Any) -> Optional[int]:
         return None
 
 
-# ─── FMP batch fetchers ───────────────────────────────────────────────────────
+# ─── FMP single-symbol fetcher ────────────────────────────────────────────────
 
-async def _fmp_get(path: str, params: dict) -> list[dict]:
-    """Single FMP GET call; returns list or empty on error."""
-    params["apikey"] = settings.fmp_api_key
-    url = f"{settings.fmp_base_url}{path}"
+async def _fmp_profile(symbol: str, client: httpx.AsyncClient) -> dict:
+    """
+    Fetch FMP /stable/profile for one symbol.
+    FMP stable API does NOT support batch (comma-separated) — returns empty list.
+    Returns {} on any error or empty response.
+    Fields: price, marketCap, beta, lastDividend, averageVolume, changePercentage,
+            yearHigh (from range), yearLow (from range), sector, exchange.
+    """
     try:
-        async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
-            resp = await client.get(url, params=params)
+        resp = await client.get(
+            f"{settings.fmp_base_url}/profile",
+            params={"symbol": symbol, "apikey": settings.fmp_api_key},
+            timeout=settings.fmp_request_timeout,
+        )
         if resp.status_code != 200:
-            logger.warning("FMP %s returned %d", path, resp.status_code)
-            return []
+            logger.debug("FMP profile %s returned %d", symbol, resp.status_code)
+            return {}
         data = resp.json()
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list) or not data:
+            return {}
+        return data[0]
     except Exception as exc:
-        logger.warning("FMP %s failed: %s", path, exc)
-        return []
+        logger.debug("FMP profile %s failed: %s", symbol, exc)
+        return {}
 
 
-async def _batch_quotes(tickers: list[str]) -> dict[str, dict]:
-    """Fetch FMP /quote for a batch of tickers. Returns {symbol: data}."""
+async def _fetch_all_profiles(tickers: list[str]) -> dict[str, dict]:
+    """Fetch FMP /profile for all tickers concurrently (capped at fmp_concurrency)."""
+    sem = asyncio.Semaphore(settings.fmp_concurrency)
     result: dict[str, dict] = {}
-    for i in range(0, len(tickers), settings.fmp_batch_size):
-        chunk = tickers[i : i + settings.fmp_batch_size]
-        rows = await _fmp_get("/quote", {"symbol": ",".join(chunk)})
-        for row in rows:
-            sym = row.get("symbol", "").upper()
-            if sym:
-                result[sym] = row
-    return result
 
+    async def _one(sym: str):
+        async with sem:
+            async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
+                data = await _fmp_profile(sym, client)
+                if data:
+                    result[sym.upper()] = data
 
-async def _batch_profiles(tickers: list[str]) -> dict[str, dict]:
-    """Fetch FMP /profile for a batch of tickers. Returns {symbol: data}."""
-    result: dict[str, dict] = {}
-    for i in range(0, len(tickers), settings.fmp_batch_size):
-        chunk = tickers[i : i + settings.fmp_batch_size]
-        rows = await _fmp_get("/profile", {"symbol": ",".join(chunk)})
-        for row in rows:
-            sym = row.get("symbol", "").upper()
-            if sym:
-                result[sym] = row
+    await asyncio.gather(*[_one(t) for t in tickers])
+    logger.info("FMP profiles fetched: %d/%d symbols got data", len(result), len(tickers))
     return result
 
 
@@ -120,13 +120,24 @@ async def fetch_and_upsert(
     track_reason: str = "scan",
 ) -> int:
     """
-    Batch-fetch FMP data for tickers and upsert into market_data_cache.
-    Returns count of rows upserted.
+    Fetch FMP /stable/profile for each ticker (single-symbol calls, concurrent)
+    and upsert into market_data_cache.  Returns count of rows upserted.
+
+    FMP stable API does NOT support batch queries — single symbol per call only.
+    Field mapping (stable /profile response):
+      price, changePercentage, averageVolume, marketCap, beta, lastDividend
     """
     if not tickers:
         return 0
 
-    quotes, profiles = await _batch_quotes(tickers), await _batch_profiles(tickers)
+    # Filter out symbols FMP won't handle (bond CUSIPs, slash-format preferreds)
+    # Slash-format preferred stocks (EPR/PRC) poison even the single call on some plans.
+    fmp_tickers = [t for t in tickers if "/" not in t and len(t) <= 8]
+    skipped = len(tickers) - len(fmp_tickers)
+    if skipped:
+        logger.info("Skipping %d non-standard symbols (bonds/slash-preferreds)", skipped)
+
+    profiles = await _fetch_all_profiles(fmp_tickers)
 
     today = date.today().isoformat()
     now = datetime.now(timezone.utc).isoformat()
@@ -134,19 +145,25 @@ async def fetch_and_upsert(
 
     for symbol in tickers:
         sym = symbol.upper()
-        q = quotes.get(sym, {})
         p = profiles.get(sym, {})
 
-        # dividend_yield: FMP profile returns as decimal (0.045 = 4.5%)
-        div_yield = _safe_float(p.get("lastDiv"))  # annual div per share
-        price_val = _safe_float(q.get("price") or p.get("price"))
-        if div_yield is not None and price_val and price_val > 0:
-            div_yield = (div_yield / price_val) * 100  # convert to %
+        price_val = _safe_float(p.get("price"))
+
+        # dividend_yield: lastDividend is annual $ per share — convert to %
+        last_div = _safe_float(p.get("lastDividend"))
+        if last_div is not None and price_val and price_val > 0:
+            div_yield = round((last_div / price_val) * 100, 4)
         else:
-            # fallback: profile may have dividendYield already as %
-            raw_dy = _safe_float(p.get("dividendYield"))
-            if raw_dy is not None:
-                div_yield = raw_dy * 100 if raw_dy < 1 else raw_dy
+            div_yield = None
+
+        # week52 range comes as "7.85-12.19" string in profile
+        week52_high, week52_low = None, None
+        range_str = p.get("range", "")
+        if range_str and "-" in range_str:
+            parts = range_str.split("-")
+            if len(parts) == 2:
+                week52_low = _safe_float(parts[0])
+                week52_high = _safe_float(parts[1])
 
         try:
             db.execute(
@@ -185,18 +202,18 @@ async def fetch_and_upsert(
                 {
                     "symbol": sym,
                     "price": price_val,
-                    "price_change_pct": _safe_float(q.get("changesPercentage")),
-                    "volume_avg_10d": _safe_int(q.get("avgVolume")),
+                    "price_change_pct": _safe_float(p.get("changePercentage")),
+                    "volume_avg_10d": _safe_int(p.get("averageVolume")),
                     "market_cap_m": (
-                        _safe_float(q.get("marketCap")) / 1_000_000
-                        if q.get("marketCap") else None
+                        _safe_float(p.get("marketCap")) / 1_000_000
+                        if p.get("marketCap") else None
                     ),
-                    "pe_ratio": _safe_float(q.get("pe") or p.get("price") and None),
+                    "pe_ratio": None,  # not available in /stable/profile
                     "beta": _safe_float(p.get("beta")),
-                    "week52_high": _safe_float(q.get("yearHigh")),
-                    "week52_low": _safe_float(q.get("yearLow")),
+                    "week52_high": week52_high,
+                    "week52_low": week52_low,
                     "dividend_yield": div_yield,
-                    "payout_ratio": _safe_float(p.get("payoutRatio")),
+                    "payout_ratio": None,  # not available in /stable/profile
                     "track_reason": track_reason,
                     "snapshot_date": today,
                     "fetched_at": now,

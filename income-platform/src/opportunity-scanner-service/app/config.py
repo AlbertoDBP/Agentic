@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     # FMP (for market data cache)
     fmp_api_key: str = ""
     fmp_base_url: str = "https://financialmodelingprep.com/stable"
-    fmp_batch_size: int = 50          # tickers per FMP batch request
+    fmp_batch_size: int = 50          # kept for compat; stable API is single-symbol only
+    fmp_concurrency: int = 10         # max concurrent single-symbol FMP calls
     fmp_request_timeout: float = 30.0
 
 
