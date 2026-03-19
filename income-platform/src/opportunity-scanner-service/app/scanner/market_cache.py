@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
@@ -40,6 +40,66 @@ def _safe_int(v: Any) -> Optional[int]:
         return int(float(v)) if v is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _to_fmp_symbol(ticker: str) -> str:
+    """Convert Bloomberg /PR format to FMP hyphen format.
+    CHMI/PRA → CHMI-PA,  CIM/PRC → CIM-PC,  ATH/PRD → ATH-PD
+    """
+    if "/" in ticker:
+        base, suffix = ticker.split("/", 1)
+        if suffix.startswith("PR") and len(suffix) == 3:
+            return f"{base}-P{suffix[2]}"
+    return ticker
+
+
+def _is_cusip(ticker: str) -> bool:
+    """Return True if ticker looks like a CUSIP (9-char alphanumeric with leading digits)."""
+    return len(ticker) == 9 and ticker[:6].isdigit()
+
+
+async def _resolve_cusips(cusips: list[str]) -> dict[str, str]:
+    """
+    Resolve CUSIPs to FMP symbols via /stable/search-cusip.
+    Returns {cusip: symbol} for each CUSIP that resolves to a tradeable symbol.
+    Takes the result with the highest marketCap (primary listing).
+    """
+    result: dict[str, str] = {}
+    sem = asyncio.Semaphore(settings.fmp_concurrency)
+
+    async def _one(cusip: str):
+        async with sem:
+            async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
+                try:
+                    resp = await client.get(
+                        f"{settings.fmp_base_url}/search-cusip",
+                        params={"cusip": cusip, "apikey": settings.fmp_api_key},
+                        timeout=settings.fmp_request_timeout,
+                    )
+                    if resp.status_code != 200:
+                        return
+                    data = resp.json()
+                    if not isinstance(data, list) or not data:
+                        return
+                    # Pick primary listing (highest marketCap, prefer plain symbol over .XX)
+                    primary = sorted(
+                        data,
+                        key=lambda x: (
+                            "." not in x.get("symbol", ""),
+                            x.get("marketCap") or 0,
+                        ),
+                        reverse=True,
+                    )[0]
+                    sym = primary.get("symbol", "")
+                    if sym:
+                        result[cusip.upper()] = sym.upper()
+                        logger.debug("CUSIP %s resolved to %s", cusip, sym)
+                except Exception as exc:
+                    logger.debug("CUSIP resolve %s failed: %s", cusip, exc)
+
+    await asyncio.gather(*[_one(c) for c in cusips])
+    logger.info("CUSIP resolution: %d/%d resolved", len(result), len(cusips))
+    return result
 
 
 # ─── FMP single-symbol fetcher ────────────────────────────────────────────────
@@ -87,6 +147,106 @@ async def _fetch_all_profiles(tickers: list[str]) -> dict[str, dict]:
     return result
 
 
+async def _fmp_key_metrics(symbol: str, client: httpx.AsyncClient) -> dict:
+    """
+    Fetch FMP /stable/ratios for one symbol.
+    Returns priceToEarningsRatio, dividendPayoutRatio (as fraction, e.g. 0.85).
+    Returns {} on any error.
+    """
+    try:
+        resp = await client.get(
+            f"{settings.fmp_base_url}/ratios",
+            params={"symbol": symbol, "apikey": settings.fmp_api_key, "limit": 1},
+            timeout=settings.fmp_request_timeout,
+        )
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        if not isinstance(data, list) or not data:
+            return {}
+        return data[0]
+    except Exception as exc:
+        logger.debug("FMP ratios %s failed: %s", symbol, exc)
+        return {}
+
+
+async def _fmp_dividend_calendar(symbol: str, client: httpx.AsyncClient) -> dict:
+    """
+    Fetch FMP /stable/dividends for one symbol.
+    Returns ex_div_date, pay_date, div_frequency, and div_cagr_5y (%).
+    Returns {} on any error.
+    """
+    try:
+        resp = await client.get(
+            f"{settings.fmp_base_url}/dividends",
+            params={"symbol": symbol, "apikey": settings.fmp_api_key, "limit": 60},
+            timeout=settings.fmp_request_timeout,
+        )
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        if not isinstance(data, list) or not data:
+            return {}
+        entry = data[0]  # most recent
+        result: dict = {
+            "ex_div_date": entry.get("date") or entry.get("exDividendDate"),
+            "pay_date": entry.get("paymentDate") or entry.get("payDate"),
+            "div_frequency": entry.get("frequency"),
+        }
+        # 5-year CAGR: compare most recent dividend to one from ~5Y ago
+        cutoff_5y = date.today() - timedelta(days=5 * 365)
+        old_entries = [
+            e for e in data
+            if e.get("date") and date.fromisoformat(e["date"]) <= cutoff_5y
+        ]
+        if old_entries:
+            recent_div = _safe_float(entry.get("adjDividend") or entry.get("dividend"))
+            old_entry = old_entries[-1]
+            old_div = _safe_float(old_entry.get("adjDividend") or old_entry.get("dividend"))
+            if recent_div and old_div and old_div > 0:
+                years = (date.fromisoformat(entry["date"]) - date.fromisoformat(old_entry["date"])).days / 365.25
+                if years > 0:
+                    result["div_cagr_5y"] = round(((recent_div / old_div) ** (1 / years) - 1) * 100, 2)
+        return result
+    except Exception as exc:
+        logger.debug("FMP dividends %s failed: %s", symbol, exc)
+        return {}
+
+
+async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
+    """
+    Fetch key-metrics + dividend calendar for all tickers concurrently.
+    Returns {symbol: {"pe_ratio": ..., "payout_ratio": ..., "ex_div_date": ..., "pay_date": ...}}
+    """
+    sem = asyncio.Semaphore(settings.fmp_concurrency)
+    result: dict[str, dict] = {}
+
+    async def _one(sym: str):
+        async with sem:
+            async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
+                km, div = await asyncio.gather(
+                    _fmp_key_metrics(sym, client),
+                    _fmp_dividend_calendar(sym, client),
+                )
+                merged: dict = {}
+                if km:
+                    merged["pe_ratio"] = _safe_float(km.get("priceToEarningsRatio"))
+                    raw_payout = _safe_float(km.get("dividendPayoutRatio"))
+                    # FMP returns payout as fraction (0.85) — convert to % for storage
+                    merged["payout_ratio"] = round(raw_payout * 100, 2) if raw_payout is not None else None
+                if div:
+                    merged["ex_div_date"] = div.get("ex_div_date")
+                    merged["pay_date"] = div.get("pay_date")
+                    merged["div_frequency"] = div.get("div_frequency")
+                    merged["div_cagr_5y"] = div.get("div_cagr_5y")
+                if merged:
+                    result[sym.upper()] = merged
+
+    await asyncio.gather(*[_one(t) for t in tickers])
+    logger.info("FMP supplemental fetched: %d/%d symbols got data", len(result), len(tickers))
+    return result
+
+
 # ─── Cache operations ─────────────────────────────────────────────────────────
 
 def get_stale_tickers(tickers: list[str], db: Session) -> tuple[list[str], list[str]]:
@@ -130,14 +290,33 @@ async def fetch_and_upsert(
     if not tickers:
         return 0
 
-    # Filter out symbols FMP won't handle (bond CUSIPs, slash-format preferreds)
-    # Slash-format preferred stocks (EPR/PRC) poison even the single call on some plans.
-    fmp_tickers = [t for t in tickers if "/" not in t and len(t) <= 8]
-    skipped = len(tickers) - len(fmp_tickers)
-    if skipped:
-        logger.info("Skipping %d non-standard symbols (bonds/slash-preferreds)", skipped)
+    # Separate CUSIPs from regular tickers
+    cusip_tickers = [t for t in tickers if _is_cusip(t)]
+    regular_tickers = [t for t in tickers if not _is_cusip(t)]
 
-    profiles = await _fetch_all_profiles(fmp_tickers)
+    # Resolve CUSIPs to FMP symbols (concurrent API calls)
+    cusip_map: dict[str, str] = {}
+    if cusip_tickers:
+        cusip_map = await _resolve_cusips(cusip_tickers)
+        unresolved = len(cusip_tickers) - len(cusip_map)
+        if unresolved:
+            logger.info("Could not resolve %d CUSIPs — skipping those", unresolved)
+
+    # Build unified lookup: fmp_symbol → original_symbol
+    # Regular tickers: convert preferred format (CHMI/PRA → CHMI-PA)
+    # CUSIP tickers: use resolved FMP symbol, store result under CUSIP key
+    fmp_lookup: dict[str, str] = {_to_fmp_symbol(t).upper(): t.upper() for t in regular_tickers}
+    for cusip, fmp_sym in cusip_map.items():
+        fmp_lookup[fmp_sym.upper()] = cusip.upper()
+
+    fmp_syms = list(fmp_lookup.keys())
+    profiles_by_fmp, supplemental_by_fmp = await asyncio.gather(
+        _fetch_all_profiles(fmp_syms),
+        _fetch_supplemental(fmp_syms),
+    )
+    # Remap results back to original ticker symbols
+    profiles = {fmp_lookup[fmp_sym]: data for fmp_sym, data in profiles_by_fmp.items() if fmp_sym in fmp_lookup}
+    supplemental = {fmp_lookup[fmp_sym]: data for fmp_sym, data in supplemental_by_fmp.items() if fmp_sym in fmp_lookup}
 
     today = date.today().isoformat()
     now = datetime.now(timezone.utc).isoformat()
@@ -146,6 +325,7 @@ async def fetch_and_upsert(
     for symbol in tickers:
         sym = symbol.upper()
         p = profiles.get(sym, {})
+        s = supplemental.get(sym, {})
 
         price_val = _safe_float(p.get("price"))
 
@@ -155,6 +335,14 @@ async def fetch_and_upsert(
             div_yield = round((last_div / price_val) * 100, 4)
         else:
             div_yield = None
+
+        # chowder_number = yield_ttm + 5Y div CAGR
+        div_cagr_5y = s.get("div_cagr_5y")
+        chowder_number = (
+            round(div_yield + div_cagr_5y, 2)
+            if div_yield is not None and div_cagr_5y is not None
+            else None
+        )
 
         # week52 range comes as "7.85-12.19" string in profile
         week52_high, week52_low = None, None
@@ -172,14 +360,16 @@ async def fetch_and_upsert(
                         symbol, price, price_change_pct, volume_avg_10d,
                         market_cap_m, pe_ratio, beta,
                         week52_high, week52_low,
-                        dividend_yield, payout_ratio,
+                        dividend_yield, payout_ratio, chowder_number,
+                        ex_div_date, pay_date, div_frequency,
                         is_tracked, track_reason,
                         snapshot_date, fetched_at
                     ) VALUES (
                         :symbol, :price, :price_change_pct, :volume_avg_10d,
                         :market_cap_m, :pe_ratio, :beta,
                         :week52_high, :week52_low,
-                        :dividend_yield, :payout_ratio,
+                        :dividend_yield, :payout_ratio, :chowder_number,
+                        :ex_div_date, :pay_date, :div_frequency,
                         TRUE, :track_reason,
                         :snapshot_date, :fetched_at
                     )
@@ -188,12 +378,16 @@ async def fetch_and_upsert(
                         price_change_pct  = EXCLUDED.price_change_pct,
                         volume_avg_10d    = EXCLUDED.volume_avg_10d,
                         market_cap_m      = EXCLUDED.market_cap_m,
-                        pe_ratio          = EXCLUDED.pe_ratio,
+                        pe_ratio          = COALESCE(EXCLUDED.pe_ratio, platform_shared.market_data_cache.pe_ratio),
                         beta              = EXCLUDED.beta,
                         week52_high       = EXCLUDED.week52_high,
                         week52_low        = EXCLUDED.week52_low,
                         dividend_yield    = EXCLUDED.dividend_yield,
-                        payout_ratio      = EXCLUDED.payout_ratio,
+                        payout_ratio      = COALESCE(EXCLUDED.payout_ratio, platform_shared.market_data_cache.payout_ratio),
+                        chowder_number    = COALESCE(EXCLUDED.chowder_number, platform_shared.market_data_cache.chowder_number),
+                        ex_div_date       = COALESCE(EXCLUDED.ex_div_date, platform_shared.market_data_cache.ex_div_date),
+                        pay_date          = COALESCE(EXCLUDED.pay_date, platform_shared.market_data_cache.pay_date),
+                        div_frequency     = COALESCE(EXCLUDED.div_frequency, platform_shared.market_data_cache.div_frequency),
                         is_tracked        = TRUE,
                         track_reason      = EXCLUDED.track_reason,
                         snapshot_date     = EXCLUDED.snapshot_date,
@@ -208,12 +402,16 @@ async def fetch_and_upsert(
                         _safe_float(p.get("marketCap")) / 1_000_000
                         if p.get("marketCap") else None
                     ),
-                    "pe_ratio": None,  # not available in /stable/profile
+                    "pe_ratio": s.get("pe_ratio"),
                     "beta": _safe_float(p.get("beta")),
                     "week52_high": week52_high,
                     "week52_low": week52_low,
                     "dividend_yield": div_yield,
-                    "payout_ratio": None,  # not available in /stable/profile
+                    "payout_ratio": s.get("payout_ratio"),
+                    "chowder_number": chowder_number,
+                    "ex_div_date": s.get("ex_div_date"),
+                    "pay_date": s.get("pay_date"),
+                    "div_frequency": s.get("div_frequency"),
                     "track_reason": track_reason,
                     "snapshot_date": today,
                     "fetched_at": now,
@@ -225,6 +423,38 @@ async def fetch_and_upsert(
 
     db.commit()
     logger.info("Upserted %d rows into market_data_cache", upserted)
+
+    # Backfill sector + industry on the securities table from FMP profile data.
+    # Uses the resolved FMP symbol for CUSIPs, original symbol for regular tickers.
+    # Only updates rows where sector/industry is NULL to avoid overwriting manual data.
+    sec_updated = 0
+    for fmp_sym, orig_sym in fmp_lookup.items():
+        p = profiles.get(orig_sym, {})
+        sector = p.get("sector") or None
+        industry = p.get("industry") or None
+        name = p.get("companyName") or None
+        if not sector and not industry and not name:
+            continue
+        try:
+            db.execute(
+                text("""
+                    UPDATE platform_shared.securities
+                    SET
+                        name     = COALESCE(name,     :name),
+                        sector   = COALESCE(sector,   :sector),
+                        industry = COALESCE(industry, :industry)
+                    WHERE symbol = :symbol
+                      AND (name IS NULL OR sector IS NULL OR industry IS NULL)
+                """),
+                {"symbol": orig_sym, "name": name, "sector": sector, "industry": industry},
+            )
+            sec_updated += 1
+        except Exception as exc:
+            logger.debug("Securities sector update failed for %s: %s", orig_sym, exc)
+    if sec_updated:
+        db.commit()
+        logger.info("Backfilled sector/industry for %d securities", sec_updated)
+
     return upserted
 
 

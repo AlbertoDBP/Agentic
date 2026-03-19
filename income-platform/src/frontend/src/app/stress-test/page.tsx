@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Shield, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
@@ -49,32 +49,6 @@ const SCENARIOS = [
   { id: "INFLATION_SPIKE",      label: "Inflation Spike",        desc: "CPI spikes to 8%+ — real income eroded, TIPS and MLPs hold" },
   { id: "CUSTOM",               label: "Custom Scenario",        desc: "Define your own shock parameters" },
 ];
-
-// ── Mock result ───────────────────────────────────────────────────────────────
-
-const mockResult = (portfolioId: string, scenarioId: string): StressResult => ({
-  portfolio_id: portfolioId,
-  scenario_name: SCENARIOS.find(s => s.id === scenarioId)?.label ?? scenarioId,
-  portfolio_value_before: 485_200,
-  portfolio_value_after: 398_700,
-  value_change_pct: -17.8,
-  annual_income_before: 42_180,
-  annual_income_after: 36_540,
-  income_change_pct: -13.4,
-  computed_at: new Date().toISOString(),
-  position_impacts: [
-    { symbol: "PDI",  asset_class: "CEF",  current_value: 38400, stressed_value: 27100, current_income: 5520, stressed_income: 4140, value_change_pct: -29.4, income_change_pct: -25.0, vulnerability_rank: 1 },
-    { symbol: "GOF",  asset_class: "CEF",  current_value: 22800, stressed_value: 16900, current_income: 3290, stressed_income: 2630, value_change_pct: -25.9, income_change_pct: -20.1, vulnerability_rank: 2 },
-    { symbol: "NLY",  asset_class: "REIT", current_value: 31500, stressed_value: 24300, current_income: 3700, stressed_income: 3200, value_change_pct: -22.9, income_change_pct: -13.5, vulnerability_rank: 3 },
-    { symbol: "PFF",  asset_class: "ETF",  current_value: 18200, stressed_value: 14800, current_income: 1090, stressed_income:  870, value_change_pct: -18.7, income_change_pct: -20.2, vulnerability_rank: 4 },
-    { symbol: "EPD",  asset_class: "MLP",  current_value: 44600, stressed_value: 39900, current_income: 3840, stressed_income: 3600, value_change_pct: -10.5, income_change_pct:  -6.3, vulnerability_rank: 5 },
-    { symbol: "MAIN", asset_class: "BDC",  current_value: 29400, stressed_value: 26500, current_income: 2160, stressed_income: 1980, value_change_pct:  -9.9, income_change_pct:  -8.3, vulnerability_rank: 6 },
-    { symbol: "O",    asset_class: "REIT", current_value: 52300, stressed_value: 47200, current_income: 3140, stressed_income: 2980, value_change_pct:  -9.8, income_change_pct:  -5.1, vulnerability_rank: 7 },
-    { symbol: "ARCC", asset_class: "BDC",  current_value: 38700, stressed_value: 35300, current_income: 3580, stressed_income: 3300, value_change_pct:  -8.8, income_change_pct:  -7.8, vulnerability_rank: 8 },
-    { symbol: "JEPI", asset_class: "ETF",  current_value: 61400, stressed_value: 56700, current_income: 7370, stressed_income: 6900, value_change_pct:  -7.7, income_change_pct:  -6.4, vulnerability_rank: 9 },
-    { symbol: "HTGC", asset_class: "BDC",  current_value: 21800, stressed_value: 20300, current_income: 2290, stressed_income: 2160, value_change_pct:  -6.9, income_change_pct:  -5.7, vulnerability_rank: 10 },
-  ],
-});
 
 // ── Custom scenario params ─────────────────────────────────────────────────────
 
@@ -172,7 +146,7 @@ const COLUMNS: ColumnDef<PositionImpact>[] = [
 
 export function StressTestContent({ defaultPortfolioId }: { defaultPortfolioId?: string }) {
   const { portfolios } = usePortfolio();
-  const [portfolioId, setPortfolioId] = useState(defaultPortfolioId ?? portfolios[0]?.id ?? "p1");
+  const [portfolioId, setPortfolioId] = useState(defaultPortfolioId ?? portfolios[0]?.id ?? "");
   const [scenarioId, setScenarioId] = useState("RATE_HIKE_200BPS");
   const [customParams, setCustomParams] = useState<CustomParams>({
     equity_shock_pct: "-20",
@@ -182,10 +156,16 @@ export function StressTestContent({ defaultPortfolioId }: { defaultPortfolioId?:
   });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<StressResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!portfolioId && portfolios.length > 0) setPortfolioId(portfolios[0].id);
+  }, [portfolios, portfolioId]);
 
   const runTest = async () => {
     setLoading(true);
     setResult(null);
+    setRunError(null);
     try {
       const payload: Record<string, unknown> = {
         portfolio_id: portfolioId,
@@ -202,8 +182,9 @@ export function StressTestContent({ defaultPortfolioId }: { defaultPortfolioId?:
       }
       const data = await apiPost<StressResult>("/api/scenarios/stress-test", payload);
       setResult(data);
-    } catch {
-      setResult(mockResult(portfolioId, scenarioId));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Stress test failed";
+      setRunError(msg);
     } finally {
       setLoading(false);
     }
@@ -285,10 +266,10 @@ export function StressTestContent({ defaultPortfolioId }: { defaultPortfolioId?:
 
         <button
           onClick={runTest}
-          disabled={loading}
+          disabled={loading || !portfolioId}
           className={cn(
             "flex items-center gap-2 rounded-md px-5 py-2 text-sm font-medium transition-colors",
-            loading
+            loading || !portfolioId
               ? "bg-primary/50 text-primary-foreground/50 cursor-not-allowed"
               : "bg-primary text-primary-foreground hover:bg-primary/90"
           )}
@@ -297,6 +278,13 @@ export function StressTestContent({ defaultPortfolioId }: { defaultPortfolioId?:
           {loading ? "Running..." : "Run Stress Test"}
         </button>
       </div>
+
+      {/* Error banner */}
+      {runError && !loading && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {runError}
+        </div>
+      )}
 
       {/* Results */}
       {result && !loading && (
@@ -355,7 +343,7 @@ export function StressTestContent({ defaultPortfolioId }: { defaultPortfolioId?:
       )}
 
       {/* Empty state */}
-      {!result && !loading && (
+      {!result && !loading && !runError && (
         <div className="rounded-lg border border-border bg-card py-16 text-center">
           <Shield className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground">Select a portfolio and scenario, then run the stress test</p>

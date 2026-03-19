@@ -854,6 +854,7 @@ class PositionUpdate(BaseModel):
     annual_income: Optional[float] = None
     yield_on_cost: Optional[float] = None        # as percentage (e.g. 8.5); stored as fraction
     current_price: Optional[float] = None
+    asset_type: Optional[str] = None             # updates securities.asset_type
     sector: Optional[str] = None                 # updates securities.sector
     dividend_frequency: Optional[str] = None     # stored in positions.dividend_frequency
 
@@ -909,15 +910,16 @@ def update_position(position_id: str, update: PositionUpdate):
                 "id": position_id,
             })
 
-            # Update sector and/or dividend_frequency in securities if provided
-            if update.sector is not None or update.dividend_frequency is not None:
+            # Update asset_type, sector, and/or dividend_frequency in securities if provided
+            if update.asset_type is not None or update.sector is not None or update.dividend_frequency is not None:
                 conn.execute(text("""
                     UPDATE platform_shared.securities
-                    SET sector             = COALESCE(:sector, sector),
+                    SET asset_type         = COALESCE(NULLIF(:asset_type, ''), asset_type),
+                        sector             = COALESCE(:sector, sector),
                         dividend_frequency = COALESCE(:freq, dividend_frequency),
                         updated_at         = NOW()
                     WHERE symbol = :sym
-                """), {"sector": update.sector, "freq": update.dividend_frequency, "sym": sym})
+                """), {"asset_type": update.asset_type, "sector": update.sector, "freq": update.dividend_frequency, "sym": sym})
 
             # Refresh portfolio total
             conn.execute(text("""
@@ -1098,6 +1100,9 @@ def get_market_data_for_positions(portfolio_id: Optional[str] = None):
                     m.nav_value                          AS nav,
                     m.nav_discount_pct                   AS premium_discount,
                     m.ex_div_date                        AS ex_date,
+                    m.pay_date,
+                    m.div_frequency,
+                    m.volume_avg_10d                     AS avg_volume,
                     COALESCE(m.snapshot_date, p.price_updated_at::date) AS snapshot_date
                 FROM (
                     SELECT DISTINCT ON (symbol)
@@ -1129,9 +1134,16 @@ def get_market_data_for_positions(portfolio_id: Optional[str] = None):
                 # Null-fill fields not in DB
                 item["day_high"] = None
                 item["day_low"] = None
-                item["eps"] = None
-                item["dividend_growth_5y"] = None
-                item["avg_volume"] = None
+                pe = item.get("pe_ratio")
+                item["eps"] = round(price / pe, 2) if pe and pe != 0 and price else None
+                chowder = item.get("chowder_number")
+                div_yield = item.get("dividend_yield")
+                item["dividend_growth_5y"] = round(float(chowder) - float(div_yield), 2) if chowder and div_yield else None
+                avg_vol = item.get("avg_volume")
+                item["avg_volume"] = int(avg_vol) if avg_vol else None
+                pay = item.get("pay_date")
+                item["pay_date"] = pay.isoformat() if pay and hasattr(pay, "isoformat") else (str(pay) if pay else None)
+                item["div_frequency"] = item.get("div_frequency")
                 ex = item.get("ex_date")
                 item["ex_date"] = ex.isoformat() if ex and hasattr(ex, "isoformat") else (str(ex) if ex else None)
                 sd = item.get("snapshot_date")

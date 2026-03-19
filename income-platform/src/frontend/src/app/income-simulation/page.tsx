@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { TrendingUp, RefreshCw } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { cn } from "@/lib/utils";
@@ -11,7 +11,8 @@ import { apiPost } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface ProjectionResult {
+// Raw shape returned by /api/scenarios/income-projection
+interface ApiProjectionResult {
   portfolio_id: string;
   horizon_months: number;
   projected_income_p10: number;
@@ -19,9 +20,22 @@ interface ProjectionResult {
   projected_income_p90: number;
   by_position: {
     symbol: string;
-    asset_class: string;
-    current_annual: number;
-    projected_annual_p50: number;
+    base_income: number;  // current annual income
+    p10: number;
+    p50: number;          // projected annual P50
+    p90: number;
+  }[];
+  computed_at: string;
+}
+
+// Shape used by the UI (derived fields added client-side)
+interface ProjectionResult extends ApiProjectionResult {
+  by_position: {
+    symbol: string;
+    base_income: number;
+    p10: number;
+    p50: number;
+    p90: number;
     growth_rate_pct: number;
     confidence: string;
   }[];
@@ -31,44 +45,12 @@ interface ProjectionResult {
     p50: number;
     p90: number;
   }[];
-  computed_at: string;
 }
 
-// ── Mock result ───────────────────────────────────────────────────────────────
-
-function buildMock(portfolioId: string, horizonMonths: number): ProjectionResult {
-  const base = 3515; // monthly base income
-  const months: { month: string; p10: number; p50: number; p90: number }[] = [];
-  for (let i = 1; i <= horizonMonths; i++) {
-    const growth = 1 + (i / horizonMonths) * 0.08;
-    months.push({
-      month: new Date(Date.now() + i * 30 * 86400 * 1000).toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
-      p10: Math.round(base * growth * 0.88),
-      p50: Math.round(base * growth),
-      p90: Math.round(base * growth * 1.12),
-    });
-  }
-  return {
-    portfolio_id: portfolioId,
-    horizon_months: horizonMonths,
-    projected_income_p10: Math.round(base * 12 * 0.88 * 1.04),
-    projected_income_p50: Math.round(base * 12 * 1.04),
-    projected_income_p90: Math.round(base * 12 * 1.12 * 1.04),
-    computed_at: new Date().toISOString(),
-    monthly_series: months,
-    by_position: [
-      { symbol: "JEPI",  asset_class: "ETF",  current_annual: 7370, projected_annual_p50: 7590, growth_rate_pct: 3.0,  confidence: "HIGH" },
-      { symbol: "EPD",   asset_class: "MLP",  current_annual: 3840, projected_annual_p50: 4110, growth_rate_pct: 7.0,  confidence: "HIGH" },
-      { symbol: "O",     asset_class: "REIT", current_annual: 3140, projected_annual_p50: 3330, growth_rate_pct: 6.1,  confidence: "HIGH" },
-      { symbol: "ARCC",  asset_class: "BDC",  current_annual: 3580, projected_annual_p50: 3690, growth_rate_pct: 3.1,  confidence: "MEDIUM" },
-      { symbol: "MAIN",  asset_class: "BDC",  current_annual: 2160, projected_annual_p50: 2310, growth_rate_pct: 6.9,  confidence: "HIGH" },
-      { symbol: "PDI",   asset_class: "CEF",  current_annual: 5520, projected_annual_p50: 5190, growth_rate_pct: -6.0, confidence: "LOW" },
-      { symbol: "GOF",   asset_class: "CEF",  current_annual: 3290, projected_annual_p50: 3060, growth_rate_pct: -7.0, confidence: "LOW" },
-      { symbol: "HTGC",  asset_class: "BDC",  current_annual: 2290, projected_annual_p50: 2380, growth_rate_pct: 3.9,  confidence: "MEDIUM" },
-      { symbol: "PFF",   asset_class: "ETF",  current_annual: 1090, projected_annual_p50: 1100, growth_rate_pct: 0.9,  confidence: "HIGH" },
-      { symbol: "NLY",   asset_class: "REIT", current_annual: 3700, projected_annual_p50: 3410, growth_rate_pct: -7.8, confidence: "LOW" },
-    ],
-  };
+function deriveConfidence(base: number, p10: number, p90: number): string {
+  if (base <= 0) return "LOW";
+  const spread = (p90 - p10) / base * 100;
+  return spread < 5 ? "HIGH" : spread < 12 ? "MEDIUM" : "LOW";
 }
 
 const CONFIDENCE_COLORS: Record<string, string> = {
@@ -83,29 +65,54 @@ const HORIZONS = [3, 6, 12, 24, 36, 60];
 
 export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?: string }) {
   const { portfolios } = usePortfolio();
-  const [portfolioId, setPortfolioId] = useState(defaultPortfolioId ?? portfolios[0]?.id ?? "p1");
+  const [portfolioId, setPortfolioId] = useState(defaultPortfolioId ?? portfolios[0]?.id ?? "");
   const [horizonMonths, setHorizonMonths] = useState(12);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ProjectionResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!portfolioId && portfolios.length > 0) setPortfolioId(portfolios[0].id);
+  }, [portfolios, portfolioId]);
 
   const run = async () => {
     setLoading(true);
     setResult(null);
+    setRunError(null);
     try {
-      const data = await apiPost<Omit<ProjectionResult, "monthly_series">>("/api/scenarios/income-projection", {
+      const raw = await apiPost<ApiProjectionResult>("/api/scenarios/income-projection", {
         portfolio_id: portfolioId,
         horizon_months: horizonMonths,
       });
-      // Build monthly_series from P50 data since backend doesn't return it
-      const mock = buildMock(portfolioId, horizonMonths);
-      setResult({
-        ...data,
-        monthly_series: mock.monthly_series,
-      } as ProjectionResult);
+
+      // Compute derived per-position fields
+      const byPosition = (raw.by_position || []).map((pos) => ({
+        ...pos,
+        growth_rate_pct: pos.base_income > 0
+          ? ((pos.p50 - pos.base_income) / pos.base_income) * 100
+          : 0,
+        confidence: deriveConfidence(pos.base_income, pos.p10, pos.p90),
+      }));
+
+      // Build monthly interpolation series from current base → projected P10/P50/P90
+      const currentMonthly = byPosition.reduce((s, p) => s + (p.base_income || 0), 0) / 12;
+      const p10Monthly = raw.projected_income_p10 / 12;
+      const p50Monthly = raw.projected_income_p50 / 12;
+      const p90Monthly = raw.projected_income_p90 / 12;
+      const monthly_series = [];
+      for (let i = 1; i <= raw.horizon_months; i++) {
+        const t = i / raw.horizon_months;
+        monthly_series.push({
+          month: new Date(Date.now() + i * 30 * 86400 * 1000).toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
+          p10: Math.round(currentMonthly + t * (p10Monthly - currentMonthly)),
+          p50: Math.round(currentMonthly + t * (p50Monthly - currentMonthly)),
+          p90: Math.round(currentMonthly + t * (p90Monthly - currentMonthly)),
+        });
+      }
+
+      setResult({ ...raw, by_position: byPosition, monthly_series });
     } catch (err) {
-      console.error("Projection failed:", err);
-      // Fall back to mock during development
-      setResult(buildMock(portfolioId, horizonMonths));
+      setRunError(err instanceof Error ? err.message : "Simulation failed");
     } finally {
       setLoading(false);
     }
@@ -159,10 +166,10 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
 
         <button
           onClick={run}
-          disabled={loading}
+          disabled={loading || !portfolioId}
           className={cn(
             "flex items-center gap-2 rounded-md px-5 py-2 text-sm font-medium transition-colors",
-            loading
+            loading || !portfolioId
               ? "bg-primary/50 text-primary-foreground/50 cursor-not-allowed"
               : "bg-primary text-primary-foreground hover:bg-primary/90"
           )}
@@ -171,6 +178,13 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
           {loading ? "Projecting..." : "Run Projection"}
         </button>
       </div>
+
+      {/* Error banner */}
+      {runError && !loading && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {runError}
+        </div>
+      )}
 
       {/* Results */}
       {result && !loading && (
@@ -205,7 +219,7 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
                     <stop offset="95%" stopColor="#f87171" stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} interval={Math.floor(result.monthly_series.length / 6)} />
+                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(result.monthly_series.length / 6) - 1)} />
                 <YAxis tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(1)}k`} width={52} />
                 <Tooltip
                   contentStyle={{ background: "#1a1a2e", border: "1px solid #2d2d44", borderRadius: 6, fontSize: 12 }}
@@ -224,44 +238,48 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
             <div className="border-b border-border px-4 py-3">
               <h2 className="text-sm font-semibold">By Position</h2>
             </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-secondary/40">
-                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Symbol</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Class</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Current Annual</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Projected P50</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Growth</th>
-                  <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground">Confidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.by_position.map((pos) => (
-                  <tr key={pos.symbol} className="border-b border-border/50 hover:bg-secondary/20">
-                    <td className="px-3 py-2.5">
-                      <TickerBadge symbol={pos.symbol} assetType={pos.asset_class} />
-                    </td>
-                    <td className="px-3 py-2.5 text-xs text-muted-foreground">{pos.asset_class}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-xs text-income">{formatCurrency(pos.current_annual)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium">{formatCurrency(pos.projected_annual_p50)}</td>
-                    <td className={cn("px-3 py-2.5 text-right tabular-nums text-xs font-medium",
-                      pos.growth_rate_pct < 0 ? "text-red-400" : "text-income"
-                    )}>
-                      {pos.growth_rate_pct > 0 ? "+" : ""}{pos.growth_rate_pct.toFixed(1)}%
-                    </td>
-                    <td className={cn("px-3 py-2.5 text-center text-xs font-medium", CONFIDENCE_COLORS[pos.confidence])}>
-                      {pos.confidence}
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-secondary/40">
+                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Symbol</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Current Annual</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">P10 Bear</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">P50 Base</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">P90 Bull</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Growth</th>
+                    <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground">Confidence</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {result.by_position.filter((pos) => pos.base_income > 0).map((pos) => (
+                    <tr key={pos.symbol} className="border-b border-border/50 hover:bg-secondary/20">
+                      <td className="px-3 py-2.5">
+                        <TickerBadge symbol={pos.symbol} />
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-xs text-income">{formatCurrency(pos.base_income)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-xs text-red-400">{formatCurrency(pos.p10)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium">{formatCurrency(pos.p50)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-xs text-emerald-400">{formatCurrency(pos.p90)}</td>
+                      <td className={cn("px-3 py-2.5 text-right tabular-nums text-xs font-medium",
+                        pos.growth_rate_pct < 0 ? "text-red-400" : "text-income"
+                      )}>
+                        {pos.growth_rate_pct > 0 ? "+" : ""}{pos.growth_rate_pct.toFixed(1)}%
+                      </td>
+                      <td className={cn("px-3 py-2.5 text-center text-xs font-medium", CONFIDENCE_COLORS[pos.confidence])}>
+                        {pos.confidence}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
 
       {/* Empty state */}
-      {!result && !loading && (
+      {!result && !loading && !runError && (
         <div className="rounded-lg border border-border bg-card py-16 text-center">
           <TrendingUp className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground">Select a portfolio and horizon, then run the projection</p>
