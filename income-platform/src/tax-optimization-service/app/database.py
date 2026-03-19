@@ -38,7 +38,7 @@ engine = create_async_engine(
     max_overflow=settings.db_max_overflow,
     echo=settings.db_echo,
     future=True,
-    connect_args={"ssl": "require"},
+    connect_args={},
 )
 
 AsyncSessionLocal = async_sessionmaker(
