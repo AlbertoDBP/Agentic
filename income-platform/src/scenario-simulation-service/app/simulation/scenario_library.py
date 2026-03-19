@@ -68,6 +68,42 @@ SCENARIO_LIBRARY: Dict[str, Dict] = {
             "PREFERRED_STOCK":  {"price_pct": -15, "income_pct": 0},
         },
     },
+    "CREDIT_SPREAD_WIDEN": {
+        "description": "Investment-grade and high-yield spreads widen 200bps — BDCs and CLO equity hit hard",
+        "shocks": {
+            "EQUITY_REIT":      {"price_pct": -8,  "income_pct": -2},
+            "MORTGAGE_REIT":    {"price_pct": -18, "income_pct": -10},
+            "BDC":              {"price_pct": -20, "income_pct": -12},
+            "COVERED_CALL_ETF": {"price_pct": -6,  "income_pct": -2},
+            "DIVIDEND_STOCK":   {"price_pct": -5,  "income_pct": -1},
+            "BOND":             {"price_pct": -10, "income_pct": 0},
+            "PREFERRED_STOCK":  {"price_pct": -12, "income_pct": 0},
+        },
+    },
+    "RATE_HIKE_400BPS": {
+        "description": "Aggressive Fed rate cycle of 400 basis points — 2022-style shock",
+        "shocks": {
+            "EQUITY_REIT":      {"price_pct": -25, "income_pct": -8},
+            "MORTGAGE_REIT":    {"price_pct": -35, "income_pct": -18},
+            "BDC":              {"price_pct": -15, "income_pct": -10},
+            "COVERED_CALL_ETF": {"price_pct": -12, "income_pct": -5},
+            "DIVIDEND_STOCK":   {"price_pct": -8,  "income_pct": -3},
+            "BOND":             {"price_pct": -20, "income_pct": 0},
+            "PREFERRED_STOCK":  {"price_pct": -15, "income_pct": 0},
+        },
+    },
+    "RECESSION_DEEP": {
+        "description": "Deep recession — GDP -6%, widespread distribution cuts, credit defaults rise",
+        "shocks": {
+            "EQUITY_REIT":      {"price_pct": -28, "income_pct": -18},
+            "MORTGAGE_REIT":    {"price_pct": -40, "income_pct": -28},
+            "BDC":              {"price_pct": -35, "income_pct": -25},
+            "COVERED_CALL_ETF": {"price_pct": -25, "income_pct": -12},
+            "DIVIDEND_STOCK":   {"price_pct": -30, "income_pct": -12},
+            "BOND":             {"price_pct": 5,   "income_pct": 0},
+            "PREFERRED_STOCK":  {"price_pct": -18, "income_pct": 0},
+        },
+    },
 }
 
 ASSET_CLASSES = [

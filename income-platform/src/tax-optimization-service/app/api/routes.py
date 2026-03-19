@@ -16,10 +16,13 @@ from app.models import (
     AssetClass,
     FilingStatus,
     HarvestingRequest,
+    HoldingInput,
     OptimizationRequest,
+    PortfolioOptimizationRequest,
     TaxCalculationRequest,
     TaxProfileRequest,
 )
+from app.database import get_portfolio_holdings
 from app.tax.profiler import build_tax_profile
 from app.tax.calculator import calculate_tax_burden
 from app.tax.optimizer import optimize_portfolio
@@ -145,6 +148,67 @@ async def optimize_tax(request: OptimizationRequest):
         return await optimize_portfolio(request)
     except Exception as exc:
         logger.error("Portfolio optimization error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/tax/optimize/portfolio")
+async def optimize_tax_portfolio(request: PortfolioOptimizationRequest):
+    """
+    Fetch all active holdings in a portfolio and run tax-placement optimization.
+    Identifies which positions should move to tax-advantaged accounts.
+    """
+    rows = await get_portfolio_holdings(request.portfolio_id)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No active positions found for portfolio_id={request.portfolio_id}",
+        )
+
+    holdings = []
+    for r in rows:
+        raw_at = str(r.get("account_type", "TAXABLE")).upper()
+        # Normalize account_type from DB values to enum values
+        at_map = {
+            "TAXABLE": AccountType.TAXABLE,
+            "TRAD_IRA": AccountType.TRAD_IRA,
+            "TRADITIONAL": AccountType.TRAD_IRA,
+            "TRADITIONAL_IRA": AccountType.TRAD_IRA,
+            "ROTH_IRA": AccountType.ROTH_IRA,
+            "ROTH": AccountType.ROTH_IRA,
+            "401K": AccountType.FOUR01K,
+            "401(K)": AccountType.FOUR01K,
+        }
+        account_type = at_map.get(raw_at, AccountType.TAXABLE)
+
+        raw_ac = str(r.get("asset_type", "UNKNOWN")).upper()
+        try:
+            asset_class = AssetClass(raw_ac)
+        except ValueError:
+            asset_class = None
+
+        annual_yield = float(r.get("annual_yield") or 0.0)
+        # annual_yield stored as fraction (e.g. 0.08) — cap at 5.0 for model validation
+        if annual_yield > 5.0:
+            annual_yield = min(annual_yield, 5.0)
+
+        holdings.append(HoldingInput(
+            symbol=str(r["symbol"]),
+            asset_class=asset_class,
+            account_type=account_type,
+            current_value=float(r.get("current_value") or 0.0),
+            annual_yield=annual_yield,
+        ))
+
+    combined = OptimizationRequest(
+        holdings=holdings,
+        annual_income=request.annual_income,
+        filing_status=request.filing_status,
+        state_code=request.state_code,
+    )
+    try:
+        return await optimize_portfolio(combined)
+    except Exception as exc:
+        logger.error("Portfolio optimization error for %s: %s", request.portfolio_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

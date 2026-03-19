@@ -35,6 +35,7 @@ async def init_pool() -> None:
         ssl="require" if ssl_required else None,
         min_size=2,
         max_size=10,
+        statement_cache_size=0,   # required: PgBouncer transaction pool mode
     )
 
 
@@ -59,7 +60,7 @@ async def get_positions(
                            yield_on_value, portfolio_weight_pct, avg_cost_basis
                     FROM platform_shared.positions
                     WHERE portfolio_id = $1
-                      AND status = 'OPEN'
+                      AND status = 'ACTIVE'
                       AND acquired_date <= $2
                       AND (closed_date IS NULL OR closed_date > $2)
                     """,
@@ -73,7 +74,7 @@ async def get_positions(
                            yield_on_value, portfolio_weight_pct, avg_cost_basis
                     FROM platform_shared.positions
                     WHERE portfolio_id = $1
-                      AND status = 'OPEN'
+                      AND status = 'ACTIVE'
                     """,
                     portfolio_id,
                 )
@@ -91,13 +92,13 @@ async def get_asset_classes(symbols: list) -> dict:
         async with _pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT symbol, asset_class
+                SELECT ticker, asset_class
                 FROM platform_shared.asset_classifications
-                WHERE symbol = ANY($1)
+                WHERE ticker = ANY($1)
                 """,
                 symbols,
             )
-            result = {r["symbol"]: r["asset_class"] for r in rows}
+            result = {r["ticker"]: r["asset_class"] for r in rows}
             # Default missing symbols
             for s in symbols:
                 if s not in result:

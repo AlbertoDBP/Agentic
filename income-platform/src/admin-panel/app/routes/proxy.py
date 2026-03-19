@@ -34,6 +34,7 @@ def _base(service: str) -> str:
         "market-data": settings.agent01_url,
         "broker": settings.broker_url,
         "scoring": settings.agent03_url,
+        "alerts": settings.agent11_url,
     }[service]
 
 
@@ -59,6 +60,13 @@ async def _proxy(
                 resp = await client.get(url, headers=headers)
             elif method == "DELETE":
                 resp = await client.delete(url, headers=headers)
+            elif method == "PATCH":
+                body = await request.body()
+                resp = await client.patch(
+                    url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    content=body,
+                )
             else:
                 body = await request.body()
                 resp = await client.post(
@@ -219,6 +227,11 @@ async def tax_optimize(request: Request):
     return await _proxy("POST", "tax", "/tax/optimize", request, timeout=_SCAN_TIMEOUT)
 
 
+@router.post("/tax/optimize/portfolio")
+async def tax_optimize_portfolio(request: Request):
+    return await _proxy("POST", "tax", "/tax/optimize/portfolio", request, timeout=_SCAN_TIMEOUT)
+
+
 @router.post("/tax/harvest")
 async def tax_harvest(request: Request):
     return await _proxy("POST", "tax", "/tax/harvest", request)
@@ -227,3 +240,20 @@ async def tax_harvest(request: Request):
 @router.get("/tax/asset-classes")
 async def tax_asset_classes(request: Request):
     return await _proxy("GET", "tax", "/tax/asset-classes", request)
+
+
+# ─── Smart Alerts (Agent 11) ────────────────────────────────────────────────
+
+@router.get("/alerts")
+async def get_alerts(request: Request):
+    return await _proxy("GET", "alerts", "/alerts", request)
+
+
+@router.post("/alerts/scan")
+async def scan_alerts(request: Request):
+    return await _proxy("POST", "alerts", "/alerts/scan", request)
+
+
+@router.patch("/alerts/{alert_id}/resolve")
+async def resolve_alert(alert_id: str, request: Request):
+    return await _proxy("PATCH", "alerts", f"/alerts/{alert_id}/resolve", request)

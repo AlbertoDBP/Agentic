@@ -80,6 +80,45 @@ async def check_db_health() -> bool:
         return False
 
 
+async def get_portfolio_holdings(portfolio_id: str) -> list:
+    """
+    Fetch all active positions from a portfolio and return as a list of dicts
+    suitable for constructing HoldingInput objects.
+    Returns [] on error or no positions found.
+    """
+    try:
+        async with get_db_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT
+                        p.symbol,
+                        COALESCE(s.asset_type, 'UNKNOWN')                                AS asset_type,
+                        COALESCE(p.current_value, 0)                                      AS current_value,
+                        CASE
+                            WHEN COALESCE(p.current_value, 0) > 0
+                             AND COALESCE(p.annual_income,  0) > 0
+                            THEN p.annual_income / p.current_value
+                            ELSE 0
+                        END                                                               AS annual_yield,
+                        COALESCE(a.account_type, 'TAXABLE')                               AS account_type
+                    FROM platform_shared.positions p
+                    LEFT JOIN platform_shared.securities      s  ON s.symbol = p.symbol
+                    LEFT JOIN platform_shared.portfolios      po ON po.id = p.portfolio_id
+                    LEFT JOIN platform_shared.accounts        a  ON a.id  = po.account_id
+                    WHERE p.portfolio_id = :pid
+                      AND p.status       = 'ACTIVE'
+                      AND COALESCE(p.current_value, 0) > 0
+                    ORDER BY p.current_value DESC
+                """),
+                {"pid": portfolio_id},
+            )
+            rows = result.fetchall()
+            return [dict(r._mapping) for r in rows]
+    except Exception as exc:
+        logger.warning("get_portfolio_holdings error for %s: %s", portfolio_id, exc)
+        return []
+
+
 async def get_user_tax_preferences(
     session: AsyncSession,
     user_id: str | None = None,

@@ -152,6 +152,52 @@ export default function TaxPage() {
   const [harvestResults, setHarvestResults] = useState<HarvestOpportunity[]>([]);
   const [optimizeLoading, setOptimizeLoading] = useState(false);
   const [harvestLoading, setHarvestLoading] = useState(false);
+  const [optimizePortfolioId, setOptimizePortfolioId] = useState<string>("");
+  const [optimizeError, setOptimizeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (portfolios.length > 0 && !optimizePortfolioId) {
+      setOptimizePortfolioId(portfolios[0].id);
+    }
+  }, [portfolios, optimizePortfolioId]);
+
+  const runPortfolioOptimize = async () => {
+    if (!optimizePortfolioId) return;
+    setOptimizeLoading(true);
+    setOptimizeError(null);
+    try {
+      const result = await apiPost<{
+        placement_recommendations: Array<{
+          symbol: string;
+          current_account: string;
+          recommended_account: string;
+          reason: string;
+          estimated_annual_tax_savings: number;
+        }>;
+      }>("/api/tax/optimize/portfolio", {
+        portfolio_id: optimizePortfolioId,
+        annual_income: Number(calcInput.annual_income),
+        filing_status: calcInput.filing_status.toUpperCase()
+          .replace("MARRIED_FILING_JOINTLY", "MARRIED_JOINT")
+          .replace("MARRIED_FILING_SEPARATELY", "MARRIED_SEPARATE"),
+        state_code: calcInput.state_code || null,
+      });
+      setOptimizeResults(
+        (result.placement_recommendations || []).map((rec) => ({
+          action: rec.current_account !== rec.recommended_account ? "MOVE" : "HOLD",
+          symbol: rec.symbol,
+          from: rec.current_account,
+          to: rec.recommended_account,
+          reason: rec.reason,
+          savings_est: rec.estimated_annual_tax_savings,
+        }))
+      );
+    } catch (err) {
+      setOptimizeError(err instanceof Error ? err.message : "Optimization failed");
+    } finally {
+      setOptimizeLoading(false);
+    }
+  };
 
   const updCalc = (k: keyof TaxCalcInput, v: string) =>
     setCalcInput((c) => ({ ...c, [k]: v }));
@@ -574,10 +620,80 @@ export default function TaxPage() {
 
       {/* ── Optimize Tab ── */}
       {tab === "optimize" && (
-        <div className="rounded-lg border border-border bg-card">
+        <div className="space-y-4">
+          {/* Portfolio selector + parameters */}
+          <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Portfolio</label>
+                <select
+                  value={optimizePortfolioId}
+                  onChange={(e) => setOptimizePortfolioId(e.target.value)}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {portfolios.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Annual Income ($)</label>
+                <input
+                  type="number"
+                  value={calcInput.annual_income}
+                  onChange={(e) => updCalc("annual_income", e.target.value)}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Filing Status</label>
+                <select
+                  value={calcInput.filing_status}
+                  onChange={(e) => updCalc("filing_status", e.target.value)}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {Object.entries(FILING_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>{v}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">State</label>
+                <select
+                  value={calcInput.state_code}
+                  onChange={(e) => updCalc("state_code", e.target.value)}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {US_STATES.map(({ code, name }) => (
+                    <option key={code} value={code}>{code} — {name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={runPortfolioOptimize}
+                disabled={optimizeLoading || !optimizePortfolioId}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-5 py-2 text-sm font-medium transition-colors",
+                  optimizeLoading || !optimizePortfolioId
+                    ? "bg-primary/50 text-primary-foreground/50 cursor-not-allowed"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90"
+                )}
+              >
+                {optimizeLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <TrendingDown className="h-4 w-4" />}
+                {optimizeLoading ? "Analyzing..." : "Run Portfolio Optimization"}
+              </button>
+              {optimizeError && (
+                <p className="text-xs text-red-400">{optimizeError}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card">
           <div className="border-b border-border px-4 py-3">
             <p className="text-xs text-muted-foreground">
-              Account placement recommendations to minimize tax drag across your portfolios
+              Account placement recommendations to minimize tax drag across your portfolio
             </p>
           </div>
           <table className="w-full text-sm">
@@ -596,7 +712,7 @@ export default function TaxPage() {
               {optimizeResults.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">
-                    No optimization recommendations yet. Run batch scoring to generate suggestions.
+                    {optimizePortfolioId ? "Select a portfolio and click Run Portfolio Optimization." : "Select a portfolio to begin."}
                   </td>
                 </tr>
               )}
@@ -664,6 +780,7 @@ export default function TaxPage() {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 

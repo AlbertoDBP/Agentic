@@ -127,6 +127,14 @@ class OptimizationRequest(BaseModel):
     state_code: Optional[str] = None
 
 
+class PortfolioOptimizationRequest(BaseModel):
+    """Request tax optimization for all active holdings in a portfolio (auto-fetches positions)."""
+    portfolio_id: str = Field(..., description="Portfolio UUID to optimize")
+    annual_income: float = Field(0.0, ge=0)
+    filing_status: FilingStatus = FilingStatus.SINGLE
+    state_code: Optional[str] = None
+
+
 class PlacementRecommendation(BaseModel):
     symbol: str
     current_account: AccountType

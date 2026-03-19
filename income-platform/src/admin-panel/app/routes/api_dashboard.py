@@ -36,13 +36,13 @@ def get_dashboard():
             # ── 1. Aggregate metrics ──────────────────────────────────────────
             row = conn.execute(text("""
                 SELECT
-                    COALESCE(SUM(po.total_value), 0)   AS total_value,
+                    COALESCE(SUM(p.current_value), 0)  AS total_value,
                     COALESCE(SUM(p.annual_income), 0)  AS annual_income,
                     COUNT(p.id)                         AS positions_count
-                FROM platform_shared.portfolios po
-                LEFT JOIN platform_shared.positions p
-                       ON p.portfolio_id = po.id AND p.status = 'ACTIVE'
+                FROM platform_shared.positions p
+                JOIN platform_shared.portfolios po ON po.id = p.portfolio_id
                 WHERE po.status = 'ACTIVE'
+                  AND p.status = 'ACTIVE'
             """)).fetchone()
             total_value     = float(row.total_value)     if row else 0.0
             annual_income   = float(row.annual_income)   if row else 0.0

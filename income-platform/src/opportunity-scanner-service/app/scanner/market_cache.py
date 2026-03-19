@@ -420,8 +420,16 @@ async def fetch_and_upsert(
             upserted += 1
         except Exception as exc:
             logger.warning("Cache upsert failed for %s: %s", sym, exc)
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as exc:
+        logger.error("market_data_cache commit failed: %s", exc)
+        db.rollback()
     logger.info("Upserted %d rows into market_data_cache", upserted)
 
     # Backfill sector + industry on the securities table from FMP profile data.
@@ -451,9 +459,17 @@ async def fetch_and_upsert(
             sec_updated += 1
         except Exception as exc:
             logger.debug("Securities sector update failed for %s: %s", orig_sym, exc)
+            try:
+                db.rollback()
+            except Exception:
+                pass
     if sec_updated:
-        db.commit()
-        logger.info("Backfilled sector/industry for %d securities", sec_updated)
+        try:
+            db.commit()
+            logger.info("Backfilled sector/industry for %d securities", sec_updated)
+        except Exception as exc:
+            logger.warning("Securities backfill commit failed: %s", exc)
+            db.rollback()
 
     return upserted
 
