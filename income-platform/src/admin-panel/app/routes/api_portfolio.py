@@ -826,6 +826,11 @@ def _row_to_position(pos: dict) -> dict:
         pos[k] = float(v) if v is not None else None
     tdiv = pos.get("total_dividends_received")
     pos["total_dividends_received"] = float(tdiv) if tdiv is not None else 0.0
+    # Securities DECIMAL fields not covered above
+    for k in ("tax_qualified_pct", "tax_ordinary_pct", "tax_roc_pct",
+              "expense_ratio", "management_fee"):
+        v = pos.get(k)
+        pos[k] = float(v) if v is not None else None
 
     return pos
 
