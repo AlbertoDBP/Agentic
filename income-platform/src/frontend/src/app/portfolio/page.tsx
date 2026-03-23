@@ -198,8 +198,8 @@ const positionColumns: ColumnDef<Position>[] = [
     header: "Beta",
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
-      const v = getValue<number | undefined>();
-      return v !== undefined ? <span className="tabular-nums">{v.toFixed(2)}</span> : <span className="text-muted-foreground">—</span>;
+      const v = getValue<number | null | undefined>();
+      return v != null ? <span className="tabular-nums">{v.toFixed(2)}</span> : <span className="text-muted-foreground">—</span>;
     },
   },
   { accessorKey: "currency", header: "Currency", meta: { defaultHidden: true } },
