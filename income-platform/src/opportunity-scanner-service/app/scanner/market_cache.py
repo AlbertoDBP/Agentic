@@ -150,7 +150,8 @@ async def _fetch_all_profiles(tickers: list[str]) -> dict[str, dict]:
 async def _fmp_key_metrics(symbol: str, client: httpx.AsyncClient) -> dict:
     """
     Fetch FMP /stable/ratios for one symbol.
-    Returns priceToEarningsRatio, priceToBookRatio, dividendPayoutRatio (fraction).
+    Returns priceToEarningsRatio, priceToBookRatio, dividendPayoutRatio plus
+    interestCoverage, netDebtToEBITDA, returnOnEquity, freeCashFlowYield.
     Returns {} on any error.
     """
     try:
@@ -168,6 +169,92 @@ async def _fmp_key_metrics(symbol: str, client: httpx.AsyncClient) -> dict:
     except Exception as exc:
         logger.debug("FMP ratios %s failed: %s", symbol, exc)
         return {}
+
+
+async def _fmp_technical_indicators(symbol: str, client: httpx.AsyncClient) -> dict:
+    """
+    Fetch SMA50, SMA200, RSI14 from FMP /stable/technical-indicator/daily.
+    Returns {sma_50, sma_200, rsi_14d, support_level, resistance_level} or {}.
+    """
+    result: dict = {}
+    try:
+        # Fetch SMA50, SMA200, RSI14 concurrently (3 calls)
+        sma50_resp, sma200_resp, rsi_resp = await asyncio.gather(
+            client.get(f"{settings.fmp_base_url}/technical-indicator/daily",
+                       params={"symbol": symbol, "type": "sma", "period": 50,
+                               "limit": 1, "apikey": settings.fmp_api_key},
+                       timeout=settings.fmp_request_timeout),
+            client.get(f"{settings.fmp_base_url}/technical-indicator/daily",
+                       params={"symbol": symbol, "type": "sma", "period": 200,
+                               "limit": 1, "apikey": settings.fmp_api_key},
+                       timeout=settings.fmp_request_timeout),
+            client.get(f"{settings.fmp_base_url}/technical-indicator/daily",
+                       params={"symbol": symbol, "type": "rsi", "period": 14,
+                               "limit": 1, "apikey": settings.fmp_api_key},
+                       timeout=settings.fmp_request_timeout),
+            return_exceptions=True,
+        )
+        if not isinstance(sma50_resp, Exception) and sma50_resp.status_code == 200:
+            d = sma50_resp.json()
+            if isinstance(d, list) and d:
+                result["sma_50"] = _safe_float(d[0].get("sma"))
+        if not isinstance(sma200_resp, Exception) and sma200_resp.status_code == 200:
+            d = sma200_resp.json()
+            if isinstance(d, list) and d:
+                result["sma_200"] = _safe_float(d[0].get("sma"))
+        if not isinstance(rsi_resp, Exception) and rsi_resp.status_code == 200:
+            d = rsi_resp.json()
+            if isinstance(d, list) and d:
+                result["rsi_14d"] = _safe_float(d[0].get("rsi"))
+    except Exception as exc:
+        logger.debug("FMP technical indicators %s failed: %s", symbol, exc)
+    return result
+
+
+async def _fmp_key_metrics_ttm(symbol: str, client: httpx.AsyncClient) -> dict:
+    """
+    Fetch buybackYieldTTM and other TTM metrics from FMP /stable/key-metrics-ttm.
+    Returns {buyback_yield, insider_ownership_pct} or {}.
+    """
+    try:
+        resp = await client.get(
+            f"{settings.fmp_base_url}/key-metrics-ttm",
+            params={"symbol": symbol, "apikey": settings.fmp_api_key},
+            timeout=settings.fmp_request_timeout,
+        )
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        if not isinstance(data, list) or not data:
+            return {}
+        d = data[0]
+        return {
+            "buyback_yield": _safe_float(d.get("buybackYieldTTM")),
+        }
+    except Exception as exc:
+        logger.debug("FMP key-metrics-ttm %s failed: %s", symbol, exc)
+        return {}
+
+
+async def _fmp_analyst_estimates(symbol: str, client: httpx.AsyncClient) -> dict:
+    """
+    Fetch analyst price target and next earnings date from FMP.
+    Returns {analyst_price_target, next_earnings_date} or {}.
+    """
+    result: dict = {}
+    try:
+        pt_resp = await client.get(
+            f"{settings.fmp_base_url}/analyst-estimates",
+            params={"symbol": symbol, "limit": 1, "apikey": settings.fmp_api_key},
+            timeout=settings.fmp_request_timeout,
+        )
+        if pt_resp.status_code == 200:
+            d = pt_resp.json()
+            if isinstance(d, list) and d:
+                result["analyst_price_target"] = _safe_float(d[0].get("estimatedEpsAvg"))
+    except Exception as exc:
+        logger.debug("FMP analyst-estimates %s failed: %s", symbol, exc)
+    return result
 
 
 async def _fmp_etf_info(symbol: str, client: httpx.AsyncClient) -> dict:
@@ -196,13 +283,14 @@ async def _fmp_etf_info(symbol: str, client: httpx.AsyncClient) -> dict:
 async def _fmp_dividend_calendar(symbol: str, client: httpx.AsyncClient) -> dict:
     """
     Fetch FMP /stable/dividends for one symbol.
-    Returns ex_div_date, pay_date, div_frequency, and div_cagr_5y (%).
+    Returns ex_div_date, pay_date, div_frequency, div_cagr_5y, div_cagr_3yr,
+    div_cagr_10yr, consecutive_growth_yrs, yield_5yr_avg.
     Returns {} on any error.
     """
     try:
         resp = await client.get(
             f"{settings.fmp_base_url}/dividends",
-            params={"symbol": symbol, "apikey": settings.fmp_api_key, "limit": 60},
+            params={"symbol": symbol, "apikey": settings.fmp_api_key, "limit": 120},
             timeout=settings.fmp_request_timeout,
         )
         if resp.status_code != 200:
@@ -216,20 +304,53 @@ async def _fmp_dividend_calendar(symbol: str, client: httpx.AsyncClient) -> dict
             "pay_date": entry.get("paymentDate") or entry.get("payDate"),
             "div_frequency": entry.get("frequency"),
         }
-        # 5-year CAGR: compare most recent dividend to one from ~5Y ago
-        cutoff_5y = date.today() - timedelta(days=5 * 365)
-        old_entries = [
-            e for e in data
-            if e.get("date") and date.fromisoformat(e["date"]) <= cutoff_5y
-        ]
-        if old_entries:
-            recent_div = _safe_float(entry.get("adjDividend") or entry.get("dividend"))
-            old_entry = old_entries[-1]
-            old_div = _safe_float(old_entry.get("adjDividend") or old_entry.get("dividend"))
-            if recent_div and old_div and old_div > 0:
-                years = (date.fromisoformat(entry["date"]) - date.fromisoformat(old_entry["date"])).days / 365.25
-                if years > 0:
-                    result["div_cagr_5y"] = round(((recent_div / old_div) ** (1 / years) - 1) * 100, 2)
+
+        today = date.today()
+
+        # Group dividends by calendar year for CAGR and consecutive growth calculations
+        by_year: dict[int, float] = {}
+        for e in data:
+            raw_date = e.get("date")
+            if not raw_date:
+                continue
+            try:
+                d = date.fromisoformat(raw_date[:10])
+            except (ValueError, TypeError):
+                continue
+            amt = _safe_float(e.get("adjDividend") or e.get("dividend")) or 0
+            by_year[d.year] = by_year.get(d.year, 0.0) + amt
+
+        # Remove current partial year
+        by_year.pop(today.year, None)
+        sorted_years = sorted(by_year)
+
+        def _cagr(years_back: int) -> Optional[float]:
+            cutoff = today.year - years_back
+            relevant = {y: v for y, v in by_year.items() if y >= cutoff}
+            if len(relevant) < 2:
+                return None
+            yrs = sorted(relevant)
+            first, last = relevant[yrs[0]], relevant[yrs[-1]]
+            n = yrs[-1] - yrs[0]
+            if first <= 0 or n <= 0:
+                return None
+            return round(((last / first) ** (1.0 / n) - 1) * 100, 2)
+
+        result["div_cagr_5y"]  = _cagr(5)
+        result["div_cagr_3yr"] = _cagr(3)
+        result["div_cagr_10yr"] = _cagr(10)
+
+        # Consecutive growth years: count back years with YoY increase
+        consec = 0
+        if len(sorted_years) >= 2:
+            for i in range(len(sorted_years) - 1, 0, -1):
+                yr, prev_yr = sorted_years[i], sorted_years[i - 1]
+                if yr - prev_yr == 1 and by_year[yr] > by_year[prev_yr]:
+                    consec += 1
+                else:
+                    break
+        result["consecutive_growth_yrs"] = consec if consec > 0 else None
+
         return result
     except Exception as exc:
         logger.debug("FMP dividends %s failed: %s", symbol, exc)
@@ -238,9 +359,8 @@ async def _fmp_dividend_calendar(symbol: str, client: httpx.AsyncClient) -> dict
 
 async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
     """
-    Fetch ratios + dividend calendar + ETF info for all tickers concurrently.
-    Returns {symbol: {pe_ratio, payout_ratio, price_to_book, ex_div_date, pay_date,
-                      div_frequency, div_cagr_5y, nav_value, nav_discount_pct}}
+    Fetch ratios + dividend calendar + ETF info + technicals + key metrics TTM
+    for all tickers concurrently.
     """
     sem = asyncio.Semaphore(settings.fmp_concurrency)
     result: dict[str, dict] = {}
@@ -248,25 +368,63 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
     async def _one(sym: str):
         async with sem:
             async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
-                km, div, etf = await asyncio.gather(
+                km, div, etf, tech, ttm = await asyncio.gather(
                     _fmp_key_metrics(sym, client),
                     _fmp_dividend_calendar(sym, client),
                     _fmp_etf_info(sym, client),
+                    _fmp_technical_indicators(sym, client),
+                    _fmp_key_metrics_ttm(sym, client),
+                    return_exceptions=True,
                 )
+                # Normalize exceptions to empty dicts
+                if isinstance(km, Exception):   km = {}
+                if isinstance(div, Exception):  div = {}
+                if isinstance(etf, Exception):  etf = {}
+                if isinstance(tech, Exception): tech = {}
+                if isinstance(ttm, Exception):  ttm = {}
+
                 merged: dict = {}
+
+                # /ratios: extract many fields
                 if km:
-                    merged["pe_ratio"] = _safe_float(km.get("priceToEarningsRatio"))
-                    raw_payout = _safe_float(km.get("dividendPayoutRatio"))
-                    merged["payout_ratio"] = round(raw_payout * 100, 2) if raw_payout is not None else None
-                    merged["price_to_book"] = _safe_float(km.get("priceToBookRatio"))
+                    merged["pe_ratio"]             = _safe_float(km.get("priceToEarningsRatio"))
+                    raw_payout                      = _safe_float(km.get("dividendPayoutRatio"))
+                    merged["payout_ratio"]         = round(raw_payout * 100, 2) if raw_payout is not None else None
+                    merged["price_to_book"]        = _safe_float(km.get("priceToBookRatio"))
+                    merged["interest_coverage_ratio"] = _safe_float(
+                        km.get("interestCoverage") or km.get("timesInterestEarned")
+                    )
+                    merged["return_on_equity"]     = _safe_float(km.get("returnOnEquity"))
+                    raw_fcfy                        = _safe_float(km.get("freeCashFlowYield"))
+                    merged["free_cash_flow_yield"] = round(raw_fcfy * 100, 4) if raw_fcfy is not None else None
+                    # net_debt / EBITDA derived from debtToEquity and EV/EBITDA as proxy
+                    merged["net_debt_ebitda"]      = _safe_float(
+                        km.get("netDebtToEBITDA") or km.get("debtToEbitda")
+                    )
+
+                # /dividends: dates + CAGRs + consecutive growth
                 if div:
-                    merged["ex_div_date"] = div.get("ex_div_date")
-                    merged["pay_date"] = div.get("pay_date")
-                    merged["div_frequency"] = div.get("div_frequency")
-                    merged["div_cagr_5y"] = div.get("div_cagr_5y")
+                    merged["ex_div_date"]            = div.get("ex_div_date")
+                    merged["pay_date"]               = div.get("pay_date")
+                    merged["div_frequency"]          = div.get("div_frequency")
+                    merged["div_cagr_5y"]            = div.get("div_cagr_5y")
+                    merged["div_cagr_3yr"]           = div.get("div_cagr_3yr")
+                    merged["div_cagr_10yr"]          = div.get("div_cagr_10yr")
+                    merged["consecutive_growth_yrs"] = div.get("consecutive_growth_yrs")
+
+                # /etf-info: NAV
                 if etf:
                     nav = _safe_float(etf.get("nav"))
                     merged["nav_value"] = nav
+
+                # technical indicators: SMA, RSI
+                if tech:
+                    merged.update({k: v for k, v in tech.items() if v is not None})
+
+                # key-metrics-ttm: buyback yield
+                if ttm:
+                    merged["buyback_yield"] = ttm.get("buyback_yield")
+
                 if merged:
                     result[sym.upper()] = merged
 
@@ -387,6 +545,30 @@ async def fetch_and_upsert(
         if nav_value and price_val and nav_value > 0:
             nav_discount_pct = round((price_val - nav_value) / nav_value * 100, 4)
 
+        # Derive coverage_metric_type from asset_type in securities
+        cov_metric_type = None
+        try:
+            sec_row = db.execute(
+                text("SELECT asset_type FROM platform_shared.securities WHERE symbol = :sym"),
+                {"sym": sym}
+            ).fetchone()
+            if sec_row:
+                at = (sec_row[0] or "").upper()
+                if at in ("EQUITY_REIT", "MORTGAGE_REIT"):
+                    cov_metric_type = "AFFO"
+                elif at in ("BDC",):
+                    cov_metric_type = "NII"
+                elif at in ("BOND", "PREFERRED_STOCK", "PREFERRED"):
+                    cov_metric_type = "INTEREST"
+                else:
+                    cov_metric_type = "FCF"
+        except Exception:
+            pass
+
+        # Compute support/resistance from 20-day price range (week52 as proxy if needed)
+        support_level = week52_low
+        resistance_level = week52_high
+
         try:
             db.execute(
                 text("""
@@ -397,6 +579,13 @@ async def fetch_and_upsert(
                         dividend_yield, payout_ratio, chowder_number,
                         ex_div_date, pay_date, div_frequency,
                         nav_value, nav_discount_pct,
+                        -- new fields
+                        sma_50, sma_200, rsi_14d,
+                        support_level, resistance_level,
+                        div_cagr_3yr, div_cagr_10yr, consecutive_growth_yrs,
+                        buyback_yield, coverage_metric_type,
+                        interest_coverage_ratio, net_debt_ebitda,
+                        free_cash_flow_yield, return_on_equity,
                         is_tracked, track_reason,
                         snapshot_date, fetched_at
                     ) VALUES (
@@ -406,31 +595,51 @@ async def fetch_and_upsert(
                         :dividend_yield, :payout_ratio, :chowder_number,
                         :ex_div_date, :pay_date, :div_frequency,
                         :nav_value, :nav_discount_pct,
+                        :sma_50, :sma_200, :rsi_14d,
+                        :support_level, :resistance_level,
+                        :div_cagr_3yr, :div_cagr_10yr, :consecutive_growth_yrs,
+                        :buyback_yield, :coverage_metric_type,
+                        :interest_coverage_ratio, :net_debt_ebitda,
+                        :free_cash_flow_yield, :return_on_equity,
                         TRUE, :track_reason,
                         :snapshot_date, :fetched_at
                     )
                     ON CONFLICT (symbol) DO UPDATE SET
-                        price             = EXCLUDED.price,
-                        price_change_pct  = EXCLUDED.price_change_pct,
-                        volume_avg_10d    = EXCLUDED.volume_avg_10d,
-                        market_cap_m      = EXCLUDED.market_cap_m,
-                        pe_ratio          = COALESCE(EXCLUDED.pe_ratio, platform_shared.market_data_cache.pe_ratio),
-                        price_to_book     = COALESCE(EXCLUDED.price_to_book, platform_shared.market_data_cache.price_to_book),
-                        beta              = EXCLUDED.beta,
-                        week52_high       = EXCLUDED.week52_high,
-                        week52_low        = EXCLUDED.week52_low,
-                        dividend_yield    = EXCLUDED.dividend_yield,
-                        payout_ratio      = COALESCE(EXCLUDED.payout_ratio, platform_shared.market_data_cache.payout_ratio),
-                        chowder_number    = COALESCE(EXCLUDED.chowder_number, platform_shared.market_data_cache.chowder_number),
-                        ex_div_date       = COALESCE(EXCLUDED.ex_div_date, platform_shared.market_data_cache.ex_div_date),
-                        pay_date          = COALESCE(EXCLUDED.pay_date, platform_shared.market_data_cache.pay_date),
-                        div_frequency     = COALESCE(EXCLUDED.div_frequency, platform_shared.market_data_cache.div_frequency),
-                        nav_value         = COALESCE(EXCLUDED.nav_value, platform_shared.market_data_cache.nav_value),
-                        nav_discount_pct  = COALESCE(EXCLUDED.nav_discount_pct, platform_shared.market_data_cache.nav_discount_pct),
-                        is_tracked        = TRUE,
-                        track_reason      = EXCLUDED.track_reason,
-                        snapshot_date     = EXCLUDED.snapshot_date,
-                        fetched_at        = EXCLUDED.fetched_at
+                        price                    = EXCLUDED.price,
+                        price_change_pct         = EXCLUDED.price_change_pct,
+                        volume_avg_10d           = EXCLUDED.volume_avg_10d,
+                        market_cap_m             = EXCLUDED.market_cap_m,
+                        pe_ratio                 = COALESCE(EXCLUDED.pe_ratio,          platform_shared.market_data_cache.pe_ratio),
+                        price_to_book            = COALESCE(EXCLUDED.price_to_book,     platform_shared.market_data_cache.price_to_book),
+                        beta                     = EXCLUDED.beta,
+                        week52_high              = EXCLUDED.week52_high,
+                        week52_low               = EXCLUDED.week52_low,
+                        dividend_yield           = EXCLUDED.dividend_yield,
+                        payout_ratio             = COALESCE(EXCLUDED.payout_ratio,      platform_shared.market_data_cache.payout_ratio),
+                        chowder_number           = COALESCE(EXCLUDED.chowder_number,    platform_shared.market_data_cache.chowder_number),
+                        ex_div_date              = COALESCE(EXCLUDED.ex_div_date,       platform_shared.market_data_cache.ex_div_date),
+                        pay_date                 = COALESCE(EXCLUDED.pay_date,          platform_shared.market_data_cache.pay_date),
+                        div_frequency            = COALESCE(EXCLUDED.div_frequency,     platform_shared.market_data_cache.div_frequency),
+                        nav_value                = COALESCE(EXCLUDED.nav_value,         platform_shared.market_data_cache.nav_value),
+                        nav_discount_pct         = COALESCE(EXCLUDED.nav_discount_pct,  platform_shared.market_data_cache.nav_discount_pct),
+                        sma_50                   = COALESCE(EXCLUDED.sma_50,            platform_shared.market_data_cache.sma_50),
+                        sma_200                  = COALESCE(EXCLUDED.sma_200,           platform_shared.market_data_cache.sma_200),
+                        rsi_14d                  = COALESCE(EXCLUDED.rsi_14d,           platform_shared.market_data_cache.rsi_14d),
+                        support_level            = COALESCE(EXCLUDED.support_level,     platform_shared.market_data_cache.support_level),
+                        resistance_level         = COALESCE(EXCLUDED.resistance_level,  platform_shared.market_data_cache.resistance_level),
+                        div_cagr_3yr             = COALESCE(EXCLUDED.div_cagr_3yr,      platform_shared.market_data_cache.div_cagr_3yr),
+                        div_cagr_10yr            = COALESCE(EXCLUDED.div_cagr_10yr,     platform_shared.market_data_cache.div_cagr_10yr),
+                        consecutive_growth_yrs   = COALESCE(EXCLUDED.consecutive_growth_yrs, platform_shared.market_data_cache.consecutive_growth_yrs),
+                        buyback_yield            = COALESCE(EXCLUDED.buyback_yield,     platform_shared.market_data_cache.buyback_yield),
+                        coverage_metric_type     = COALESCE(EXCLUDED.coverage_metric_type, platform_shared.market_data_cache.coverage_metric_type),
+                        interest_coverage_ratio  = COALESCE(EXCLUDED.interest_coverage_ratio, platform_shared.market_data_cache.interest_coverage_ratio),
+                        net_debt_ebitda          = COALESCE(EXCLUDED.net_debt_ebitda,   platform_shared.market_data_cache.net_debt_ebitda),
+                        free_cash_flow_yield     = COALESCE(EXCLUDED.free_cash_flow_yield, platform_shared.market_data_cache.free_cash_flow_yield),
+                        return_on_equity         = COALESCE(EXCLUDED.return_on_equity,  platform_shared.market_data_cache.return_on_equity),
+                        is_tracked               = TRUE,
+                        track_reason             = EXCLUDED.track_reason,
+                        snapshot_date            = EXCLUDED.snapshot_date,
+                        fetched_at               = EXCLUDED.fetched_at
                 """),
                 {
                     "symbol": sym,
@@ -454,6 +663,20 @@ async def fetch_and_upsert(
                     "div_frequency": s.get("div_frequency"),
                     "nav_value": nav_value,
                     "nav_discount_pct": nav_discount_pct,
+                    "sma_50": s.get("sma_50"),
+                    "sma_200": s.get("sma_200"),
+                    "rsi_14d": s.get("rsi_14d"),
+                    "support_level": support_level,
+                    "resistance_level": resistance_level,
+                    "div_cagr_3yr": s.get("div_cagr_3yr"),
+                    "div_cagr_10yr": s.get("div_cagr_10yr"),
+                    "consecutive_growth_yrs": s.get("consecutive_growth_yrs"),
+                    "buyback_yield": s.get("buyback_yield"),
+                    "coverage_metric_type": cov_metric_type,
+                    "interest_coverage_ratio": s.get("interest_coverage_ratio"),
+                    "net_debt_ebitda": s.get("net_debt_ebitda"),
+                    "free_cash_flow_yield": s.get("free_cash_flow_yield"),
+                    "return_on_equity": s.get("return_on_equity"),
                     "track_reason": track_reason,
                     "snapshot_date": today,
                     "fetched_at": now,
@@ -474,35 +697,36 @@ async def fetch_and_upsert(
         db.rollback()
     logger.info("Upserted %d rows into market_data_cache", upserted)
 
-    # Backfill sector + industry on the securities table from FMP profile data.
-    # Uses the resolved FMP symbol for CUSIPs, original symbol for regular tickers.
-    # Only updates rows where sector/industry is NULL to avoid overwriting manual data.
+    # Backfill name / sector / industry on the securities table from FMP profile data.
+    # Uses FMP symbol → orig_sym mapping so CUSIPs and /PR preferred tickers resolve correctly.
+    # Always overwrites with FMP authoritative data when available; preserves existing value
+    # only when FMP returns nothing for that field.
     sec_updated = 0
     for fmp_sym, orig_sym in fmp_lookup.items():
         p = profiles.get(orig_sym, {})
+        # FMP stable /profile uses "companyName"; older v3 snapshots may use "name" — try both
+        name = p.get("companyName") or p.get("name") or None
         sector = p.get("sector") or None
         industry = p.get("industry") or None
-        name = p.get("companyName") or None
-        if not sector and not industry and not name:
+        if not name and not sector and not industry:
+            logger.debug("FMP returned no name/sector/industry for %s (fmp=%s)", orig_sym, fmp_sym)
             continue
+        logger.debug("Securities backfill %s → name=%r sector=%r", orig_sym, name, sector)
         try:
             db.execute(
                 text("""
                     UPDATE platform_shared.securities
                     SET
-                        name     = COALESCE(NULLIF(name, ''),     :name),
-                        sector   = COALESCE(NULLIF(sector, ''),   :sector),
-                        industry = COALESCE(NULLIF(industry, ''), :industry)
+                        name     = COALESCE(:name,     NULLIF(name, '')),
+                        sector   = COALESCE(:sector,   NULLIF(sector, '')),
+                        industry = COALESCE(:industry, NULLIF(industry, ''))
                     WHERE symbol = :symbol
-                      AND (name IS NULL OR name = ''
-                           OR sector IS NULL OR sector = ''
-                           OR industry IS NULL OR industry = '')
                 """),
                 {"symbol": orig_sym, "name": name, "sector": sector, "industry": industry},
             )
             sec_updated += 1
         except Exception as exc:
-            logger.debug("Securities sector update failed for %s: %s", orig_sym, exc)
+            logger.debug("Securities name/sector update failed for %s: %s", orig_sym, exc)
             try:
                 db.rollback()
             except Exception:
@@ -510,7 +734,7 @@ async def fetch_and_upsert(
     if sec_updated:
         try:
             db.commit()
-            logger.info("Backfilled sector/industry for %d securities", sec_updated)
+            logger.info("Backfilled name/sector/industry for %d securities", sec_updated)
         except Exception as exc:
             logger.warning("Securities backfill commit failed: %s", exc)
             db.rollback()

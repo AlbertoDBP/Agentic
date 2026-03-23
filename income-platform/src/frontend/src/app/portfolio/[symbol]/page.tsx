@@ -25,8 +25,8 @@ interface Position {
   market_price: number;
   avg_cost: number;
   annual_income: number;
-  yield_on_cost: number;   // returned as percentage
-  current_yield: number;   // returned as percentage
+  yield_on_cost: number;
+  current_yield: number;
   score: number;
   grade: string;
   recommendation: string;
@@ -36,10 +36,23 @@ interface Position {
   nav_erosion_penalty: number;
   signal_penalty: number;
   factor_details: Record<string, { value: number; score: number; weight: number }> | null;
-  nav_erosion_details: { prob_erosion_gt_5pct?: number; median_annual_nav_change_pct?: number; risk_classification?: string; penalty_applied?: number } | null;
+  nav_erosion_details: {
+    prob_erosion_gt_5pct?: number;
+    median_annual_nav_change_pct?: number;
+    risk_classification?: string;
+    penalty_applied?: number;
+  } | null;
   dividend_frequency?: string;
   price_updated_at: string | null;
   updated_at: string | null;
+  // New v2 fields
+  dca_stage?: number | null;
+  drip_enabled?: boolean | null;
+  acquired_date?: string | null;
+  total_dividends_received?: number | null;
+  annual_fee_drag?: number | null;
+  estimated_tax_drag?: number | null;
+  net_annual_income?: number | null;
   // Market intelligence
   daily_change_pct?: number | null;
   week52_high?: number | null;
@@ -57,8 +70,36 @@ interface Position {
   dividend_growth_5y?: number | null;
 }
 
+function DL({ items }: { items: [string, React.ReactNode, string?][] }) {
+  return (
+    <dl className="space-y-2 text-sm">
+      {items.map(([label, value, cls]) => (
+        <div key={label} className="flex justify-between">
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className={cn("tabular-nums font-medium", cls)}>{value ?? "—"}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+const FACTOR_LABELS: Record<string, string> = {
+  dividend_yield:        "Dividend Yield",
+  yield_vs_5yr_avg:     "Yield vs 5Y Avg",
+  chowder_number:       "Chowder Number",
+  payout_ratio:         "Payout Ratio",
+  consecutive_yrs:      "Consecutive Growth Yrs",
+  div_cagr_3yr:         "Div CAGR 3Y",
+  interest_coverage:    "Interest Coverage",
+  net_debt_ebitda:      "Net Debt/EBITDA",
+  fcf_yield:            "FCF Yield",
+  credit_rating:        "Credit Rating",
+  rsi:                  "RSI (14d)",
+  sma_signal:           "SMA Signal",
+  price_vs_support:     "Price vs Support",
+};
+
 export default function TickerDetailPage({ params }: { params: Promise<{ symbol: string }> }) {
-  // params.symbol may still be URL-encoded (e.g. "BRK%2FB") in some Next.js versions
   const { symbol: rawSymbol } = use(params);
   const symbol = decodeURIComponent(rawSymbol);
 
@@ -66,7 +107,6 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Edit state
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<Position>>({});
@@ -85,11 +125,7 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
       .finally(() => setLoading(false));
   }, [symbol]);
 
-  const startEdit = () => {
-    if (position) setEditForm({ ...position });
-    setEditing(true);
-  };
-
+  const startEdit = () => { if (position) setEditForm({ ...position }); setEditing(true); };
   const cancelEdit = () => { setEditing(false); setSaveMsg(null); };
 
   const saveEdit = async () => {
@@ -116,6 +152,9 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           yield_on_cost: yoc,
           sector: editForm.sector ?? "",
           dividend_frequency: editForm.dividend_frequency ?? "",
+          dca_stage: editForm.dca_stage ?? null,
+          drip_enabled: editForm.drip_enabled ?? false,
+          acquired_date: editForm.acquired_date ?? null,
         }),
       });
       if (!res.ok) throw new Error("Save failed");
@@ -169,6 +208,12 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
   const monthlyAmt = position.annual_income / 12;
   const monthlyIncome = Array(12).fill(monthlyAmt);
 
+  // Net income computations (fallback if server hasn't computed yet)
+  const feeDrag = position.annual_fee_drag ?? 0;
+  const taxDrag = position.estimated_tax_drag ?? 0;
+  const netIncome = position.net_annual_income ?? (position.annual_income - feeDrag - taxDrag);
+  const hasNetData = feeDrag > 0 || taxDrag > 0;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -179,6 +224,14 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           <h1 className="text-2xl font-semibold">{position.symbol}</h1>
           <span className="rounded bg-secondary px-2 py-0.5 text-xs font-medium">{position.asset_type}</span>
           {position.score > 0 && <ScorePill score={position.score} />}
+          {position.dca_stage != null && (
+            <span className="rounded bg-blue-500/15 text-blue-400 px-2 py-0.5 text-[11px] font-medium">
+              DCA Stage {position.dca_stage}
+            </span>
+          )}
+          {position.drip_enabled && (
+            <span className="rounded bg-emerald-500/15 text-emerald-400 px-2 py-0.5 text-[11px] font-medium">DRIP</span>
+          )}
           <div className="ml-auto flex items-center gap-2">
             {saveMsg && (
               <span className={cn("text-xs", saveMsg === "Saved" ? "text-income" : "text-loss")}>{saveMsg}</span>
@@ -247,6 +300,30 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
                 {FREQUENCIES.map((f) => <option key={f}>{f}</option>)}
               </select>
             </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">DCA Stage (1–4)</label>
+              <select value={editForm.dca_stage ?? 1}
+                onChange={(e) => setEditForm({ ...editForm, dca_stage: Number(e.target.value) })}
+                className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm">
+                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>Stage {n}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Entry Date</label>
+              <input type="date" value={editForm.acquired_date?.slice(0, 10) ?? ""}
+                onChange={(e) => setEditForm({ ...editForm, acquired_date: e.target.value })}
+                className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+            </div>
+            <div className="space-y-1 flex flex-col justify-end">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={editForm.drip_enabled ?? false}
+                  onChange={(e) => setEditForm({ ...editForm, drip_enabled: e.target.checked })}
+                  className="rounded border-border" />
+                <span className="text-xs text-muted-foreground">DRIP Enabled</span>
+              </label>
+            </div>
           </div>
           {/* Calculated preview */}
           <div className="flex gap-6 text-xs text-muted-foreground border-t border-border pt-2">
@@ -284,43 +361,39 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
         <MetricCard label="Current Yield" value={formatPercent(position.current_yield)} />
       </div>
 
+      {/* Main 3-card grid */}
       <div className="grid grid-cols-3 gap-4">
         {/* Position Details */}
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Position Details</h2>
-          <dl className="space-y-2.5 text-sm">
-            {([
-              ["Shares", position.shares.toLocaleString()],
-              ["Avg Cost/Share", formatCurrency(avgCostPerShare)],
-              ["Current Price", formatCurrency(currentPrice)],
-              ["Asset Type", position.asset_type],
-              ["Sector", position.sector || "—"],
-              ["Industry", position.industry || "—"],
-              ["Frequency", position.dividend_frequency || "—"],
-              ["Ex-Div Date", position.ex_div_date ? new Date(position.ex_div_date).toLocaleDateString() : "—"],
-              ["Pay Date", position.pay_date ? new Date(position.pay_date).toLocaleDateString() : "—"],
-              ["Last Updated", position.price_updated_at
-                ? new Date(position.price_updated_at).toLocaleDateString()
-                : "—"],
-            ] as [string, string][]).map(([label, value]) => (
-              <div key={label} className="flex justify-between">
-                <dt className="text-muted-foreground">{label}</dt>
-                <dd className="tabular-nums font-medium">{value}</dd>
-              </div>
-            ))}
-            {position.daily_change_pct != null && (
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Daily Change</dt>
-                <dd className={cn("tabular-nums font-medium",
-                  position.daily_change_pct >= 0 ? "text-income" : "text-loss")}>
-                  {position.daily_change_pct >= 0 ? "+" : ""}{position.daily_change_pct.toFixed(2)}%
-                </dd>
-              </div>
-            )}
-          </dl>
+          <DL items={[
+            ["Shares", position.shares.toLocaleString()],
+            ["Avg Cost/Share", formatCurrency(avgCostPerShare)],
+            ["Current Price", formatCurrency(currentPrice)],
+            ["Asset Type", position.asset_type],
+            ["Sector", position.sector || null],
+            ["Industry", position.industry || null],
+            ["Frequency", position.dividend_frequency || null],
+            ["Entry Date", position.acquired_date ? new Date(position.acquired_date).toLocaleDateString() : null],
+            ["Total Divs Received", position.total_dividends_received != null ? formatCurrency(position.total_dividends_received) : null, "text-income"],
+            ["DCA Stage", position.dca_stage != null ? `Stage ${position.dca_stage} / 4` : null],
+            ["DRIP", position.drip_enabled != null ? (position.drip_enabled ? "Enabled" : "Disabled") : null],
+            ["Ex-Div Date", position.ex_div_date ? new Date(position.ex_div_date).toLocaleDateString() : null],
+            ["Pay Date", position.pay_date ? new Date(position.pay_date).toLocaleDateString() : null],
+            ["Last Updated", position.price_updated_at ? new Date(position.price_updated_at).toLocaleDateString() : null],
+          ]} />
+          {position.daily_change_pct != null && (
+            <div className="flex justify-between mt-2 text-sm">
+              <dt className="text-muted-foreground">Daily Change</dt>
+              <dd className={cn("tabular-nums font-medium",
+                position.daily_change_pct >= 0 ? "text-income" : "text-loss")}>
+                {position.daily_change_pct >= 0 ? "+" : ""}{position.daily_change_pct.toFixed(2)}%
+              </dd>
+            </div>
+          )}
         </div>
 
-        {/* Income Breakdown */}
+        {/* Monthly Income */}
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Monthly Income (Est.)</h2>
           <div className="flex items-end gap-1 h-32">
@@ -343,16 +416,45 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
             })}
           </div>
           <div className="mt-3 flex justify-between text-xs">
-            <span className="text-muted-foreground">Annual</span>
+            <span className="text-muted-foreground">Annual Gross</span>
             <span className="tabular-nums font-medium text-income">{formatCurrency(position.annual_income)}</span>
           </div>
           <div className="flex justify-between text-xs">
             <span className="text-muted-foreground">Monthly Avg</span>
             <span className="tabular-nums font-medium">{formatCurrency(position.annual_income / 12)}</span>
           </div>
+
+          {/* Net income waterfall */}
+          {hasNetData && (
+            <div className="mt-3 border-t border-border pt-3 space-y-1.5">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Net Efficiency</p>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">Gross Income</span>
+                <span className="tabular-nums font-medium">{formatCurrency(position.annual_income)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">− Fee Drag</span>
+                <span className="tabular-nums font-medium text-loss">−{formatCurrency(feeDrag)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">− Tax Drag</span>
+                <span className="tabular-nums font-medium text-loss">−{formatCurrency(taxDrag)}</span>
+              </div>
+              <div className="flex justify-between text-xs border-t border-border pt-1.5">
+                <span className="font-medium">Net Annual Income</span>
+                <span className="tabular-nums font-semibold text-income">{formatCurrency(netIncome)}</span>
+              </div>
+              {position.annual_income > 0 && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Retention Rate</span>
+                  <span className="tabular-nums text-muted-foreground">{((netIncome / position.annual_income) * 100).toFixed(0)}%</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Score Breakdown */}
+        {/* Score Summary */}
         <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-medium text-muted-foreground">Income Score</h2>
@@ -412,6 +514,9 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
                   )}>{position.recommendation.replace(/_/g, " ")}</span>
                 </div>
               )}
+              <a href="#score" className="block text-center text-[10px] text-muted-foreground hover:text-foreground mt-2 underline underline-offset-2">
+                Why this score? ↓
+              </a>
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">No score data — run scoring batch from Admin Panel</p>
@@ -485,7 +590,6 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           <div className="rounded-lg border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-medium text-muted-foreground">Price Range & NAV</h2>
             <dl className="space-y-2.5 text-sm">
-              {/* 52-week range with visual bar */}
               {position.week52_low != null && position.week52_high != null && (() => {
                 const range = position.week52_high! - position.week52_low!;
                 const pct = range > 0 ? ((currentPrice - position.week52_low!) / range) * 100 : 0;
@@ -535,6 +639,175 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
                 <p className="text-xs text-muted-foreground">No range data available — refresh market data to populate.</p>
               )}
             </dl>
+          </div>
+        </div>
+      )}
+
+      {/* ── Why This Score? ──────────────────────────────────────────────────── */}
+      {position.score > 0 && (
+        <div id="score" className="rounded-lg border border-border bg-card scroll-mt-6">
+          <div className="border-b border-border px-4 py-3 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold">Why This Score?</h2>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Factor-by-factor breakdown of the {position.score.toFixed(1)}/100 score</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <ScorePill score={position.score} />
+              {position.grade && (
+                <span className={cn("text-base font-bold",
+                  position.grade.startsWith("A") && "text-income",
+                  position.grade.startsWith("B") && "text-blue-400",
+                  position.grade.startsWith("C") && "text-yellow-400",
+                  position.grade.startsWith("D") && "text-orange-400",
+                  position.grade === "F" && "text-loss",
+                )}>{position.grade}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Component bars */}
+          <div className="grid grid-cols-3 gap-4 px-4 py-4 border-b border-border">
+            {[
+              { label: "Valuation & Yield", value: position.valuation_yield_score, max: 40, color: "#3b82f6" },
+              { label: "Financial Durability", value: position.financial_durability_score, max: 40, color: "#10b981" },
+              { label: "Technical Entry", value: position.technical_entry_score, max: 20, color: "#a78bfa" },
+            ].map(({ label, value, max, color }) => (
+              <div key={label} className="space-y-1.5">
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="tabular-nums font-semibold">{value.toFixed(1)}<span className="text-muted-foreground font-normal">/{max}</span></span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-secondary">
+                  <div className="h-2 rounded-full" style={{ width: `${(value / max) * 100}%`, backgroundColor: color }} />
+                </div>
+                <p className="text-[10px] text-muted-foreground">{((value / max) * 100).toFixed(0)}% of max</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Factor details table */}
+          {position.factor_details && Object.keys(position.factor_details).length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-secondary/30">
+                    <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Factor</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Raw Value</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Points</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Max</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Weight</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Score Bar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(position.factor_details).map(([key, detail]) => {
+                    const maxPts = detail.weight;
+                    const pct = maxPts > 0 ? Math.min((detail.score / maxPts) * 100, 100) : 0;
+                    const label = FACTOR_LABELS[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+                    return (
+                      <tr key={key} className="border-b border-border/40 hover:bg-secondary/10">
+                        <td className="px-4 py-2.5 text-xs font-medium">{label}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
+                          {typeof detail.value === "number"
+                            ? (Math.abs(detail.value) > 1000 ? formatCurrency(detail.value) : detail.value.toFixed(2))
+                            : String(detail.value)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-xs font-semibold">
+                          {detail.score.toFixed(1)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
+                          {maxPts.toFixed(1)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
+                          {(detail.weight * 100).toFixed(0)}%
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <div className="w-24 h-1.5 rounded-full bg-secondary overflow-hidden">
+                              <div className="h-full rounded-full transition-all"
+                                style={{
+                                  width: `${pct}%`,
+                                  backgroundColor: pct >= 70 ? "#10b981" : pct >= 40 ? "#f59e0b" : "#f87171",
+                                }} />
+                            </div>
+                            <span className="text-[10px] text-muted-foreground">{pct.toFixed(0)}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Penalties */}
+          {(position.nav_erosion_penalty > 0 || position.signal_penalty > 0) && (
+            <div className="px-4 py-3 border-t border-border space-y-3">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Penalties Applied</h3>
+
+              {position.nav_erosion_penalty > 0 && (
+                <div className="rounded-md border border-red-500/20 bg-red-500/5 p-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-xs font-medium text-red-400">NAV Erosion Penalty</p>
+                      {position.nav_erosion_details && (
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          {position.nav_erosion_details.risk_classification
+                            ? `Risk: ${position.nav_erosion_details.risk_classification}`
+                            : ""}
+                          {position.nav_erosion_details.median_annual_nav_change_pct != null
+                            ? ` · Median NAV Δ: ${position.nav_erosion_details.median_annual_nav_change_pct.toFixed(1)}%/yr`
+                            : ""}
+                          {position.nav_erosion_details.prob_erosion_gt_5pct != null
+                            ? ` · P(>5% erosion): ${(position.nav_erosion_details.prob_erosion_gt_5pct * 100).toFixed(0)}%`
+                            : ""}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-sm font-semibold text-loss tabular-nums">
+                      −{position.nav_erosion_penalty.toFixed(1)} pts
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {position.signal_penalty > 0 && (
+                <div className="rounded-md border border-yellow-500/20 bg-yellow-500/5 p-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-xs font-medium text-yellow-400">Technical Signal Penalty</p>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Applied when price is below key moving averages or RSI signals weakness
+                      </p>
+                    </div>
+                    <span className="text-sm font-semibold text-loss tabular-nums">
+                      −{position.signal_penalty.toFixed(1)} pts
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Final tally */}
+          <div className="px-4 py-3 border-t border-border flex items-center justify-between bg-secondary/20">
+            <div className="flex items-center gap-6 text-xs">
+              <span className="text-muted-foreground">
+                Component total: <strong className="text-foreground">
+                  {(position.valuation_yield_score + position.financial_durability_score + position.technical_entry_score).toFixed(1)}
+                </strong>
+              </span>
+              {(position.nav_erosion_penalty + position.signal_penalty) > 0 && (
+                <span className="text-muted-foreground">
+                  Penalties: <strong className="text-loss">−{(position.nav_erosion_penalty + position.signal_penalty).toFixed(1)}</strong>
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Final Score</span>
+              <ScorePill score={position.score} />
+            </div>
           </div>
         </div>
       )}

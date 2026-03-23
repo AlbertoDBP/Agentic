@@ -90,10 +90,16 @@ export default function AlertsPage() {
               Resolve
             </button>
             <button
-              onClick={() => router.push(`/portfolio/${row.original.symbol}`)}
+              onClick={() => router.push(`/portfolio/${encodeURIComponent(row.original.symbol)}`)}
               className="rounded-md border border-border bg-secondary px-2.5 py-1 text-xs font-medium hover:bg-accent transition-colors"
             >
               View
+            </button>
+            <button
+              onClick={() => router.push(`/portfolio/${encodeURIComponent(row.original.symbol)}#score`)}
+              className="rounded-md border border-blue-500/30 bg-blue-500/10 text-blue-400 px-2.5 py-1 text-xs font-medium hover:bg-blue-500/20 transition-colors"
+            >
+              Score
             </button>
           </div>
         ) : null,

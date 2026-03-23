@@ -91,11 +91,18 @@ def list_portfolios():
                     po.portfolio_name        AS name,
                     COALESCE(a.account_type, 'Unknown') AS account_type,
                     COALESCE(a.broker, '')   AS broker,
-                    COALESCE(po.cash_balance, 0)  AS cash_balance,
-                    COALESCE(po.total_value, 0)   AS total_value,
-                    COUNT(p.id)              AS position_count,
-                    po.updated_at            AS last_updated,
-                    po.last_refreshed_at     AS last_refreshed_at
+                    COALESCE(po.cash_balance, 0)   AS cash_balance,
+                    COALESCE(po.total_value, 0)    AS total_value,
+                    COUNT(p.id)                    AS position_count,
+                    po.updated_at                  AS last_updated,
+                    po.last_refreshed_at,
+                    po.benchmark_ticker,
+                    po.target_yield,
+                    po.monthly_income_target,
+                    po.max_single_position_pct,
+                    COALESCE(po.weight_value, 40)       AS weight_value,
+                    COALESCE(po.weight_safety, 40)      AS weight_safety,
+                    COALESCE(po.weight_technicals, 20)  AS weight_technicals
                 FROM platform_shared.portfolios po
                 LEFT JOIN platform_shared.accounts a  ON a.id = po.account_id
                 LEFT JOIN platform_shared.positions p
@@ -118,6 +125,10 @@ def list_portfolios():
                     p["last_refreshed_at"] = p["last_refreshed_at"].isoformat()
                 else:
                     p["last_refreshed_at"] = None
+                for k in ("target_yield", "monthly_income_target", "max_single_position_pct",
+                          "weight_value", "weight_safety", "weight_technicals"):
+                    if p.get(k) is not None:
+                        p[k] = float(p[k])
             return JSONResponse(content=portfolios)
     except HTTPException:
         raise
@@ -136,6 +147,16 @@ class PortfolioUpdate(BaseModel):
     name: Optional[str] = None
     account_type: Optional[str] = None
     broker: Optional[str] = None
+
+
+class PortfolioSettings(BaseModel):
+    benchmark_ticker: Optional[str] = None
+    target_yield: Optional[float] = None
+    monthly_income_target: Optional[float] = None
+    max_single_position_pct: Optional[float] = None
+    weight_value: Optional[float] = None
+    weight_safety: Optional[float] = None
+    weight_technicals: Optional[float] = None
 
 
 @router.post("/portfolios")
@@ -198,6 +219,54 @@ def update_portfolio(portfolio_id: str, body: PortfolioUpdate):
         return JSONResponse(content={"status": "ok"})
     except Exception as exc:
         logger.error("update_portfolio error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.patch("/portfolios/{portfolio_id}/settings")
+def update_portfolio_settings(portfolio_id: str, body: PortfolioSettings):
+    """Update portfolio strategy settings: benchmark, target yield, algorithm weights."""
+    try:
+        updates, params = [], {"pid": portfolio_id}
+        if body.benchmark_ticker is not None:
+            updates.append("benchmark_ticker = :benchmark_ticker")
+            params["benchmark_ticker"] = body.benchmark_ticker.upper().strip()
+        if body.target_yield is not None:
+            updates.append("target_yield = :target_yield")
+            params["target_yield"] = body.target_yield
+        if body.monthly_income_target is not None:
+            updates.append("monthly_income_target = :monthly_income_target")
+            params["monthly_income_target"] = body.monthly_income_target
+        if body.max_single_position_pct is not None:
+            updates.append("max_single_position_pct = :max_single_position_pct")
+            params["max_single_position_pct"] = body.max_single_position_pct
+        # Weights: validate they sum to 100 if all three provided
+        ws = [body.weight_value, body.weight_safety, body.weight_technicals]
+        if all(w is not None for w in ws):
+            total = sum(ws)
+            if abs(total - 100) > 0.1:
+                from fastapi import HTTPException as _HTTPException
+                raise _HTTPException(status_code=422,
+                    detail=f"Weights must sum to 100 (got {total})")
+            updates.extend([
+                "weight_value = :weight_value",
+                "weight_safety = :weight_safety",
+                "weight_technicals = :weight_technicals",
+            ])
+            params.update({"weight_value": body.weight_value,
+                           "weight_safety": body.weight_safety,
+                           "weight_technicals": body.weight_technicals})
+        if not updates:
+            return JSONResponse(content={"status": "ok", "updated": 0})
+        updates.append("updated_at = NOW()")
+        with _db().begin() as conn:
+            conn.execute(text(
+                f"UPDATE platform_shared.portfolios SET {', '.join(updates)} WHERE id = :pid"
+            ), params)
+        return JSONResponse(content={"status": "ok", "updated": len(updates) - 1})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("update_portfolio_settings error (%s): %s", portfolio_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -516,6 +585,69 @@ async def refresh_portfolio_data(portfolio_id: str):
                 updated_at = NOW()
                 WHERE id = :pid
             """), {"pid": portfolio_id})
+
+            # 4g. Compute annual_fee_drag, estimated_tax_drag, net_annual_income per position
+            #     fee_drag  = current_value * expense_ratio  (ETFs/CEFs/BDCs)
+            #     tax_drag  = 0 for tax-advantaged accounts (roth_ira, traditional_ira, 401k, 403b, hsa)
+            #               = annual_income * blended_tax_rate for taxable
+            #     net_income = annual_income - fee_drag - tax_drag
+            try:
+                acct_row = conn.execute(text("""
+                    SELECT COALESCE(a.account_type, 'taxable')
+                    FROM platform_shared.portfolios po
+                    LEFT JOIN platform_shared.accounts a ON a.id = po.account_id
+                    WHERE po.id = :pid
+                """), {"pid": portfolio_id}).fetchone()
+                account_type = acct_row[0] if acct_row else "taxable"
+                is_tax_advantaged = account_type in (
+                    "roth_ira", "traditional_ira", "401k", "403b", "hsa"
+                )
+
+                conn.execute(text("""
+                    UPDATE platform_shared.positions p
+                    SET annual_fee_drag = ROUND(
+                            COALESCE(p.current_value, 0) *
+                            COALESCE(s.expense_ratio, 0), 2),
+                        estimated_tax_drag = CASE
+                            WHEN :tax_adv THEN 0
+                            ELSE ROUND(
+                                COALESCE(p.annual_income, 0) * (
+                                    (COALESCE(s.tax_qualified_pct, 100) * 0.15 +
+                                     COALESCE(s.tax_ordinary_pct, 0)  * 0.22 +
+                                     COALESCE(s.tax_roc_pct, 0)       * 0.00) / 100.0
+                                ), 2)
+                        END,
+                        net_annual_income = ROUND(
+                            COALESCE(p.annual_income, 0)
+                            - COALESCE(p.annual_fee_drag, 0)
+                            - CASE
+                                WHEN :tax_adv THEN 0
+                                ELSE ROUND(
+                                    COALESCE(p.annual_income, 0) * (
+                                        (COALESCE(s.tax_qualified_pct, 100) * 0.15 +
+                                         COALESCE(s.tax_ordinary_pct, 0)  * 0.22 +
+                                         COALESCE(s.tax_roc_pct, 0)       * 0.00) / 100.0
+                                    ), 2)
+                              END, 2),
+                        updated_at = NOW()
+                    FROM platform_shared.securities s
+                    WHERE p.symbol = s.symbol
+                      AND p.portfolio_id = :pid
+                      AND p.status = 'ACTIVE'
+                """), {"pid": portfolio_id, "tax_adv": is_tax_advantaged})
+
+                # Re-run net_annual_income using freshly stored fee_drag
+                conn.execute(text("""
+                    UPDATE platform_shared.positions p
+                    SET net_annual_income = ROUND(
+                        COALESCE(p.annual_income, 0)
+                        - COALESCE(p.annual_fee_drag, 0)
+                        - COALESCE(p.estimated_tax_drag, 0), 2)
+                    WHERE p.portfolio_id = :pid AND p.status = 'ACTIVE'
+                """), {"pid": portfolio_id})
+            except Exception as drag_exc:
+                logger.warning("fee/tax drag compute failed: %s", drag_exc)
+
             conn.commit()
 
         import datetime as _dt
@@ -555,17 +687,59 @@ def _infer_asset_type(symbol: str, asset_type: str) -> str:
 
 
 def _ensure_freq_column(conn):
-    """Add dividend_frequency and sector to positions/securities tables if not already present."""
+    """Ensure all dynamic columns exist (idempotent ALTER TABLE IF NOT EXISTS)."""
     global _extra_cols_checked
     if _extra_cols_checked:
         return
     for ddl in [
+        # Original columns
         "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS dividend_frequency VARCHAR(30) DEFAULT NULL",
         "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS dividend_frequency VARCHAR(30) DEFAULT NULL",
         "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS sector VARCHAR(100) DEFAULT NULL",
         "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS sector VARCHAR(100) DEFAULT NULL",
         "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS industry VARCHAR(150) DEFAULT NULL",
         "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS last_refreshed_at TIMESTAMPTZ DEFAULT NULL",
+        # v2 — positions
+        "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS dca_stage INTEGER DEFAULT 1",
+        "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS drip_enabled BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS annual_fee_drag DECIMAL(12,2)",
+        "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS estimated_tax_drag DECIMAL(12,2)",
+        "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS net_annual_income DECIMAL(12,2)",
+        # v2 — securities
+        "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS management_fee DECIMAL(6,4)",
+        "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS is_externally_managed BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS tax_qualified_pct DECIMAL(5,2) DEFAULT 100",
+        "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS tax_ordinary_pct DECIMAL(5,2) DEFAULT 0",
+        "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS tax_roc_pct DECIMAL(5,2) DEFAULT 0",
+        # v2 — portfolios
+        "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS benchmark_ticker TEXT DEFAULT 'SCHD'",
+        "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS target_yield DECIMAL(5,2)",
+        "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS monthly_income_target DECIMAL(12,2)",
+        "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS max_single_position_pct DECIMAL(5,2) DEFAULT 5.0",
+        "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS weight_value DECIMAL(5,2) DEFAULT 40.0",
+        "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS weight_safety DECIMAL(5,2) DEFAULT 40.0",
+        "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS weight_technicals DECIMAL(5,2) DEFAULT 20.0",
+        # v2 — market_data_cache new columns
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS sma_50 NUMERIC(12,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS sma_200 NUMERIC(12,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS rsi_14d NUMERIC(8,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS rsi_14w NUMERIC(8,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS support_level NUMERIC(12,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS resistance_level NUMERIC(12,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS yield_5yr_avg NUMERIC(8,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS div_cagr_3yr NUMERIC(8,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS div_cagr_10yr NUMERIC(8,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS consecutive_growth_yrs INTEGER",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS buyback_yield NUMERIC(8,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS coverage_metric_type TEXT",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS interest_coverage_ratio NUMERIC(10,2)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS net_debt_ebitda NUMERIC(10,2)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS credit_rating TEXT",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS free_cash_flow_yield NUMERIC(8,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS return_on_equity NUMERIC(8,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS analyst_price_target NUMERIC(12,4)",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS next_earnings_date DATE",
+        "ALTER TABLE platform_shared.market_data_cache ADD COLUMN IF NOT EXISTS insider_ownership_pct NUMERIC(8,4)",
     ]:
         try:
             conn.execute(text(ddl))
@@ -606,10 +780,17 @@ def _row_to_position(pos: dict) -> dict:
     # Optional market intelligence fields — coerce to float or None
     for k in ("daily_change_pct", "week52_high", "week52_low", "market_cap",
               "pe_ratio", "payout_ratio", "beta", "chowder_number",
-              "nav_value", "nav_discount_pct"):
+              "nav_value", "nav_discount_pct",
+              # v2 market fields
+              "sma_50", "sma_200", "rsi_14d", "rsi_14w",
+              "support_level", "resistance_level",
+              "yield_5yr_avg", "div_cagr_3yr", "div_cagr_10yr",
+              "buyback_yield", "interest_coverage_ratio", "net_debt_ebitda",
+              "free_cash_flow_yield", "return_on_equity",
+              "analyst_price_target", "insider_ownership_pct"):
         v = pos.get(k)
         pos[k] = float(v) if v is not None else None
-    for k in ("ex_div_date", "pay_date"):
+    for k in ("ex_div_date", "pay_date", "next_earnings_date"):
         v = pos.get(k)
         if v and hasattr(v, "isoformat"):
             pos[k] = v.isoformat()
@@ -617,6 +798,8 @@ def _row_to_position(pos: dict) -> dict:
             pos[k] = None
     avg_vol = pos.get("avg_volume")
     pos["avg_volume"] = int(avg_vol) if avg_vol is not None else None
+    cgy = pos.get("consecutive_growth_yrs")
+    pos["consecutive_growth_yrs"] = int(cgy) if cgy is not None else None
     # Derive dividend_growth_5y from chowder_number - dividend_yield
     chowder = pos.get("chowder_number")
     cy = pos.get("current_yield")
@@ -625,6 +808,24 @@ def _row_to_position(pos: dict) -> dict:
     price = pos.get("market_price") or 0
     pe = pos.get("pe_ratio")
     pos["eps"] = round(price / pe, 2) if pe and pe != 0 and price else None
+    # Position strategy fields
+    pos.setdefault("dca_stage", 1)
+    pos["drip_enabled"] = bool(pos.get("drip_enabled", False))
+    pos.setdefault("credit_rating", pos.get("credit_rating"))
+    pos.setdefault("coverage_metric_type", pos.get("coverage_metric_type"))
+    # Expose acquired_date and total_dividends_received
+    for k in ("acquired_date", "closed_date"):
+        v = pos.get(k)
+        if v and hasattr(v, "isoformat"):
+            pos[k] = v.isoformat()
+        elif not v:
+            pos[k] = None
+    # Net income efficiency (computed in refresh, returned as-is)
+    for k in ("annual_fee_drag", "estimated_tax_drag", "net_annual_income"):
+        v = pos.get(k)
+        pos[k] = float(v) if v is not None else None
+    tdiv = pos.get("total_dividends_received")
+    pos["total_dividends_received"] = float(tdiv) if tdiv is not None else 0.0
 
     return pos
 
@@ -677,7 +878,57 @@ def get_positions(portfolio_id: str):
                     COALESCE(sc.signal_penalty, 0)            AS signal_penalty,
                     COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
                     p.price_updated_at,
-                    p.updated_at
+                    p.updated_at,
+                    -- Market intelligence (v2 fields)
+                    m.price_change_pct           AS daily_change_pct,
+                    m.week52_high,
+                    m.week52_low,
+                    m.market_cap_m               AS market_cap,
+                    m.pe_ratio,
+                    m.payout_ratio,
+                    m.beta,
+                    m.chowder_number,
+                    m.nav_value,
+                    m.nav_discount_pct,
+                    m.ex_div_date,
+                    m.pay_date,
+                    m.volume_avg_10d             AS avg_volume,
+                    m.sma_50,
+                    m.sma_200,
+                    m.rsi_14d,
+                    m.rsi_14w,
+                    m.support_level,
+                    m.resistance_level,
+                    m.yield_5yr_avg,
+                    m.div_cagr_3yr,
+                    m.div_cagr_10yr,
+                    m.consecutive_growth_yrs,
+                    m.buyback_yield,
+                    m.coverage_metric_type,
+                    m.interest_coverage_ratio,
+                    m.net_debt_ebitda,
+                    m.credit_rating,
+                    m.free_cash_flow_yield,
+                    m.return_on_equity,
+                    m.analyst_price_target,
+                    m.next_earnings_date,
+                    m.insider_ownership_pct,
+                    -- Position strategy fields
+                    COALESCE(p.dca_stage, 1)         AS dca_stage,
+                    COALESCE(p.drip_enabled, FALSE)   AS drip_enabled,
+                    p.acquired_date,
+                    p.total_dividends_received,
+                    -- Income efficiency
+                    p.annual_fee_drag,
+                    p.estimated_tax_drag,
+                    p.net_annual_income,
+                    -- Tax treatment from securities
+                    COALESCE(s.tax_qualified_pct, 100) AS tax_qualified_pct,
+                    COALESCE(s.tax_ordinary_pct, 0)    AS tax_ordinary_pct,
+                    COALESCE(s.tax_roc_pct, 0)         AS tax_roc_pct,
+                    s.expense_ratio,
+                    s.management_fee,
+                    COALESCE(s.is_externally_managed, FALSE) AS is_externally_managed
                 FROM platform_shared.positions p
                 LEFT JOIN platform_shared.securities s
                        ON s.symbol = p.symbol
@@ -911,7 +1162,40 @@ def get_position_by_symbol(symbol: str):
                     m.nav_discount_pct,
                     m.ex_div_date,
                     m.pay_date,
-                    m.volume_avg_10d             AS avg_volume
+                    m.volume_avg_10d             AS avg_volume,
+                    m.sma_50,
+                    m.sma_200,
+                    m.rsi_14d,
+                    m.rsi_14w,
+                    m.support_level,
+                    m.resistance_level,
+                    m.yield_5yr_avg,
+                    m.div_cagr_3yr,
+                    m.div_cagr_10yr,
+                    m.consecutive_growth_yrs,
+                    m.buyback_yield,
+                    m.coverage_metric_type,
+                    m.interest_coverage_ratio,
+                    m.net_debt_ebitda,
+                    m.credit_rating,
+                    m.free_cash_flow_yield,
+                    m.return_on_equity,
+                    m.analyst_price_target,
+                    m.next_earnings_date,
+                    m.insider_ownership_pct,
+                    COALESCE(p.dca_stage, 1)         AS dca_stage,
+                    COALESCE(p.drip_enabled, FALSE)   AS drip_enabled,
+                    p.acquired_date,
+                    p.total_dividends_received,
+                    p.annual_fee_drag,
+                    p.estimated_tax_drag,
+                    p.net_annual_income,
+                    COALESCE(s.tax_qualified_pct, 100) AS tax_qualified_pct,
+                    COALESCE(s.tax_ordinary_pct, 0)    AS tax_ordinary_pct,
+                    COALESCE(s.tax_roc_pct, 0)         AS tax_roc_pct,
+                    s.expense_ratio,
+                    s.management_fee,
+                    COALESCE(s.is_externally_managed, FALSE) AS is_externally_managed
                 FROM platform_shared.positions p
                 LEFT JOIN platform_shared.securities s
                        ON s.symbol = p.symbol
@@ -957,6 +1241,9 @@ class PositionUpdate(BaseModel):
     sector: Optional[str] = None                 # updates securities.sector
     industry: Optional[str] = None               # updates securities.industry
     dividend_frequency: Optional[str] = None     # stored in positions.dividend_frequency
+    dca_stage: Optional[int] = None              # 1-4
+    drip_enabled: Optional[bool] = None          # DRIP status
+    acquired_date: Optional[str] = None          # ISO date string
 
 
 @router.patch("/positions/{position_id}")
@@ -999,6 +1286,9 @@ def update_position(position_id: str, update: PositionUpdate):
                     yield_on_cost     = COALESCE(:yoc, yield_on_cost),
                     dividend_frequency = COALESCE(:freq, dividend_frequency),
                     sector            = COALESCE(:sector, sector),
+                    dca_stage         = COALESCE(:dca_stage, dca_stage),
+                    drip_enabled      = COALESCE(:drip_enabled, drip_enabled),
+                    acquired_date     = COALESCE(:acquired_date::DATE, acquired_date),
                     updated_at        = NOW()
                 WHERE id = :id AND status = 'ACTIVE'
             """), {
@@ -1007,6 +1297,9 @@ def update_position(position_id: str, update: PositionUpdate):
                 "yoc": yoc_frac,
                 "freq": update.dividend_frequency,
                 "sector": update.sector,
+                "dca_stage": update.dca_stage,
+                "drip_enabled": update.drip_enabled,
+                "acquired_date": update.acquired_date,
                 "id": position_id,
             })
 
@@ -1185,6 +1478,8 @@ def get_market_data_for_positions(portfolio_id: Optional[str] = None):
                     p.symbol,
                     COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(s.asset_type, 'Unknown')   AS asset_type,
+                    s.sector,
+                    s.industry,
                     COALESCE(m.price, p.current_price, 0) AS price,
                     COALESCE(m.price_change_pct, 0)     AS change_pct,
                     COALESCE(m.volume_avg_10d, 0)        AS volume,
@@ -1207,7 +1502,39 @@ def get_market_data_for_positions(portfolio_id: Optional[str] = None):
                     m.pay_date,
                     m.div_frequency,
                     m.volume_avg_10d                     AS avg_volume,
-                    COALESCE(m.snapshot_date, p.price_updated_at::date) AS snapshot_date
+                    COALESCE(m.snapshot_date, p.price_updated_at::date) AS snapshot_date,
+                    -- Technicals (v2)
+                    m.sma_50,
+                    m.sma_200,
+                    m.rsi_14d,
+                    m.support_level,
+                    m.resistance_level,
+                    -- Income stats (v2)
+                    m.yield_5yr_avg,
+                    m.div_cagr_3yr,
+                    m.div_cagr_10yr,
+                    m.consecutive_growth_yrs,
+                    m.buyback_yield,
+                    -- Risk & debt (v2)
+                    m.coverage_metric_type,
+                    m.interest_coverage_ratio,
+                    m.net_debt_ebitda,
+                    m.credit_rating,
+                    m.free_cash_flow_yield,
+                    m.return_on_equity,
+                    -- Analyst (v2)
+                    m.analyst_price_target,
+                    m.next_earnings_date,
+                    m.insider_ownership_pct,
+                    -- Structural (from securities)
+                    s.expense_ratio,
+                    s.management_fee,
+                    s.is_externally_managed,
+                    s.tax_qualified_pct,
+                    s.tax_ordinary_pct,
+                    s.tax_roc_pct,
+                    -- Fundamentals
+                    m.price_to_book
                 FROM (
                     SELECT DISTINCT ON (symbol)
                         symbol, current_price, price_updated_at
@@ -1226,7 +1553,16 @@ def get_market_data_for_positions(portfolio_id: Optional[str] = None):
                 item = dict(r._mapping)
                 for k in ("price", "change_pct", "dividend_yield"):
                     item[k] = float(item[k]) if item.get(k) is not None else 0.0
-                for k in ("week52_high", "week52_low", "pe_ratio", "payout_ratio", "beta", "chowder_number", "nav", "premium_discount"):
+                for k in (
+                    "week52_high", "week52_low", "pe_ratio", "payout_ratio", "beta",
+                    "chowder_number", "nav", "premium_discount",
+                    "sma_50", "sma_200", "rsi_14d", "support_level", "resistance_level",
+                    "yield_5yr_avg", "div_cagr_3yr", "div_cagr_10yr", "buyback_yield",
+                    "interest_coverage_ratio", "net_debt_ebitda", "free_cash_flow_yield",
+                    "return_on_equity", "analyst_price_target", "insider_ownership_pct",
+                    "expense_ratio", "management_fee", "tax_qualified_pct", "tax_ordinary_pct",
+                    "tax_roc_pct", "price_to_book",
+                ):
                     item[k] = float(item[k]) if item.get(k) is not None else None
                 price = item["price"]
                 pct = item["change_pct"]
@@ -1235,6 +1571,8 @@ def get_market_data_for_positions(portfolio_id: Optional[str] = None):
                 item["market_cap"] = round(float(mc), 2) if mc else 0.0
                 vol = item.get("volume")
                 item["volume"] = int(vol) if vol else 0
+                cgy = item.get("consecutive_growth_yrs")
+                item["consecutive_growth_yrs"] = int(cgy) if cgy is not None else None
                 # Null-fill fields not in DB
                 item["day_high"] = None
                 item["day_low"] = None
@@ -1245,14 +1583,16 @@ def get_market_data_for_positions(portfolio_id: Optional[str] = None):
                 item["dividend_growth_5y"] = round(float(chowder) - float(div_yield), 2) if chowder and div_yield else None
                 avg_vol = item.get("avg_volume")
                 item["avg_volume"] = int(avg_vol) if avg_vol else None
-                pay = item.get("pay_date")
-                item["pay_date"] = pay.isoformat() if pay and hasattr(pay, "isoformat") else (str(pay) if pay else None)
+                # Date serialisation
+                for date_field in ("pay_date", "ex_date", "next_earnings_date"):
+                    v = item.get(date_field)
+                    item[date_field] = v.isoformat() if v and hasattr(v, "isoformat") else (str(v) if v else None)
                 item["div_frequency"] = item.get("div_frequency")
-                ex = item.get("ex_date")
-                item["ex_date"] = ex.isoformat() if ex and hasattr(ex, "isoformat") else (str(ex) if ex else None)
                 sd = item.get("snapshot_date")
                 if sd:
                     item["snapshot_date"] = sd.isoformat() if hasattr(sd, "isoformat") else str(sd)
+                item["leverage_pct"] = None  # not stored in DB
+                item["coverage_ratio"] = item.get("interest_coverage_ratio")  # alias
                 result.append(item)
 
             return JSONResponse(content=result)
@@ -1363,4 +1703,127 @@ def get_market_quote(symbol: str):
         raise
     except Exception as exc:
         logger.error("get_market_quote error (%s): %s", symbol, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/market-data/asset/{symbol:path}")
+def get_asset_detail(symbol: str):
+    """
+    Return full asset detail for a single symbol (all market_data_cache + securities fields).
+    Used by the /market/[symbol] frontend page.
+    """
+    sym = symbol.upper()
+    try:
+        with _db().connect() as conn:
+            row = conn.execute(text("""
+                SELECT
+                    COALESCE(s.name, :sym)            AS name,
+                    COALESCE(s.asset_type, 'Unknown') AS asset_type,
+                    s.sector,
+                    s.industry,
+                    s.expense_ratio,
+                    s.management_fee,
+                    s.is_externally_managed,
+                    s.tax_qualified_pct,
+                    s.tax_ordinary_pct,
+                    s.tax_roc_pct,
+                    COALESCE(m.price, 0)              AS price,
+                    COALESCE(m.price_change_pct, 0)   AS change_pct,
+                    COALESCE(m.volume_avg_10d, 0)      AS volume,
+                    m.week52_high,
+                    m.week52_low,
+                    COALESCE(m.market_cap_m, 0)        AS market_cap,
+                    m.pe_ratio,
+                    m.price_to_book,
+                    COALESCE(m.dividend_yield, 0)      AS dividend_yield,
+                    m.payout_ratio,
+                    m.beta,
+                    m.chowder_number,
+                    m.nav_value                        AS nav,
+                    m.nav_discount_pct                 AS premium_discount,
+                    m.ex_div_date                      AS ex_date,
+                    m.pay_date,
+                    m.div_frequency,
+                    m.volume_avg_10d                   AS avg_volume,
+                    m.snapshot_date,
+                    -- Technicals (v2)
+                    m.sma_50,
+                    m.sma_200,
+                    m.rsi_14d,
+                    m.support_level,
+                    m.resistance_level,
+                    -- Income stats (v2)
+                    m.yield_5yr_avg,
+                    m.div_cagr_3yr,
+                    m.div_cagr_10yr,
+                    m.consecutive_growth_yrs,
+                    m.buyback_yield,
+                    -- Risk & debt (v2)
+                    m.coverage_metric_type,
+                    m.interest_coverage_ratio,
+                    m.net_debt_ebitda,
+                    m.credit_rating,
+                    m.free_cash_flow_yield,
+                    m.return_on_equity,
+                    -- Analyst (v2)
+                    m.analyst_price_target,
+                    m.next_earnings_date,
+                    m.insider_ownership_pct
+                FROM (SELECT :sym::text AS symbol) base
+                LEFT JOIN platform_shared.securities s ON UPPER(s.symbol) = :sym
+                LEFT JOIN platform_shared.market_data_cache m ON UPPER(m.symbol) = :sym
+                LIMIT 1
+            """), {"sym": sym}).fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Asset not found: {sym}")
+
+            item = dict(row._mapping)
+            item["symbol"] = sym
+
+            for k in ("price", "change_pct", "dividend_yield"):
+                item[k] = float(item[k]) if item.get(k) is not None else 0.0
+            for k in (
+                "week52_high", "week52_low", "pe_ratio", "price_to_book", "payout_ratio",
+                "beta", "chowder_number", "nav", "premium_discount",
+                "sma_50", "sma_200", "rsi_14d", "support_level", "resistance_level",
+                "yield_5yr_avg", "div_cagr_3yr", "div_cagr_10yr", "buyback_yield",
+                "interest_coverage_ratio", "net_debt_ebitda", "free_cash_flow_yield",
+                "return_on_equity", "analyst_price_target", "insider_ownership_pct",
+                "expense_ratio", "management_fee", "tax_qualified_pct", "tax_ordinary_pct",
+                "tax_roc_pct",
+            ):
+                item[k] = float(item[k]) if item.get(k) is not None else None
+            price = item["price"]
+            pct = item["change_pct"]
+            item["change"] = round(price - price / (1 + pct / 100), 4) if price and pct else 0.0
+            mc = item.get("market_cap")
+            item["market_cap"] = round(float(mc), 2) if mc else 0.0
+            vol = item.get("volume")
+            item["volume"] = int(vol) if vol else 0
+            cgy = item.get("consecutive_growth_yrs")
+            item["consecutive_growth_yrs"] = int(cgy) if cgy is not None else None
+            pe = item.get("pe_ratio")
+            item["eps"] = round(price / pe, 2) if pe and pe != 0 and price else None
+            chowder = item.get("chowder_number")
+            div_yield = item.get("dividend_yield")
+            item["dividend_growth_5y"] = round(float(chowder) - float(div_yield), 2) if chowder and div_yield else None
+            avg_vol = item.get("avg_volume")
+            item["avg_volume"] = int(avg_vol) if avg_vol else None
+            item["day_high"] = None
+            item["day_low"] = None
+            for date_field in ("pay_date", "ex_date", "next_earnings_date"):
+                v = item.get(date_field)
+                item[date_field] = v.isoformat() if v and hasattr(v, "isoformat") else (str(v) if v else None)
+            sd = item.get("snapshot_date")
+            if sd:
+                item["snapshot_date"] = sd.isoformat() if hasattr(sd, "isoformat") else str(sd)
+            item["leverage_pct"] = None
+            item["coverage_ratio"] = item.get("interest_coverage_ratio")
+
+            return JSONResponse(content=item)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_asset_detail error (%s): %s", sym, exc)
         raise HTTPException(status_code=500, detail=str(exc))

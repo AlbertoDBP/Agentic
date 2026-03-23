@@ -14,6 +14,7 @@ import {
   PanelLeftOpen,
   ScanLine,
   Leaf,
+  BarChart2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PortfolioSwitcher } from "./portfolio-switcher";
@@ -22,6 +23,7 @@ import { usePortfolio } from "@/lib/portfolio-context";
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
+  { href: "/market",             label: "Market",             icon: BarChart2 },
   { href: "/income-projection",  label: "Income Projection",  icon: TrendingUp },
   { href: "/alerts",             label: "Alerts",             icon: Bell },
   { href: "/proposals",          label: "Proposals",          icon: FileCheck },

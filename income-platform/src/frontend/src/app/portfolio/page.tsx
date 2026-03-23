@@ -11,7 +11,7 @@ import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import { ASSET_CLASS_COLORS, API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
-import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Trash2, Upload, X, Check, Download, Wallet, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Trash2, Upload, X, Check, Download, Wallet, RefreshCw, ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { apiPost } from "@/lib/api";
 import { useState, useMemo, useEffect, useRef, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
@@ -200,6 +200,36 @@ const positionColumns: ColumnDef<Position>[] = [
     cell: ({ getValue }) => {
       const v = getValue<number | null | undefined>();
       return v != null ? <span className="tabular-nums">{v.toFixed(2)}</span> : <span className="text-muted-foreground">—</span>;
+    },
+  },
+  {
+    accessorKey: "chowder_number",
+    header: "Chowder",
+    meta: { defaultHidden: true },
+    cell: ({ getValue }) => {
+      const v = getValue<number | null | undefined>();
+      if (v == null) return <span className="text-muted-foreground">—</span>;
+      return <span className={cn("tabular-nums font-medium", v >= 12 ? "text-income" : v >= 8 ? "text-yellow-400" : "text-red-400")}>{v.toFixed(1)}</span>;
+    },
+  },
+  {
+    accessorKey: "net_annual_income",
+    header: "Net Income",
+    meta: { defaultHidden: true },
+    cell: ({ getValue }) => {
+      const v = getValue<number | null | undefined>();
+      if (v == null) return <span className="text-muted-foreground">—</span>;
+      return <span className="tabular-nums text-income">{formatCurrency(v)}</span>;
+    },
+  },
+  {
+    accessorKey: "dca_stage",
+    header: "DCA",
+    meta: { defaultHidden: true },
+    cell: ({ getValue }) => {
+      const v = getValue<number | null | undefined>();
+      if (v == null) return <span className="text-muted-foreground">—</span>;
+      return <span className="rounded bg-blue-500/15 text-blue-400 px-1.5 py-0.5 text-[10px] font-medium">S{v}</span>;
     },
   },
   { accessorKey: "currency", header: "Currency", meta: { defaultHidden: true } },
@@ -454,6 +484,20 @@ function PortfolioContent() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
 
+  // Portfolio settings modal
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsForm, setSettingsForm] = useState({
+    benchmark_ticker: "SCHD",
+    target_yield: "",
+    monthly_income_target: "",
+    max_single_position_pct: "5.0",
+    weight_value: 40,
+    weight_safety: 40,
+    weight_technicals: 20,
+  });
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+
   // Seed lastSynced from portfolio's persisted last_refreshed_at
   useEffect(() => {
     if (activePortfolio?.last_refreshed_at) {
@@ -461,6 +505,21 @@ function PortfolioContent() {
       setLastSynced(d.toLocaleString());
     }
   }, [activePortfolio?.last_refreshed_at]);
+
+  // Seed settings form from active portfolio
+  useEffect(() => {
+    if (activePortfolio) {
+      setSettingsForm({
+        benchmark_ticker: activePortfolio.benchmark_ticker ?? "SCHD",
+        target_yield: activePortfolio.target_yield != null ? String(activePortfolio.target_yield) : "",
+        monthly_income_target: activePortfolio.monthly_income_target != null ? String(activePortfolio.monthly_income_target) : "",
+        max_single_position_pct: activePortfolio.max_single_position_pct != null ? String(activePortfolio.max_single_position_pct) : "5.0",
+        weight_value: activePortfolio.weight_value ?? 40,
+        weight_safety: activePortfolio.weight_safety ?? 40,
+        weight_technicals: activePortfolio.weight_technicals ?? 20,
+      });
+    }
+  }, [activePortfolio?.id]);
 
   const isBrokerLinked = activePortfolio?.sync_method === "broker_api";
 
@@ -489,6 +548,41 @@ function PortfolioContent() {
       setLastSynced(new Date().toLocaleTimeString());
     } catch { /* silent */ }
     finally { setSyncLoading(false); }
+  };
+
+  const saveSettings = async () => {
+    if (!activePortfolio) return;
+    const wTotal = settingsForm.weight_value + settingsForm.weight_safety + settingsForm.weight_technicals;
+    if (Math.abs(wTotal - 100) > 0.5) {
+      setSettingsMsg(`Weights must sum to 100 (currently ${wTotal.toFixed(0)})`);
+      return;
+    }
+    setSettingsSaving(true);
+    setSettingsMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/portfolios/${activePortfolio.id}/settings`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          benchmark_ticker: settingsForm.benchmark_ticker || null,
+          target_yield: settingsForm.target_yield ? parseFloat(settingsForm.target_yield) : null,
+          monthly_income_target: settingsForm.monthly_income_target ? parseFloat(settingsForm.monthly_income_target) : null,
+          max_single_position_pct: settingsForm.max_single_position_pct ? parseFloat(settingsForm.max_single_position_pct) : null,
+          weight_value: settingsForm.weight_value,
+          weight_safety: settingsForm.weight_safety,
+          weight_technicals: settingsForm.weight_technicals,
+        }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      await reloadPortfolios();
+      setSettingsMsg("Saved");
+      setTimeout(() => { setSettingsMsg(null); setShowSettings(false); }, 1500);
+    } catch {
+      setSettingsMsg("Save failed — try again");
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
   // Positions — loaded from API, localStorage used for manual edits only
@@ -795,6 +889,21 @@ function PortfolioContent() {
   const avgYield = totalCost > 0 ? (totalIncome / totalCost) * 100 : 0;
   const top10 = [...positions].sort((a, b) => b.current_value - a.current_value).slice(0, 10);
 
+  // Aggregate stats
+  const portfolioBeta = useMemo(() => {
+    const withBeta = positions.filter((p) => p.beta != null && p.current_value > 0);
+    if (withBeta.length === 0 || totalValue === 0) return null;
+    const betaTotal = withBeta.reduce((s, p) => s + (p.current_value / totalValue) * (p.beta as number), 0);
+    const weightedTotal = withBeta.reduce((s, p) => s + p.current_value, 0) / totalValue;
+    return betaTotal / weightedTotal;
+  }, [positions, totalValue]);
+
+  const top5IncomePct = useMemo(() => {
+    if (totalIncome === 0) return 0;
+    const sorted = [...positions].sort((a, b) => b.annual_income - a.annual_income).slice(0, 5);
+    return (sorted.reduce((s, p) => s + p.annual_income, 0) / totalIncome) * 100;
+  }, [positions, totalIncome]);
+
   const handleRowClick = (row: Position) => {
     if (editingPositionId) return; // Don't navigate while editing
     router.push(`/portfolio/${encodeURIComponent(row.symbol)}`);
@@ -821,14 +930,24 @@ function PortfolioContent() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex flex-col items-end gap-0.5">
-            <button
-              onClick={syncBroker}
-              disabled={syncLoading}
-              className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", syncLoading && "animate-spin")} />
-              {syncLoading ? "Syncing…" : isBrokerLinked ? "Sync from Broker" : "Refresh Data"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowSettings(true)}
+                className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                title="Portfolio strategy settings"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Strategy
+              </button>
+              <button
+                onClick={syncBroker}
+                disabled={syncLoading}
+                className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", syncLoading && "animate-spin")} />
+                {syncLoading ? "Syncing…" : isBrokerLinked ? "Sync from Broker" : "Refresh Data"}
+              </button>
+            </div>
             {lastSynced && (
               <span className="text-[10px] text-muted-foreground">Updated {lastSynced}</span>
             )}
@@ -908,6 +1027,35 @@ function PortfolioContent() {
           <span className="text-[10px] text-muted-foreground">Click to update</span>
         </div>
       </div>
+
+      {/* Aggregate stats bar */}
+      {positions.length > 0 && (
+        <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-md border border-border/60 bg-secondary/30 px-4 py-2 text-xs">
+          <span className="text-muted-foreground">
+            Portfolio Beta:{" "}
+            <strong className={cn("font-semibold",
+              portfolioBeta == null ? "text-muted-foreground" :
+              portfolioBeta > 1.2 ? "text-yellow-400" : portfolioBeta < 0.8 ? "text-income" : "text-foreground"
+            )}>
+              {portfolioBeta != null ? portfolioBeta.toFixed(2) : "—"}
+            </strong>
+          </span>
+          <span className="text-muted-foreground">
+            Wt. Avg YoC: <strong className="font-semibold text-foreground">{avgYield.toFixed(2)}%</strong>
+          </span>
+          <span className="text-muted-foreground">
+            Top-5 Income Concentration:{" "}
+            <strong className={cn("font-semibold",
+              top5IncomePct >= 70 ? "text-yellow-400" : top5IncomePct >= 50 ? "text-blue-400" : "text-foreground"
+            )}>
+              {top5IncomePct.toFixed(0)}%
+            </strong>
+          </span>
+          <span className="text-muted-foreground">
+            Positions: <strong className="font-semibold text-foreground">{positions.length}</strong>
+          </span>
+        </div>
+      )}
 
       {/* Sub-tabs */}
       <div className="relative flex items-center border-b border-border">
@@ -1307,6 +1455,133 @@ function PortfolioContent() {
       {/* ── Income Simulation ── */}
       {tab === "simulation" && (
         <SimulationContent defaultPortfolioId={portfolioId} />
+      )}
+
+      {/* ── Portfolio Settings Modal ── */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <h2 className="text-sm font-semibold">Portfolio Strategy Settings</h2>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{activePortfolio?.name}</p>
+              </div>
+              <button onClick={() => setShowSettings(false)} className="rounded-md p-1.5 hover:bg-secondary transition-colors">
+                <X className="h-4 w-4 text-muted-foreground" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-5">
+              {/* Benchmark & targets */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Targets</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Benchmark Ticker</label>
+                    <input
+                      type="text"
+                      value={settingsForm.benchmark_ticker}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, benchmark_ticker: e.target.value.toUpperCase() })}
+                      className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="SCHD"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Target Yield (%)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={settingsForm.target_yield}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, target_yield: e.target.value })}
+                      className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="e.g. 6.0"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Monthly Income Target ($)</label>
+                    <input
+                      type="number"
+                      step="100"
+                      value={settingsForm.monthly_income_target}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, monthly_income_target: e.target.value })}
+                      className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="e.g. 5000"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Max Single Position (%)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={settingsForm.max_single_position_pct}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, max_single_position_pct: e.target.value })}
+                      className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="5.0"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Algorithm weights */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Scoring Weights</p>
+                  <span className={cn("text-xs font-medium tabular-nums",
+                    Math.abs(settingsForm.weight_value + settingsForm.weight_safety + settingsForm.weight_technicals - 100) > 0.5
+                      ? "text-red-400" : "text-income"
+                  )}>
+                    Total: {settingsForm.weight_value + settingsForm.weight_safety + settingsForm.weight_technicals}%
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {[
+                    { key: "weight_value" as const, label: "Valuation & Yield", color: "#3b82f6" },
+                    { key: "weight_safety" as const, label: "Financial Durability", color: "#10b981" },
+                    { key: "weight_technicals" as const, label: "Technical Entry", color: "#a78bfa" },
+                  ].map(({ key, label, color }) => (
+                    <div key={key} className="space-y-1.5">
+                      <div className="flex justify-between">
+                        <label className="text-xs text-muted-foreground">{label}</label>
+                        <span className="text-xs font-medium tabular-nums">{settingsForm[key]}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={settingsForm[key]}
+                        onChange={(e) => setSettingsForm({ ...settingsForm, [key]: Number(e.target.value) })}
+                        style={{ accentColor: color }}
+                        className="w-full"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Save/cancel */}
+              {settingsMsg && (
+                <p className={cn("text-xs", settingsMsg === "Saved" ? "text-income" : "text-red-400")}>{settingsMsg}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="rounded-md border border-border px-4 py-2 text-sm text-muted-foreground hover:bg-secondary transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveSettings}
+                  disabled={settingsSaving}
+                  className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  {settingsSaving ? "Saving…" : "Save Settings"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
