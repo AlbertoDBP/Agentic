@@ -36,7 +36,7 @@ interface Position {
   technical_entry_score: number;
   nav_erosion_penalty: number;
   signal_penalty: number;
-  factor_details: Record<string, { value: number; score: number; weight: number }> | null;
+  factor_details: Record<string, { value: number | null; score: number; max: number } | null> | null;
   nav_erosion_details: {
     prob_erosion_gt_5pct?: number;
     median_annual_nav_change_pct?: number;
@@ -702,26 +702,29 @@ export default function TickerDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(position.factor_details).map(([key, detail]) => {
-                    const maxPts = detail.weight;
-                    const pct = maxPts > 0 ? Math.min((detail.score / maxPts) * 100, 100) : 0;
+                  {Object.entries(position.factor_details)
+                    .filter(([, detail]) => detail != null && typeof detail === "object" && "score" in detail)
+                    .map(([key, detail]) => {
+                    const d = detail!;
+                    const maxPts = d.max ?? 0;
+                    const pct = maxPts > 0 ? Math.min((d.score / maxPts) * 100, 100) : 0;
                     const label = FACTOR_LABELS[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
                     return (
                       <tr key={key} className="border-b border-border/40 hover:bg-secondary/10">
                         <td className="px-4 py-2.5 text-xs font-medium">{label}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
-                          {typeof detail.value === "number"
-                            ? (Math.abs(detail.value) > 1000 ? formatCurrency(detail.value) : detail.value.toFixed(2))
-                            : String(detail.value)}
+                          {typeof d.value === "number"
+                            ? (Math.abs(d.value) > 1000 ? formatCurrency(d.value) : d.value.toFixed(2))
+                            : "—"}
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-xs font-semibold">
-                          {detail.score.toFixed(1)}
+                          {d.score.toFixed(1)}
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
                           {maxPts.toFixed(1)}
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
-                          {(detail.weight * 100).toFixed(0)}%
+                          {maxPts > 0 ? `${((d.score / maxPts) * 100).toFixed(0)}%` : "—"}
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-2">

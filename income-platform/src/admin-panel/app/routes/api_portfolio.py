@@ -854,7 +854,7 @@ def get_positions(portfolio_id: str):
                     p.symbol,
                     COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(s.asset_type, 'Unknown')   AS asset_type,
-                    COALESCE(p.sector, s.sector, '')     AS sector,
+                    COALESCE(NULLIF(p.sector, ''), s.sector, '')     AS sector,
                     COALESCE(s.industry, '')             AS industry,
                     p.quantity                           AS shares,
                     COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0)
@@ -1124,7 +1124,7 @@ def get_position_by_symbol(symbol: str):
                     p.symbol,
                     COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(s.asset_type, 'Unknown')   AS asset_type,
-                    COALESCE(p.sector, s.sector, '')     AS sector,
+                    COALESCE(NULLIF(p.sector, ''), s.sector, '')     AS sector,
                     COALESCE(s.industry, '')             AS industry,
                     p.quantity                           AS shares,
                     COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0)
