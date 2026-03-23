@@ -12,17 +12,19 @@ export function HelpTooltip({ text, side = "top" }: HelpTooltipProps) {
   return (
     <TooltipProvider delay={200}>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex shrink-0 text-muted-foreground/40 hover:text-muted-foreground/80 transition-colors ml-1 align-middle focus:outline-none"
-            aria-label="Help"
-          >
-            <HelpCircle className="h-3 w-3" />
-          </button>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex shrink-0 text-muted-foreground/40 hover:text-muted-foreground/80 transition-colors ml-1 align-middle focus:outline-none"
+              aria-label="Help"
+            />
+          }
+        >
+          <HelpCircle className="h-3 w-3" />
         </TooltipTrigger>
-        <TooltipContent side={side} className="max-w-[260px] text-xs leading-relaxed">
+        <TooltipContent side={side} className="max-w-65 text-xs leading-relaxed">
           {text}
         </TooltipContent>
       </Tooltip>
