@@ -171,8 +171,8 @@ const positionColumns: ColumnDef<Position>[] = [
       return v !== undefined ? <span className="tabular-nums">{formatCurrency(v)}</span> : <span className="text-muted-foreground">—</span>;
     },
   },
-  { accessorKey: "last_ex_date", header: "Last Ex-Date", meta: { defaultHidden: true } },
-  { accessorKey: "next_pay_date", header: "Pay Date", meta: { defaultHidden: true } },
+  { accessorKey: "ex_div_date", header: "Ex-Date" },
+  { accessorKey: "pay_date", header: "Pay Date" },
   {
     accessorKey: "dividend_growth_5y",
     header: "5Y Div Growth",
@@ -1412,7 +1412,7 @@ function PortfolioContent() {
               },
             ]}
             data={filtered}
-            storageKey="portfolio-positions"
+            storageKey="portfolio-positions-v2"
             onRowClick={handleRowClick}
             enableRowSelection
           />

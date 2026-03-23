@@ -75,7 +75,12 @@ export function DataTable<TData, TValue>({
       if (saved) {
         const state = JSON.parse(saved);
         if (state.visibility) setColumnVisibility(state.visibility);
-        if (state.order) setColumnOrder(state.order);
+        if (state.order) {
+          // Always keep 'actions' column last
+          const order = (state.order as string[]).filter((id: string) => id !== "actions");
+          order.push("actions");
+          setColumnOrder(order);
+        }
         if (typeof state.frozen === "number") setFrozenCount(state.frozen);
       } else {
         const defaults: VisibilityState = {};

@@ -677,7 +677,7 @@ export default function TickerDetailPage() {
               <div key={label} className="space-y-1.5">
                 <div className="flex justify-between text-xs">
                   <span className="text-muted-foreground">{label}</span>
-                  <span className="tabular-nums font-semibold">{value.toFixed(1)}<span className="text-muted-foreground font-normal">/{max}</span></span>
+                  <span className="tabular-nums font-semibold">{(value ?? 0).toFixed(1)}<span className="text-muted-foreground font-normal">/{max}</span></span>
                 </div>
                 <div className="h-2 w-full rounded-full bg-secondary">
                   <div className="h-2 rounded-full" style={{ width: `${(value / max) * 100}%`, backgroundColor: color }} />
