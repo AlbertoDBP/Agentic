@@ -11,7 +11,7 @@ import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import { ASSET_CLASS_COLORS, API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
-import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Trash2, Upload, X, Check, Download, Wallet, RefreshCw } from "lucide-react";
+import { Search, DollarSign, TrendingUp, BarChart3, Activity, Plus, Pencil, Trash2, Upload, X, Check, Download, Wallet, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiPost } from "@/lib/api";
 import { useState, useMemo, useEffect, useRef, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
@@ -33,7 +33,17 @@ const TAB_LABELS: Record<PortfolioTab, string> = {
   simulation: "Simulation",
 };
 
-const ASSET_TYPES = ["Common Stock", "BDC", "CEF", "MLP", "ETF", "Preferred", "Bond"];
+const ASSET_TYPES = [
+  "COVERED_CALL_ETF",
+  "BDC",
+  "MORTGAGE_REIT",
+  "EQUITY_REIT",
+  "DIVIDEND_STOCK",
+  "PREFERRED_STOCK",
+  "BOND",
+  "Common Stock",
+  "UNKNOWN",
+];
 const FREQUENCIES = ["Monthly", "Quarterly", "Semi-Annual", "Annual"];
 
 const positionColumns: ColumnDef<Position>[] = [
@@ -430,6 +440,7 @@ function PortfolioContent() {
   const searchParams = useSearchParams();
   const qualityFilter = searchParams.get("quality");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const tabBarRef = useRef<HTMLDivElement>(null);
 
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<PortfolioTab>("positions");
@@ -552,6 +563,7 @@ function PortfolioContent() {
           current_price,
           annual_income,
           yield_on_cost: yoc,
+          asset_type: updated.asset_type ?? "",
           sector: updated.sector ?? "",
           dividend_frequency: updated.dividend_frequency ?? "",
         }),
@@ -884,22 +896,36 @@ function PortfolioContent() {
       </div>
 
       {/* Sub-tabs */}
-      <div className="flex items-center gap-4 border-b border-border">
-        {(["summary", "positions", "health", "market", "vulnerability", "stress-test", "simulation"] as PortfolioTab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cn(
-              "border-b-2 px-1 pb-2 text-sm font-medium transition-colors",
-              tab === t ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {TAB_LABELS[t]}
-          </button>
-        ))}
-        {qualityFilter && (
-          <a href="/portfolio" className="ml-auto text-xs text-primary hover:underline">Clear filter</a>
-        )}
+      <div className="relative flex items-center border-b border-border">
+        <button
+          onClick={() => tabBarRef.current?.scrollBy({ left: -120, behavior: "smooth" })}
+          className="shrink-0 flex items-center justify-center h-8 w-6 text-muted-foreground hover:text-foreground bg-background border-r border-border"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <div ref={tabBarRef} className="flex items-center gap-4 overflow-x-auto scrollbar-hide px-2" style={{ scrollbarWidth: "none" }}>
+          {(["summary", "positions", "health", "market", "vulnerability", "stress-test", "simulation"] as PortfolioTab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                "shrink-0 border-b-2 px-1 pb-2 text-sm font-medium transition-colors",
+                tab === t ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {TAB_LABELS[t]}
+            </button>
+          ))}
+          {qualityFilter && (
+            <a href="/portfolio" className="ml-auto text-xs text-primary hover:underline shrink-0">Clear filter</a>
+          )}
+        </div>
+        <button
+          onClick={() => tabBarRef.current?.scrollBy({ left: 120, behavior: "smooth" })}
+          className="shrink-0 flex items-center justify-center h-8 w-6 text-muted-foreground hover:text-foreground bg-background border-l border-border"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
       </div>
 
       {/* ── Summary ── */}
@@ -1149,7 +1175,14 @@ function PortfolioContent() {
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-5 gap-2">
+              <div className="grid grid-cols-6 gap-2">
+                <div className="space-y-0.5">
+                  <p className="text-[10px] text-muted-foreground">Type</p>
+                  <select value={editForm.asset_type || "Common Stock"} onChange={(e) => setEditForm({ ...editForm, asset_type: e.target.value })}
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm">
+                    {ASSET_TYPES.map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
                 <div className="space-y-0.5">
                   <p className="text-[10px] text-muted-foreground">Qty</p>
                   <input type="number" step="1" value={editForm.shares} onChange={(e) => setEditForm({ ...editForm, shares: Number(e.target.value) })} placeholder="Qty"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { useRouter } from "next/navigation";
 import { DataTable } from "@/components/data-table";
@@ -8,12 +8,28 @@ import { TickerBadge } from "@/components/ticker-badge";
 import { AlertBadge } from "@/components/alert-badge";
 import { formatDateTime } from "@/lib/utils";
 import type { Alert } from "@/lib/types";
-
-const INITIAL_ALERTS: Alert[] = [];
+import { usePortfolio } from "@/lib/portfolio-context";
+import { apiGet } from "@/lib/api";
 
 export default function AlertsPage() {
   const router = useRouter();
-  const [alerts, setAlerts] = useState<Alert[]>(INITIAL_ALERTS);
+  const { portfolios } = usePortfolio();
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const portfolioId = portfolios[0]?.id;
+    if (!portfolioId) return;
+    setLoading(true);
+    apiGet<{ alerts: Alert[] } | Alert[]>(`/api/alerts?portfolio_id=${portfolioId}&status=ACTIVE`)
+      .then((data) => {
+        const list = Array.isArray(data) ? data : (data as { alerts: Alert[] }).alerts ?? [];
+        setAlerts(list);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [portfolios]);
 
   const resolveAlert = useCallback((id: string) => {
     setAlerts((prev) => prev.map((a) => a.id === id ? { ...a, status: "RESOLVED" as const } : a));
@@ -92,6 +108,16 @@ export default function AlertsPage() {
         <h1 className="text-xl font-semibold">Alerts</h1>
         <span className="text-sm text-muted-foreground">{activeCount} active · Alerts are per-symbol (all portfolios)</span>
       </div>
+      {loading && (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          Loading alerts...
+        </div>
+      )}
+      {error && !loading && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {error}
+        </div>
+      )}
       <DataTable columns={columns} data={alerts} storageKey="alerts" />
     </div>
   );
