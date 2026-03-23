@@ -133,7 +133,7 @@ const positionColumns: ColumnDef<Position>[] = [
     },
   },
   { accessorKey: "sector", header: "Sector" },
-  { accessorKey: "industry", header: "Industry", meta: { defaultHidden: true } },
+  { accessorKey: "industry", header: "Industry" },
   {
     accessorKey: "dividend_frequency",
     header: "Freq",
@@ -453,6 +453,14 @@ function PortfolioContent() {
   // Broker sync
   const [syncLoading, setSyncLoading] = useState(false);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
+
+  // Seed lastSynced from portfolio's persisted last_refreshed_at
+  useEffect(() => {
+    if (activePortfolio?.last_refreshed_at) {
+      const d = new Date(activePortfolio.last_refreshed_at);
+      setLastSynced(d.toLocaleString());
+    }
+  }, [activePortfolio?.last_refreshed_at]);
 
   const isBrokerLinked = activePortfolio?.sync_method === "broker_api";
 
@@ -812,15 +820,19 @@ function PortfolioContent() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={syncBroker}
-            disabled={syncLoading}
-            title={lastSynced ? `Last synced: ${lastSynced}` : isBrokerLinked ? "Sync positions from broker" : "Refresh market data and scores"}
-            className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", syncLoading && "animate-spin")} />
-            {syncLoading ? "Syncing…" : isBrokerLinked ? "Sync from Broker" : "Refresh Data"}
-          </button>
+          <div className="flex flex-col items-end gap-0.5">
+            <button
+              onClick={syncBroker}
+              disabled={syncLoading}
+              className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", syncLoading && "animate-spin")} />
+              {syncLoading ? "Syncing…" : isBrokerLinked ? "Sync from Broker" : "Refresh Data"}
+            </button>
+            {lastSynced && (
+              <span className="text-[10px] text-muted-foreground">Updated {lastSynced}</span>
+            )}
+          </div>
           <select
             value={activePortfolio?.id || ""}
             onChange={(e) => setActiveId(e.target.value)}

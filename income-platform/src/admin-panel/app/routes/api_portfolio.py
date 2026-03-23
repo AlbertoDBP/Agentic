@@ -94,14 +94,15 @@ def list_portfolios():
                     COALESCE(po.cash_balance, 0)  AS cash_balance,
                     COALESCE(po.total_value, 0)   AS total_value,
                     COUNT(p.id)              AS position_count,
-                    po.updated_at            AS last_updated
+                    po.updated_at            AS last_updated,
+                    po.last_refreshed_at     AS last_refreshed_at
                 FROM platform_shared.portfolios po
                 LEFT JOIN platform_shared.accounts a  ON a.id = po.account_id
                 LEFT JOIN platform_shared.positions p
                        ON p.portfolio_id = po.id AND p.status = 'ACTIVE'
                 WHERE po.status = 'ACTIVE'
                 GROUP BY po.id, po.portfolio_name, a.account_type, a.broker,
-                         po.cash_balance, po.total_value, po.updated_at
+                         po.cash_balance, po.total_value, po.updated_at, po.last_refreshed_at
                 ORDER BY po.total_value DESC NULLS LAST
             """)).fetchall()
             portfolios = [dict(r._mapping) for r in rows]
@@ -113,6 +114,10 @@ def list_portfolios():
                 p["position_count"] = int(p["position_count"])
                 if p.get("last_updated"):
                     p["last_updated"] = p["last_updated"].isoformat()
+                if p.get("last_refreshed_at"):
+                    p["last_refreshed_at"] = p["last_refreshed_at"].isoformat()
+                else:
+                    p["last_refreshed_at"] = None
             return JSONResponse(content=portfolios)
     except HTTPException:
         raise
@@ -506,11 +511,14 @@ async def refresh_portfolio_data(portfolio_id: str):
                     SELECT COALESCE(SUM(current_value), 0)
                     FROM platform_shared.positions
                     WHERE portfolio_id = :pid AND status = 'ACTIVE'
-                ), updated_at = NOW()
+                ),
+                last_refreshed_at = NOW(),
+                updated_at = NOW()
                 WHERE id = :pid
             """), {"pid": portfolio_id})
             conn.commit()
 
+        import datetime as _dt
         return JSONResponse(content={
             "status": "ok",
             "symbols": ticker_list,
@@ -520,6 +528,7 @@ async def refresh_portfolio_data(portfolio_id: str):
             "scored": scored,
             "score_errors": [],
             "scoring": "background",
+            "refreshed_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         })
     except HTTPException:
         raise
@@ -556,6 +565,7 @@ def _ensure_freq_column(conn):
         "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS sector VARCHAR(100) DEFAULT NULL",
         "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS sector VARCHAR(100) DEFAULT NULL",
         "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS industry VARCHAR(150) DEFAULT NULL",
+        "ALTER TABLE platform_shared.portfolios ADD COLUMN IF NOT EXISTS last_refreshed_at TIMESTAMPTZ DEFAULT NULL",
     ]:
         try:
             conn.execute(text(ddl))

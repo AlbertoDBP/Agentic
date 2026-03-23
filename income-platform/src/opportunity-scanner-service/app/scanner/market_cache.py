@@ -150,7 +150,7 @@ async def _fetch_all_profiles(tickers: list[str]) -> dict[str, dict]:
 async def _fmp_key_metrics(symbol: str, client: httpx.AsyncClient) -> dict:
     """
     Fetch FMP /stable/ratios for one symbol.
-    Returns priceToEarningsRatio, dividendPayoutRatio (as fraction, e.g. 0.85).
+    Returns priceToEarningsRatio, priceToBookRatio, dividendPayoutRatio (fraction).
     Returns {} on any error.
     """
     try:
@@ -167,6 +167,29 @@ async def _fmp_key_metrics(symbol: str, client: httpx.AsyncClient) -> dict:
         return data[0]
     except Exception as exc:
         logger.debug("FMP ratios %s failed: %s", symbol, exc)
+        return {}
+
+
+async def _fmp_etf_info(symbol: str, client: httpx.AsyncClient) -> dict:
+    """
+    Fetch FMP /stable/etf-info for ETFs and CEFs.
+    Returns nav (per share NAV), expenseRatio, assetsUnderManagement, category.
+    Returns {} on any error or non-ETF symbol.
+    """
+    try:
+        resp = await client.get(
+            f"{settings.fmp_base_url}/etf-info",
+            params={"symbol": symbol, "apikey": settings.fmp_api_key},
+            timeout=settings.fmp_request_timeout,
+        )
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        if not isinstance(data, list) or not data:
+            return {}
+        return data[0]
+    except Exception as exc:
+        logger.debug("FMP etf-info %s failed: %s", symbol, exc)
         return {}
 
 
@@ -215,8 +238,9 @@ async def _fmp_dividend_calendar(symbol: str, client: httpx.AsyncClient) -> dict
 
 async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
     """
-    Fetch key-metrics + dividend calendar for all tickers concurrently.
-    Returns {symbol: {"pe_ratio": ..., "payout_ratio": ..., "ex_div_date": ..., "pay_date": ...}}
+    Fetch ratios + dividend calendar + ETF info for all tickers concurrently.
+    Returns {symbol: {pe_ratio, payout_ratio, price_to_book, ex_div_date, pay_date,
+                      div_frequency, div_cagr_5y, nav_value, nav_discount_pct}}
     """
     sem = asyncio.Semaphore(settings.fmp_concurrency)
     result: dict[str, dict] = {}
@@ -224,21 +248,25 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
     async def _one(sym: str):
         async with sem:
             async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
-                km, div = await asyncio.gather(
+                km, div, etf = await asyncio.gather(
                     _fmp_key_metrics(sym, client),
                     _fmp_dividend_calendar(sym, client),
+                    _fmp_etf_info(sym, client),
                 )
                 merged: dict = {}
                 if km:
                     merged["pe_ratio"] = _safe_float(km.get("priceToEarningsRatio"))
                     raw_payout = _safe_float(km.get("dividendPayoutRatio"))
-                    # FMP returns payout as fraction (0.85) — convert to % for storage
                     merged["payout_ratio"] = round(raw_payout * 100, 2) if raw_payout is not None else None
+                    merged["price_to_book"] = _safe_float(km.get("priceToBookRatio"))
                 if div:
                     merged["ex_div_date"] = div.get("ex_div_date")
                     merged["pay_date"] = div.get("pay_date")
                     merged["div_frequency"] = div.get("div_frequency")
                     merged["div_cagr_5y"] = div.get("div_cagr_5y")
+                if etf:
+                    nav = _safe_float(etf.get("nav"))
+                    merged["nav_value"] = nav
                 if merged:
                     result[sym.upper()] = merged
 
@@ -353,23 +381,31 @@ async def fetch_and_upsert(
                 week52_low = _safe_float(parts[0])
                 week52_high = _safe_float(parts[1])
 
+        # NAV and nav_discount_pct: nav comes from etf-info; discount = (price-nav)/nav*100
+        nav_value = s.get("nav_value")
+        nav_discount_pct = None
+        if nav_value and price_val and nav_value > 0:
+            nav_discount_pct = round((price_val - nav_value) / nav_value * 100, 4)
+
         try:
             db.execute(
                 text("""
                     INSERT INTO platform_shared.market_data_cache (
                         symbol, price, price_change_pct, volume_avg_10d,
-                        market_cap_m, pe_ratio, beta,
+                        market_cap_m, pe_ratio, price_to_book, beta,
                         week52_high, week52_low,
                         dividend_yield, payout_ratio, chowder_number,
                         ex_div_date, pay_date, div_frequency,
+                        nav_value, nav_discount_pct,
                         is_tracked, track_reason,
                         snapshot_date, fetched_at
                     ) VALUES (
                         :symbol, :price, :price_change_pct, :volume_avg_10d,
-                        :market_cap_m, :pe_ratio, :beta,
+                        :market_cap_m, :pe_ratio, :price_to_book, :beta,
                         :week52_high, :week52_low,
                         :dividend_yield, :payout_ratio, :chowder_number,
                         :ex_div_date, :pay_date, :div_frequency,
+                        :nav_value, :nav_discount_pct,
                         TRUE, :track_reason,
                         :snapshot_date, :fetched_at
                     )
@@ -379,6 +415,7 @@ async def fetch_and_upsert(
                         volume_avg_10d    = EXCLUDED.volume_avg_10d,
                         market_cap_m      = EXCLUDED.market_cap_m,
                         pe_ratio          = COALESCE(EXCLUDED.pe_ratio, platform_shared.market_data_cache.pe_ratio),
+                        price_to_book     = COALESCE(EXCLUDED.price_to_book, platform_shared.market_data_cache.price_to_book),
                         beta              = EXCLUDED.beta,
                         week52_high       = EXCLUDED.week52_high,
                         week52_low        = EXCLUDED.week52_low,
@@ -388,6 +425,8 @@ async def fetch_and_upsert(
                         ex_div_date       = COALESCE(EXCLUDED.ex_div_date, platform_shared.market_data_cache.ex_div_date),
                         pay_date          = COALESCE(EXCLUDED.pay_date, platform_shared.market_data_cache.pay_date),
                         div_frequency     = COALESCE(EXCLUDED.div_frequency, platform_shared.market_data_cache.div_frequency),
+                        nav_value         = COALESCE(EXCLUDED.nav_value, platform_shared.market_data_cache.nav_value),
+                        nav_discount_pct  = COALESCE(EXCLUDED.nav_discount_pct, platform_shared.market_data_cache.nav_discount_pct),
                         is_tracked        = TRUE,
                         track_reason      = EXCLUDED.track_reason,
                         snapshot_date     = EXCLUDED.snapshot_date,
@@ -403,6 +442,7 @@ async def fetch_and_upsert(
                         if p.get("marketCap") else None
                     ),
                     "pe_ratio": s.get("pe_ratio"),
+                    "price_to_book": s.get("price_to_book"),
                     "beta": _safe_float(p.get("beta")),
                     "week52_high": week52_high,
                     "week52_low": week52_low,
@@ -412,6 +452,8 @@ async def fetch_and_upsert(
                     "ex_div_date": s.get("ex_div_date"),
                     "pay_date": s.get("pay_date"),
                     "div_frequency": s.get("div_frequency"),
+                    "nav_value": nav_value,
+                    "nav_discount_pct": nav_discount_pct,
                     "track_reason": track_reason,
                     "snapshot_date": today,
                     "fetched_at": now,
@@ -448,11 +490,13 @@ async def fetch_and_upsert(
                 text("""
                     UPDATE platform_shared.securities
                     SET
-                        name     = COALESCE(name,     :name),
-                        sector   = COALESCE(sector,   :sector),
-                        industry = COALESCE(industry, :industry)
+                        name     = COALESCE(NULLIF(name, ''),     :name),
+                        sector   = COALESCE(NULLIF(sector, ''),   :sector),
+                        industry = COALESCE(NULLIF(industry, ''), :industry)
                     WHERE symbol = :symbol
-                      AND (name IS NULL OR sector IS NULL OR industry IS NULL)
+                      AND (name IS NULL OR name = ''
+                           OR sector IS NULL OR sector = ''
+                           OR industry IS NULL OR industry = '')
                 """),
                 {"symbol": orig_sym, "name": name, "sector": sector, "industry": industry},
             )

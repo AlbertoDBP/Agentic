@@ -11,6 +11,7 @@ export interface Portfolio {
   broker_secret_key?: string;
   sync_interval_hours?: number;
   last_synced?: string;
+  last_refreshed_at?: string | null;
 }
 
 export interface Position {
