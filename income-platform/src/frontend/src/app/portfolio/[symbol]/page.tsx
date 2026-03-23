@@ -1,7 +1,8 @@
 "use client";
 
-import { use, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { ArrowLeft, TrendingUp, DollarSign, Activity, Loader2, Pencil, Check, X } from "lucide-react";
 import { MetricCard } from "@/components/metric-card";
 import { ScorePill } from "@/components/score-pill";
@@ -99,8 +100,9 @@ const FACTOR_LABELS: Record<string, string> = {
   price_vs_support:     "Price vs Support",
 };
 
-export default function TickerDetailPage({ params }: { params: Promise<{ symbol: string }> }) {
-  const { symbol: rawSymbol } = use(params);
+export default function TickerDetailPage() {
+  const params = useParams();
+  const rawSymbol = params.symbol as string;
   const symbol = decodeURIComponent(rawSymbol);
 
   const [position, setPosition] = useState<Position | null>(null);
@@ -481,10 +483,10 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
                 <div key={label}>
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-muted-foreground">{label}</span>
-                    <span className="tabular-nums font-medium">{value.toFixed(1)}<span className="text-muted-foreground">/{max}</span></span>
+                    <span className="tabular-nums font-medium">{(value ?? 0).toFixed(1)}<span className="text-muted-foreground">/{max}</span></span>
                   </div>
                   <div className="h-1.5 w-full rounded-full bg-secondary">
-                    <div className="h-1.5 rounded-full transition-all" style={{ width: `${(value / max) * 100}%`, backgroundColor: color }} />
+                    <div className="h-1.5 rounded-full transition-all" style={{ width: `${((value ?? 0) / max) * 100}%`, backgroundColor: color }} />
                   </div>
                 </div>
               ))}

@@ -1,6 +1,7 @@
 "use client";
 
-import { use, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Loader2, BarChart2 } from "lucide-react";
 import { MetricCard } from "@/components/metric-card";
@@ -62,8 +63,9 @@ function RangeBar({ price, low, high }: { price: number; low: number; high: numb
   );
 }
 
-export default function AssetDetailPage({ params }: { params: Promise<{ symbol: string }> }) {
-  const { symbol: rawSymbol } = use(params);
+export default function AssetDetailPage() {
+  const params = useParams();
+  const rawSymbol = params.symbol as string;
   const symbol = decodeURIComponent(rawSymbol).toUpperCase();
 
   const [asset, setAsset] = useState<Asset | null>(null);
