@@ -207,6 +207,14 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
           {/* Area chart */}
           <div className="rounded-lg border border-border bg-card p-4">
             <h2 className="text-sm font-semibold mb-4">Monthly Income — {horizonMonths}-Month Projection ({portfolioName})</h2>
+            {(() => {
+              const allVals = result.monthly_series.flatMap(d => [d.p10, d.p50, d.p90]);
+              const yMin = Math.min(...allVals);
+              const yMax = Math.max(...allVals);
+              const yPad = Math.max((yMax - yMin) * 0.25, yMax * 0.04);
+              const domainMin = Math.max(0, Math.floor((yMin - yPad) / 50) * 50);
+              const domainMax = Math.ceil((yMax + yPad) / 50) * 50;
+              return (
             <ResponsiveContainer width="100%" height={260}>
               <AreaChart data={result.monthly_series} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
                 <defs>
@@ -225,10 +233,7 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
                   tickLine={false}
                   axisLine={false}
                   width={60}
-                  domain={[
-                    (dataMin: number) => Math.max(0, Math.floor(dataMin * 0.85 / 100) * 100),
-                    (dataMax: number) => Math.ceil(dataMax * 1.1 / 100) * 100,
-                  ]}
+                  domain={[domainMin, domainMax]}
                   tickFormatter={(v: number) => {
                     if (v >= 10000) return `$${(v / 1000).toFixed(0)}k`;
                     if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
@@ -245,6 +250,8 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
                 <Area type="monotone" dataKey="p10" stroke="#f87171" strokeWidth={1} strokeDasharray="3 3" fill="url(#p10g)" dot={false} />
               </AreaChart>
             </ResponsiveContainer>
+              );
+            })()}
           </div>
 
           {/* By position table */}
