@@ -483,6 +483,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - HOSTNAME=0.0.0.0
+      - ADMIN_PANEL_URL=http://admin-panel:8100
     ports:
       - "8200:8200"
     depends_on:
