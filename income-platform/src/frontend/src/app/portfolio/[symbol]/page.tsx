@@ -289,15 +289,10 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Position Details</h2>
           <dl className="space-y-2.5 text-sm">
-            {[
+            {([
               ["Shares", position.shares.toLocaleString()],
               ["Avg Cost/Share", formatCurrency(avgCostPerShare)],
               ["Current Price", formatCurrency(currentPrice)],
-              ["Daily Change", position.daily_change_pct != null
-                ? <span className={cn("tabular-nums", position.daily_change_pct >= 0 ? "text-income" : "text-loss")}>
-                    {position.daily_change_pct >= 0 ? "+" : ""}{position.daily_change_pct.toFixed(2)}%
-                  </span>
-                : "—"],
               ["Asset Type", position.asset_type],
               ["Sector", position.sector || "—"],
               ["Industry", position.industry || "—"],
@@ -307,12 +302,21 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
               ["Last Updated", position.price_updated_at
                 ? new Date(position.price_updated_at).toLocaleDateString()
                 : "—"],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="flex justify-between">
+            ] as [string, string][]).map(([label, value]) => (
+              <div key={label} className="flex justify-between">
                 <dt className="text-muted-foreground">{label}</dt>
                 <dd className="tabular-nums font-medium">{value}</dd>
               </div>
             ))}
+            {position.daily_change_pct != null && (
+              <div className="flex justify-between">
+                <dt className="text-muted-foreground">Daily Change</dt>
+                <dd className={cn("tabular-nums font-medium",
+                  position.daily_change_pct >= 0 ? "text-income" : "text-loss")}>
+                  {position.daily_change_pct >= 0 ? "+" : ""}{position.daily_change_pct.toFixed(2)}%
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
 
@@ -423,37 +427,57 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           <div className="rounded-lg border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-medium text-muted-foreground">Valuation Metrics</h2>
             <dl className="space-y-2.5 text-sm">
-              {[
-                ["Market Cap", position.market_cap != null
-                  ? position.market_cap >= 1000
-                    ? `$${(position.market_cap / 1000).toFixed(1)}B`
-                    : `$${position.market_cap.toFixed(0)}M`
-                  : null],
-                ["P/E Ratio", position.pe_ratio != null ? position.pe_ratio.toFixed(1) : null],
-                ["EPS", position.eps != null ? formatCurrency(position.eps) : null],
-                ["Payout Ratio", position.payout_ratio != null
-                  ? <span className={cn("tabular-nums",
-                      position.payout_ratio > 100 ? "text-loss" : position.payout_ratio > 90 ? "text-warning" : "")}>
-                      {position.payout_ratio.toFixed(1)}%
-                    </span>
-                  : null],
-                ["5Y Div Growth", position.dividend_growth_5y != null
-                  ? <span className={cn("tabular-nums", position.dividend_growth_5y >= 0 ? "text-income" : "text-loss")}>
-                      {position.dividend_growth_5y >= 0 ? "+" : ""}{position.dividend_growth_5y.toFixed(1)}%
-                    </span>
-                  : null],
-                ["Beta", position.beta != null ? position.beta.toFixed(2) : null],
-                ["Avg Volume", position.avg_volume != null
-                  ? position.avg_volume >= 1_000_000
-                    ? `${(position.avg_volume / 1_000_000).toFixed(1)}M`
-                    : `${(position.avg_volume / 1_000).toFixed(0)}K`
-                  : null],
-              ].filter(([, v]) => v != null).map(([label, value]) => (
-                <div key={String(label)} className="flex justify-between">
-                  <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="tabular-nums font-medium">{value}</dd>
+              {position.market_cap != null && (
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Market Cap</dt>
+                  <dd className="tabular-nums font-medium">
+                    {position.market_cap >= 1000 ? `$${(position.market_cap / 1000).toFixed(1)}B` : `$${position.market_cap.toFixed(0)}M`}
+                  </dd>
                 </div>
-              ))}
+              )}
+              {position.pe_ratio != null && (
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">P/E Ratio</dt>
+                  <dd className="tabular-nums font-medium">{position.pe_ratio.toFixed(1)}</dd>
+                </div>
+              )}
+              {position.eps != null && (
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">EPS</dt>
+                  <dd className="tabular-nums font-medium">{formatCurrency(position.eps)}</dd>
+                </div>
+              )}
+              {position.payout_ratio != null && (
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Payout Ratio</dt>
+                  <dd className={cn("tabular-nums font-medium",
+                    position.payout_ratio > 100 ? "text-loss" : position.payout_ratio > 90 ? "text-warning" : "")}>
+                    {position.payout_ratio.toFixed(1)}%
+                  </dd>
+                </div>
+              )}
+              {position.dividend_growth_5y != null && (
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">5Y Div Growth</dt>
+                  <dd className={cn("tabular-nums font-medium", position.dividend_growth_5y >= 0 ? "text-income" : "text-loss")}>
+                    {position.dividend_growth_5y >= 0 ? "+" : ""}{position.dividend_growth_5y.toFixed(1)}%
+                  </dd>
+                </div>
+              )}
+              {position.beta != null && (
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Beta</dt>
+                  <dd className="tabular-nums font-medium">{position.beta.toFixed(2)}</dd>
+                </div>
+              )}
+              {position.avg_volume != null && (
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Avg Volume</dt>
+                  <dd className="tabular-nums font-medium">
+                    {position.avg_volume >= 1_000_000 ? `${(position.avg_volume / 1_000_000).toFixed(1)}M` : `${(position.avg_volume / 1_000).toFixed(0)}K`}
+                  </dd>
+                </div>
+              )}
             </dl>
           </div>
 
