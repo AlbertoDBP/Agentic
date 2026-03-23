@@ -6,8 +6,10 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, TrendingUp, DollarSign, Activity, Loader2, Pencil, Check, X } from "lucide-react";
 import { MetricCard } from "@/components/metric-card";
 import { ScorePill } from "@/components/score-pill";
+import { HelpTooltip } from "@/components/help-tooltip";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import { ASSET_CLASS_COLORS, API_BASE_URL } from "@/lib/config";
+import { SCORE_COMPONENT_HELP, FACTOR_HELP, PENALTY_HELP } from "@/lib/help-content";
 
 const ASSET_TYPES = ["Common Stock", "BDC", "CEF", "MLP", "ETF", "Preferred", "Bond"];
 const FREQUENCIES = ["Monthly", "Quarterly", "Semi-Annual", "Annual"];
@@ -476,13 +478,16 @@ export default function TickerDetailPage() {
           {position.score > 0 ? (
             <div className="space-y-2.5">
               {[
-                { label: "Valuation/Yield", value: position.valuation_yield_score, max: 40, color: "#3b82f6" },
+                { label: "Valuation & Yield", value: position.valuation_yield_score, max: 40, color: "#3b82f6" },
                 { label: "Financial Durability", value: position.financial_durability_score, max: 40, color: "#10b981" },
                 { label: "Technical Entry", value: position.technical_entry_score, max: 20, color: "#a78bfa" },
               ].map(({ label, value, max, color }) => (
                 <div key={label}>
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-muted-foreground">{label}</span>
+                    <span className="inline-flex items-center text-muted-foreground">
+                      {label}
+                      <HelpTooltip text={SCORE_COMPONENT_HELP[label] ?? ""} side="right" />
+                    </span>
                     <span className="tabular-nums font-medium">{(value ?? 0).toFixed(1)}<span className="text-muted-foreground">/{max}</span></span>
                   </div>
                   <div className="h-1.5 w-full rounded-full bg-secondary">
@@ -676,7 +681,10 @@ export default function TickerDetailPage() {
             ].map(({ label, value, max, color }) => (
               <div key={label} className="space-y-1.5">
                 <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">{label}</span>
+                  <span className="inline-flex items-center text-muted-foreground">
+                    {label}
+                    <HelpTooltip text={SCORE_COMPONENT_HELP[label] ?? ""} side="top" />
+                  </span>
                   <span className="tabular-nums font-semibold">{(value ?? 0).toFixed(1)}<span className="text-muted-foreground font-normal">/{max}</span></span>
                 </div>
                 <div className="h-2 w-full rounded-full bg-secondary">
@@ -711,7 +719,12 @@ export default function TickerDetailPage() {
                     const label = FACTOR_LABELS[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
                     return (
                       <tr key={key} className="border-b border-border/40 hover:bg-secondary/10">
-                        <td className="px-4 py-2.5 text-xs font-medium">{label}</td>
+                        <td className="px-4 py-2.5 text-xs font-medium">
+                          <span className="inline-flex items-center gap-0.5">
+                            {label}
+                            {FACTOR_HELP[key] && <HelpTooltip text={FACTOR_HELP[key]} side="right" />}
+                          </span>
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
                           {typeof d.value === "number"
                             ? (Math.abs(d.value) > 1000 ? formatCurrency(d.value) : d.value.toFixed(2))
@@ -755,7 +768,10 @@ export default function TickerDetailPage() {
                 <div className="rounded-md border border-red-500/20 bg-red-500/5 p-3">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-xs font-medium text-red-400">NAV Erosion Penalty</p>
+                      <p className="inline-flex items-center text-xs font-medium text-red-400">
+                        NAV Erosion Penalty
+                        <HelpTooltip text={PENALTY_HELP.nav_erosion} side="right" />
+                      </p>
                       {position.nav_erosion_details && (
                         <p className="text-[11px] text-muted-foreground mt-1">
                           {position.nav_erosion_details.risk_classification
@@ -781,7 +797,10 @@ export default function TickerDetailPage() {
                 <div className="rounded-md border border-yellow-500/20 bg-yellow-500/5 p-3">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-xs font-medium text-yellow-400">Technical Signal Penalty</p>
+                      <p className="inline-flex items-center text-xs font-medium text-yellow-400">
+                        Technical Signal Penalty
+                        <HelpTooltip text={PENALTY_HELP.signal_penalty} side="right" />
+                      </p>
                       <p className="text-[11px] text-muted-foreground mt-1">
                         Applied when price is below key moving averages or RSI signals weakness
                       </p>

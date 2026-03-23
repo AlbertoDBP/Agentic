@@ -19,6 +19,8 @@ import { type MarketData } from "@/lib/mock-portfolio-data";
 import { VulnerabilityContent } from "@/app/vulnerability/page";
 import { StressTestContent } from "@/app/stress-test/page";
 import { SimulationContent } from "@/app/income-simulation/page";
+import { ColHeader } from "@/components/help-tooltip";
+import { HOLDINGS_HELP, HEALTH_HELP, MARKET_HELP } from "@/lib/help-content";
 
 
 type PortfolioTab = "summary" | "positions" | "health" | "market" | "vulnerability" | "stress-test" | "simulation";
@@ -56,29 +58,29 @@ const positionColumns: ColumnDef<Position>[] = [
   { accessorKey: "name", header: "Name" },
   {
     accessorKey: "asset_type",
-    header: "Type",
+    header: () => <ColHeader label="Type" helpKey="asset_type" helpMap={HOLDINGS_HELP} />,
     cell: ({ getValue }) => (
       <span className="rounded bg-secondary px-1.5 py-0.5 text-[11px] font-medium">{getValue<string>()}</span>
     ),
   },
   {
     accessorKey: "shares",
-    header: "Shares",
+    header: () => <ColHeader label="Shares" helpKey="shares" helpMap={HOLDINGS_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums">{getValue<number>().toLocaleString()}</span>,
   },
   {
     accessorKey: "cost_basis",
-    header: "Cost Basis",
+    header: () => <ColHeader label="Cost Basis" helpKey="cost_basis" helpMap={HOLDINGS_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums">{formatCurrency(getValue<number>())}</span>,
   },
   {
     accessorKey: "current_value",
-    header: "Value",
+    header: () => <ColHeader label="Value" helpKey="current_value" helpMap={HOLDINGS_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums">{formatCurrency(getValue<number>())}</span>,
   },
   {
     id: "gain_loss",
-    header: "Gain/Loss",
+    header: () => <ColHeader label="Gain/Loss" helpKey="gain_loss" helpMap={HOLDINGS_HELP} />,
     accessorFn: (row) => row.current_value - row.cost_basis,
     cell: ({ row }) => {
       const gain = row.original.current_value - row.original.cost_basis;
@@ -97,17 +99,17 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "annual_income",
-    header: "Income",
+    header: () => <ColHeader label="Income" helpKey="annual_income" helpMap={HOLDINGS_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums text-income">{formatCurrency(getValue<number>())}</span>,
   },
   {
     accessorKey: "yield_on_cost",
-    header: "YoC %",
+    header: () => <ColHeader label="YoC %" helpKey="yield_on_cost" helpMap={HOLDINGS_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums">{formatPercent(getValue<number>())}</span>,
   },
   {
     id: "weight",
-    header: "Weight",
+    header: () => <ColHeader label="Weight" helpKey="weight" helpMap={HOLDINGS_HELP} />,
     accessorFn: (row) => row.current_value,
     cell: ({ row, table }) => {
       const total = table.getRowModel().rows.reduce((s, r) => s + r.original.current_value, 0);
@@ -117,7 +119,7 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "score",
-    header: "Score",
+    header: () => <ColHeader label="Score" helpKey="score" helpMap={HOLDINGS_HELP} />,
     cell: ({ getValue }) => {
       const v = getValue<number | undefined>();
       return v !== undefined ? <ScorePill score={v} /> : <span className="text-muted-foreground">—</span>;
@@ -125,18 +127,18 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "alert_count",
-    header: "Alerts",
+    header: () => <ColHeader label="Alerts" helpKey="alert_count" helpMap={HOLDINGS_HELP} />,
     enableSorting: false,
     cell: ({ getValue }) => {
       const c = getValue<number>();
       return c > 0 ? <AlertBadge severity="HIGH" count={c} /> : <span className="text-muted-foreground">—</span>;
     },
   },
-  { accessorKey: "sector", header: "Sector" },
-  { accessorKey: "industry", header: "Industry" },
+  { accessorKey: "sector", header: () => <ColHeader label="Sector" helpKey="sector" helpMap={HOLDINGS_HELP} /> },
+  { accessorKey: "industry", header: () => <ColHeader label="Industry" helpKey="industry" helpMap={HOLDINGS_HELP} /> },
   {
     accessorKey: "dividend_frequency",
-    header: "Freq",
+    header: () => <ColHeader label="Freq" helpKey="dividend_frequency" helpMap={HOLDINGS_HELP} />,
     cell: ({ getValue }) => {
       const v = getValue<string>();
       if (!v) return <span className="text-muted-foreground">—</span>;
@@ -146,7 +148,7 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "current_yield",
-    header: "Curr Yield",
+    header: () => <ColHeader label="Curr Yield" helpKey="current_yield" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: false },
     cell: ({ getValue }) => {
       const v = getValue<number | undefined>();
@@ -155,7 +157,7 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "market_price",
-    header: "Mkt Price",
+    header: () => <ColHeader label="Mkt Price" helpKey="market_price" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | undefined>();
@@ -164,18 +166,18 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "avg_cost",
-    header: "Avg Cost",
+    header: () => <ColHeader label="Avg Cost" helpKey="avg_cost" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | undefined>();
       return v !== undefined ? <span className="tabular-nums">{formatCurrency(v)}</span> : <span className="text-muted-foreground">—</span>;
     },
   },
-  { accessorKey: "ex_div_date", header: "Ex-Date" },
-  { accessorKey: "pay_date", header: "Pay Date" },
+  { accessorKey: "ex_div_date", header: () => <ColHeader label="Ex-Date" helpKey="ex_div_date" helpMap={HOLDINGS_HELP} /> },
+  { accessorKey: "pay_date", header: () => <ColHeader label="Pay Date" helpKey="pay_date" helpMap={HOLDINGS_HELP} /> },
   {
     accessorKey: "dividend_growth_5y",
-    header: "5Y Div Growth",
+    header: () => <ColHeader label="5Y Div Growth" helpKey="dividend_growth_5y" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | undefined | null>();
@@ -185,7 +187,7 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "payout_ratio",
-    header: "Payout %",
+    header: () => <ColHeader label="Payout %" helpKey="payout_ratio" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | undefined | null>();
@@ -195,7 +197,7 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "beta",
-    header: "Beta",
+    header: () => <ColHeader label="Beta" helpKey="beta" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | null | undefined>();
@@ -204,7 +206,7 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "chowder_number",
-    header: "Chowder",
+    header: () => <ColHeader label="Chowder" helpKey="chowder_number" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | null | undefined>();
@@ -214,7 +216,7 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "net_annual_income",
-    header: "Net Income",
+    header: () => <ColHeader label="Net Income" helpKey="net_annual_income" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | null | undefined>();
@@ -224,7 +226,7 @@ const positionColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "dca_stage",
-    header: "DCA",
+    header: () => <ColHeader label="DCA" helpKey="dca_stage" helpMap={HOLDINGS_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | null | undefined>();
@@ -248,7 +250,7 @@ const healthColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "score",
-    header: "Score",
+    header: () => <ColHeader label="Score" helpKey="score" helpMap={HEALTH_HELP} />,
     cell: ({ getValue }) => {
       const v = getValue<number | undefined>();
       return v !== undefined ? <ScorePill score={v} /> : <span className="text-muted-foreground">—</span>;
@@ -256,7 +258,7 @@ const healthColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "alert_count",
-    header: "Alerts",
+    header: () => <ColHeader label="Alerts" helpKey="alert_count" helpMap={HEALTH_HELP} />,
     cell: ({ getValue }) => {
       const c = getValue<number>();
       if (c > 0) return <AlertBadge severity="HIGH" count={c} />;
@@ -265,7 +267,7 @@ const healthColumns: ColumnDef<Position>[] = [
   },
   {
     id: "gain_pct",
-    header: "Gain %",
+    header: () => <ColHeader label="Gain %" helpKey="gain_pct" helpMap={HEALTH_HELP} />,
     accessorFn: (row) => row.cost_basis > 0 ? ((row.current_value - row.cost_basis) / row.cost_basis) * 100 : 0,
     cell: ({ row }) => {
       const pct = row.original.cost_basis > 0 ? ((row.original.current_value - row.original.cost_basis) / row.original.cost_basis) * 100 : 0;
@@ -274,17 +276,17 @@ const healthColumns: ColumnDef<Position>[] = [
   },
   {
     accessorKey: "yield_on_cost",
-    header: "YoC %",
+    header: () => <ColHeader label="YoC %" helpKey="yield_on_cost" helpMap={HEALTH_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums">{formatPercent(getValue<number>())}</span>,
   },
   {
     accessorKey: "annual_income",
-    header: "Income",
+    header: () => <ColHeader label="Income" helpKey="annual_income" helpMap={HEALTH_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums text-income">{formatCurrency(getValue<number>())}</span>,
   },
   {
     id: "weight",
-    header: "Weight",
+    header: () => <ColHeader label="Weight" helpKey="weight" helpMap={HEALTH_HELP} />,
     accessorFn: (row) => row.current_value,
     cell: ({ row, table }) => {
       const total = table.getRowModel().rows.reduce((s, r) => s + r.original.current_value, 0);
@@ -293,8 +295,8 @@ const healthColumns: ColumnDef<Position>[] = [
       return <span className={cn("tabular-nums text-xs", isOver && "text-warning font-medium")}>{pct.toFixed(1)}%{isOver ? " !" : ""}</span>;
     },
   },
-  { accessorKey: "sector", header: "Sector" },
-  { accessorKey: "dividend_frequency", header: "Frequency" },
+  { accessorKey: "sector", header: () => <ColHeader label="Sector" helpKey="sector" helpMap={HEALTH_HELP} /> },
+  { accessorKey: "dividend_frequency", header: () => <ColHeader label="Frequency" helpKey="dividend_frequency" helpMap={HEALTH_HELP} /> },
 ];
 
 
@@ -307,12 +309,12 @@ const marketColumns: ColumnDef<MarketData>[] = [
   { accessorKey: "name", header: "Name" },
   {
     accessorKey: "price",
-    header: "Price",
+    header: () => <ColHeader label="Price" helpKey="price" helpMap={MARKET_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums font-medium">{formatCurrency(getValue<number>())}</span>,
   },
   {
     accessorKey: "change",
-    header: "Change",
+    header: () => <ColHeader label="Change" helpKey="change" helpMap={MARKET_HELP} />,
     cell: ({ row }) => (
       <div>
         <span className={cn("tabular-nums", row.original.change >= 0 ? "text-income" : "text-loss")}>
@@ -324,10 +326,10 @@ const marketColumns: ColumnDef<MarketData>[] = [
       </div>
     ),
   },
-  { accessorKey: "volume", header: "Volume" },
+  { accessorKey: "volume", header: () => <ColHeader label="Volume" helpKey="volume" helpMap={MARKET_HELP} /> },
   {
     id: "day_range",
-    header: "Day Range",
+    header: () => <ColHeader label="Day Range" helpKey="day_range" helpMap={MARKET_HELP} />,
     cell: ({ row }) => {
       const { day_low, day_high } = row.original;
       if (day_low == null || day_high == null) return <span className="text-muted-foreground">—</span>;
@@ -336,7 +338,7 @@ const marketColumns: ColumnDef<MarketData>[] = [
   },
   {
     id: "week52_range",
-    header: "52W Range",
+    header: () => <ColHeader label="52W Range" helpKey="week52_range" helpMap={MARKET_HELP} />,
     cell: ({ row }) => {
       const { week52_low, week52_high, price } = row.original;
       if (week52_low == null || week52_high == null) return <span className="text-muted-foreground">—</span>;
@@ -353,10 +355,10 @@ const marketColumns: ColumnDef<MarketData>[] = [
       );
     },
   },
-  { accessorKey: "market_cap", header: "Mkt Cap" },
+  { accessorKey: "market_cap", header: () => <ColHeader label="Mkt Cap" helpKey="market_cap" helpMap={MARKET_HELP} /> },
   {
     accessorKey: "pe_ratio",
-    header: "P/E",
+    header: () => <ColHeader label="P/E" helpKey="pe_ratio" helpMap={MARKET_HELP} />,
     cell: ({ getValue }) => {
       const v = getValue<number | null>();
       return v ? <span className="tabular-nums">{v.toFixed(1)}</span> : <span className="text-muted-foreground">—</span>;
@@ -364,7 +366,7 @@ const marketColumns: ColumnDef<MarketData>[] = [
   },
   {
     accessorKey: "eps",
-    header: "EPS",
+    header: () => <ColHeader label="EPS" helpKey="eps" helpMap={MARKET_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | null>();
@@ -374,12 +376,12 @@ const marketColumns: ColumnDef<MarketData>[] = [
   },
   {
     accessorKey: "dividend_yield",
-    header: "Div Yield",
+    header: () => <ColHeader label="Div Yield" helpKey="dividend_yield" helpMap={MARKET_HELP} />,
     cell: ({ getValue }) => <span className="tabular-nums text-income">{formatPercent(getValue<number>())}</span>,
   },
   {
     accessorKey: "payout_ratio",
-    header: "Payout %",
+    header: () => <ColHeader label="Payout %" helpKey="payout_ratio" helpMap={MARKET_HELP} />,
     cell: ({ getValue }) => {
       const v = getValue<number | null>();
       if (v == null) return <span className="text-muted-foreground">—</span>;
@@ -388,7 +390,7 @@ const marketColumns: ColumnDef<MarketData>[] = [
   },
   {
     accessorKey: "dividend_growth_5y",
-    header: "5Y Div Growth",
+    header: () => <ColHeader label="5Y Div Growth" helpKey="dividend_growth_5y" helpMap={MARKET_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | null>();
@@ -398,7 +400,7 @@ const marketColumns: ColumnDef<MarketData>[] = [
   },
   {
     id: "nav_pd",
-    header: "NAV / Prem-Disc",
+    header: () => <ColHeader label="NAV / Prem-Disc" helpKey="nav_pd" helpMap={MARKET_HELP} />,
     meta: { defaultHidden: false },
     cell: ({ row }) => {
       const nav = row.original.nav;
@@ -418,7 +420,7 @@ const marketColumns: ColumnDef<MarketData>[] = [
   },
   {
     accessorKey: "beta",
-    header: "Beta",
+    header: () => <ColHeader label="Beta" helpKey="beta" helpMap={MARKET_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => {
       const v = getValue<number | null>();
@@ -428,11 +430,11 @@ const marketColumns: ColumnDef<MarketData>[] = [
   },
   {
     accessorKey: "avg_volume",
-    header: "Avg Vol",
+    header: () => <ColHeader label="Avg Vol" helpKey="avg_volume" helpMap={MARKET_HELP} />,
     meta: { defaultHidden: true },
     cell: ({ getValue }) => <span className="tabular-nums text-muted-foreground text-xs">{getValue<string>()}</span>,
   },
-  { accessorKey: "ex_date", header: "Next Ex-Date" },
+  { accessorKey: "ex_date", header: () => <ColHeader label="Next Ex-Date" helpKey="ex_date" helpMap={MARKET_HELP} /> },
   {
     accessorKey: "last_updated",
     header: "Updated",
