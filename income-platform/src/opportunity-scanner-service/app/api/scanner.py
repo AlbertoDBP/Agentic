@@ -4,6 +4,7 @@ API Routes: POST /scan, GET /scan/{scan_id}, GET /universe
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, List, Optional
 from uuid import UUID
@@ -14,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.models import ScanResult
 from app.scanner.engine import run_scan
 from app.scanner.market_cache import apply_market_filters, fetch_and_upsert, get_stale_tickers
@@ -111,10 +112,25 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
             detail=f"Too many tickers. Max {settings.max_tickers_per_scan} per scan.",
         )
 
-    # ── Ensure market cache is fresh ─────────────────────────────────────
+    # ── Ensure market cache is fresh (non-blocking background refresh) ───
+    # We fire the refresh as a background task so the scan is never gated on
+    # the ~38 s cold-start cost of fetching 9 FMP endpoints × N tickers.
+    # The scan proceeds immediately with whatever is already in cache; the
+    # updated rows will be available for the next scan or filter re-run.
     _fresh, stale = get_stale_tickers(tickers, db)
     if stale:
-        await fetch_and_upsert(stale, db, track_reason="scan")
+        logger.info("Market cache stale for %d tickers — refreshing in background", len(stale))
+
+        async def _bg_refresh(syms: list[str]) -> None:
+            bg_db = SessionLocal()
+            try:
+                await fetch_and_upsert(syms, bg_db, track_reason="scan-bg")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Background market cache refresh failed: %s", exc)
+            finally:
+                bg_db.close()
+
+        asyncio.create_task(_bg_refresh(list(stale)))
 
     # ── SQL pre-filter (Group 2) ─────────────────────────────────────────
     any_market_filter = any([
