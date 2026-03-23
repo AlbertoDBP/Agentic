@@ -18,6 +18,7 @@ interface Position {
   name: string;
   asset_type: string;
   sector: string;
+  industry?: string;
   shares: number;
   cost_basis: number;
   current_value: number;
@@ -39,10 +40,27 @@ interface Position {
   dividend_frequency?: string;
   price_updated_at: string | null;
   updated_at: string | null;
+  // Market intelligence
+  daily_change_pct?: number | null;
+  week52_high?: number | null;
+  week52_low?: number | null;
+  market_cap?: number | null;
+  pe_ratio?: number | null;
+  eps?: number | null;
+  payout_ratio?: number | null;
+  beta?: number | null;
+  nav_value?: number | null;
+  nav_discount_pct?: number | null;
+  ex_div_date?: string | null;
+  pay_date?: string | null;
+  avg_volume?: number | null;
+  dividend_growth_5y?: number | null;
 }
 
 export default function TickerDetailPage({ params }: { params: Promise<{ symbol: string }> }) {
-  const { symbol } = use(params);
+  // params.symbol may still be URL-encoded (e.g. "BRK%2FB") in some Next.js versions
+  const { symbol: rawSymbol } = use(params);
+  const symbol = decodeURIComponent(rawSymbol);
 
   const [position, setPosition] = useState<Position | null>(null);
   const [loading, setLoading] = useState(true);
@@ -275,14 +293,22 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
               ["Shares", position.shares.toLocaleString()],
               ["Avg Cost/Share", formatCurrency(avgCostPerShare)],
               ["Current Price", formatCurrency(currentPrice)],
+              ["Daily Change", position.daily_change_pct != null
+                ? <span className={cn("tabular-nums", position.daily_change_pct >= 0 ? "text-income" : "text-loss")}>
+                    {position.daily_change_pct >= 0 ? "+" : ""}{position.daily_change_pct.toFixed(2)}%
+                  </span>
+                : "—"],
               ["Asset Type", position.asset_type],
               ["Sector", position.sector || "—"],
+              ["Industry", position.industry || "—"],
               ["Frequency", position.dividend_frequency || "—"],
+              ["Ex-Div Date", position.ex_div_date ? new Date(position.ex_div_date).toLocaleDateString() : "—"],
+              ["Pay Date", position.pay_date ? new Date(position.pay_date).toLocaleDateString() : "—"],
               ["Last Updated", position.price_updated_at
                 ? new Date(position.price_updated_at).toLocaleDateString()
                 : "—"],
             ].map(([label, value]) => (
-              <div key={label} className="flex justify-between">
+              <div key={String(label)} className="flex justify-between">
                 <dt className="text-muted-foreground">{label}</dt>
                 <dd className="tabular-nums font-medium">{value}</dd>
               </div>
@@ -388,6 +414,106 @@ export default function TickerDetailPage({ params }: { params: Promise<{ symbol:
           )}
         </div>
       </div>
+
+      {/* Market Intelligence */}
+      {(position.pe_ratio != null || position.beta != null || position.nav_value != null ||
+        position.week52_high != null || position.market_cap != null) && (
+        <div className="grid grid-cols-2 gap-4">
+          {/* Valuation Metrics */}
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">Valuation Metrics</h2>
+            <dl className="space-y-2.5 text-sm">
+              {[
+                ["Market Cap", position.market_cap != null
+                  ? position.market_cap >= 1000
+                    ? `$${(position.market_cap / 1000).toFixed(1)}B`
+                    : `$${position.market_cap.toFixed(0)}M`
+                  : null],
+                ["P/E Ratio", position.pe_ratio != null ? position.pe_ratio.toFixed(1) : null],
+                ["EPS", position.eps != null ? formatCurrency(position.eps) : null],
+                ["Payout Ratio", position.payout_ratio != null
+                  ? <span className={cn("tabular-nums",
+                      position.payout_ratio > 100 ? "text-loss" : position.payout_ratio > 90 ? "text-warning" : "")}>
+                      {position.payout_ratio.toFixed(1)}%
+                    </span>
+                  : null],
+                ["5Y Div Growth", position.dividend_growth_5y != null
+                  ? <span className={cn("tabular-nums", position.dividend_growth_5y >= 0 ? "text-income" : "text-loss")}>
+                      {position.dividend_growth_5y >= 0 ? "+" : ""}{position.dividend_growth_5y.toFixed(1)}%
+                    </span>
+                  : null],
+                ["Beta", position.beta != null ? position.beta.toFixed(2) : null],
+                ["Avg Volume", position.avg_volume != null
+                  ? position.avg_volume >= 1_000_000
+                    ? `${(position.avg_volume / 1_000_000).toFixed(1)}M`
+                    : `${(position.avg_volume / 1_000).toFixed(0)}K`
+                  : null],
+              ].filter(([, v]) => v != null).map(([label, value]) => (
+                <div key={String(label)} className="flex justify-between">
+                  <dt className="text-muted-foreground">{label}</dt>
+                  <dd className="tabular-nums font-medium">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+
+          {/* Price Range & NAV */}
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">Price Range & NAV</h2>
+            <dl className="space-y-2.5 text-sm">
+              {/* 52-week range with visual bar */}
+              {position.week52_low != null && position.week52_high != null && (() => {
+                const range = position.week52_high! - position.week52_low!;
+                const pct = range > 0 ? ((currentPrice - position.week52_low!) / range) * 100 : 0;
+                return (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>52W Range</span>
+                      <span className="tabular-nums">
+                        {formatCurrency(position.week52_low!)} — {formatCurrency(position.week52_high!)}
+                      </span>
+                    </div>
+                    <div className="relative h-2 rounded-full bg-secondary">
+                      <div className="absolute h-2 rounded-full bg-primary/60 transition-all"
+                        style={{ width: `${Math.min(Math.max(pct, 2), 100)}%` }} />
+                      <div className="absolute h-3 w-0.5 -top-0.5 rounded-full bg-primary"
+                        style={{ left: `${Math.min(Math.max(pct, 1), 99)}%` }} />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-muted-foreground">
+                      <span>52W Low</span>
+                      <span className="font-medium text-foreground">{pct.toFixed(0)}% of range</span>
+                      <span>52W High</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {position.nav_value != null && (
+                <>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">NAV / Share</dt>
+                    <dd className="tabular-nums font-medium">{formatCurrency(position.nav_value!)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Prem / Disc</dt>
+                    <dd className={cn("tabular-nums font-medium",
+                      position.nav_discount_pct != null && position.nav_discount_pct > 0
+                        ? "text-warning" : "text-income")}>
+                      {position.nav_discount_pct != null
+                        ? `${position.nav_discount_pct >= 0 ? "+" : ""}${position.nav_discount_pct.toFixed(2)}%`
+                        : "—"}
+                    </dd>
+                  </div>
+                </>
+              )}
+
+              {position.nav_value == null && position.week52_low == null && (
+                <p className="text-xs text-muted-foreground">No range data available — refresh market data to populate.</p>
+              )}
+            </dl>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

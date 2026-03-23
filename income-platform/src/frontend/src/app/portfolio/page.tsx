@@ -970,7 +970,7 @@ function PortfolioContent() {
                   return (
                     <button
                       key={p.id}
-                      onClick={() => router.push(`/portfolio/${p.symbol}`)}
+                      onClick={() => router.push(`/portfolio/${encodeURIComponent(p.symbol)}`)}
                       className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-secondary/50 transition-colors"
                     >
                       <span className="w-4 text-[10px] text-muted-foreground tabular-nums">{i + 1}</span>

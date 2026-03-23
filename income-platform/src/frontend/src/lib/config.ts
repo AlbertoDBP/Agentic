@@ -12,11 +12,14 @@ export const POLLING = {
 } as const;
 
 export const ASSET_CLASS_COLORS: Record<string, string> = {
-  "Common Stock": "#3b82f6",
-  Preferred: "#8b5cf6",
-  BDC: "#06b6d4",
-  CEF: "#f59e0b",
-  MLP: "#10b981",
-  ETF: "#64748b",
-  Bond: "#a78bfa",
+  "Common Stock":     "#3b82f6",   // blue
+  Preferred:          "#ec4899",   // pink  (was purple — now clearly distinct)
+  BDC:                "#06b6d4",   // cyan
+  CEF:                "#f59e0b",   // amber
+  MLP:                "#10b981",   // emerald
+  ETF:                "#8b5cf6",   // violet
+  "Covered Call ETF": "#a78bfa",   // light purple
+  Bond:               "#f97316",   // orange  (was light-purple — clearly distinct now)
+  REIT:               "#84cc16",   // lime
+  "Mortgage REIT":    "#facc15",   // yellow
 };

@@ -602,6 +602,30 @@ def _row_to_position(pos: dict) -> dict:
 
     # Infer asset_type from symbol if Unknown
     pos["asset_type"] = _infer_asset_type(pos.get("symbol", ""), pos.get("asset_type", "Unknown"))
+
+    # Optional market intelligence fields — coerce to float or None
+    for k in ("daily_change_pct", "week52_high", "week52_low", "market_cap",
+              "pe_ratio", "payout_ratio", "beta", "chowder_number",
+              "nav_value", "nav_discount_pct"):
+        v = pos.get(k)
+        pos[k] = float(v) if v is not None else None
+    for k in ("ex_div_date", "pay_date"):
+        v = pos.get(k)
+        if v and hasattr(v, "isoformat"):
+            pos[k] = v.isoformat()
+        elif not v:
+            pos[k] = None
+    avg_vol = pos.get("avg_volume")
+    pos["avg_volume"] = int(avg_vol) if avg_vol is not None else None
+    # Derive dividend_growth_5y from chowder_number - dividend_yield
+    chowder = pos.get("chowder_number")
+    cy = pos.get("current_yield")
+    pos["dividend_growth_5y"] = round(float(chowder) - float(cy), 2) if chowder and cy else None
+    # EPS from price / PE
+    price = pos.get("market_price") or 0
+    pe = pos.get("pe_ratio")
+    pos["eps"] = round(price / pe, 2) if pe and pe != 0 and price else None
+
     return pos
 
 
@@ -873,7 +897,21 @@ def get_position_by_symbol(symbol: str):
                     COALESCE(sc.signal_penalty, 0)            AS signal_penalty,
                     COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
                     p.price_updated_at,
-                    p.updated_at
+                    p.updated_at,
+                    -- Market intelligence from cache
+                    m.price_change_pct           AS daily_change_pct,
+                    m.week52_high,
+                    m.week52_low,
+                    m.market_cap_m               AS market_cap,
+                    m.pe_ratio,
+                    m.payout_ratio,
+                    m.beta,
+                    m.chowder_number,
+                    m.nav_value,
+                    m.nav_discount_pct,
+                    m.ex_div_date,
+                    m.pay_date,
+                    m.volume_avg_10d             AS avg_volume
                 FROM platform_shared.positions p
                 LEFT JOIN platform_shared.securities s
                        ON s.symbol = p.symbol

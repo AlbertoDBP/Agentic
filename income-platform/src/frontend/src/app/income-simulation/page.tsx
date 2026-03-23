@@ -220,7 +220,21 @@ export function SimulationContent({ defaultPortfolioId }: { defaultPortfolioId?:
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(result.monthly_series.length / 6) - 1)} />
-                <YAxis tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(1)}k`} width={52} />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "#6b7280" }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={60}
+                  domain={[
+                    (dataMin: number) => Math.max(0, Math.floor(dataMin * 0.85 / 100) * 100),
+                    (dataMax: number) => Math.ceil(dataMax * 1.1 / 100) * 100,
+                  ]}
+                  tickFormatter={(v: number) => {
+                    if (v >= 10000) return `$${(v / 1000).toFixed(0)}k`;
+                    if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
+                    return `$${v.toFixed(0)}`;
+                  }}
+                />
                 <Tooltip
                   contentStyle={{ background: "#1a1a2e", border: "1px solid #2d2d44", borderRadius: 6, fontSize: 12 }}
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
