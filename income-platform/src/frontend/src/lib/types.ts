@@ -117,6 +117,7 @@ export interface Position {
   next_pay_date?: string;
   // Legacy/misc
   currency?: string;
+  date_added?: string;
 }
 
 // Standalone asset view (for /market page — asset-centric, no position info)
