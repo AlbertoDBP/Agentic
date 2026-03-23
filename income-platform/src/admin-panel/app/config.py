@@ -23,6 +23,10 @@ class Settings:
     broker_url: str = os.environ.get("BROKER_URL", "http://broker-service:8013")
     scheduler_url: str = os.environ.get("SCHEDULER_URL", "http://scheduler:8099")
 
+    # ── FMP ──
+    fmp_api_key: str = os.environ.get("FMP_API_KEY", "")
+    fmp_base_url: str = os.environ.get("FMP_BASE_URL", "https://financialmodelingprep.com/stable")
+
     # ── Timeouts ──
     http_timeout: int = int(os.environ.get("HTTP_TIMEOUT", "10"))
 

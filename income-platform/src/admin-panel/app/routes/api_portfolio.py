@@ -351,6 +351,53 @@ async def refresh_portfolio_data(portfolio_id: str):
             except Exception as ce:
                 logger.warning("Classification step failed: %s", ce)
 
+            # 2c. Fetch sector + industry from FMP company screener and persist to securities.
+            #     Runs for all classifiable symbols in batches of 100.
+            if settings.fmp_api_key:
+                try:
+                    screener_map: dict[str, dict] = {}
+                    batch_size = 100
+                    screener_syms = [t for t in ticker_list if "/" not in t and len(t) <= 8]
+                    for i in range(0, len(screener_syms), batch_size):
+                        batch = screener_syms[i: i + batch_size]
+                        try:
+                            r = await client.get(
+                                f"{settings.fmp_base_url}/company-screener",
+                                params={"symbol": ",".join(batch), "apikey": settings.fmp_api_key},
+                                timeout=30,
+                            )
+                            if r.status_code == 200:
+                                for item in r.json() or []:
+                                    sym = (item.get("symbol") or "").upper()
+                                    if sym:
+                                        screener_map[sym] = {
+                                            "sector":   item.get("sector"),
+                                            "industry": item.get("industry"),
+                                            "is_etf":   bool(item.get("isEtf", False)),
+                                            "is_fund":  bool(item.get("isFund", False)),
+                                        }
+                        except Exception as be:
+                            logger.warning("screener batch %d failed: %s", i, be)
+
+                    if screener_map:
+                        with _db().connect() as conn:
+                            for sym, info in screener_map.items():
+                                conn.execute(text("""
+                                    UPDATE platform_shared.securities
+                                    SET sector   = COALESCE(NULLIF(:sector, ''), sector),
+                                        industry = COALESCE(NULLIF(:industry, ''), industry),
+                                        updated_at = NOW()
+                                    WHERE symbol = :sym
+                                """), {
+                                    "sym":      sym,
+                                    "sector":   info.get("sector") or "",
+                                    "industry": info.get("industry") or "",
+                                })
+                            conn.commit()
+                        logger.info("Wrote sector/industry for %d symbols from FMP screener", len(screener_map))
+                except Exception as se:
+                    logger.warning("Sector/industry screener step failed: %s", se)
+
         # 3. Score symbols in background — fire-and-forget to avoid 4-min timeout on 70+ tickers.
         #    Scoring stores income_scores; does not affect portfolio total_value calculation.
         #    Pass asset_class from classification so agent-03 doesn't re-classify as UNKNOWN.
@@ -507,6 +554,8 @@ def _ensure_freq_column(conn):
         "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS dividend_frequency VARCHAR(30) DEFAULT NULL",
         "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS dividend_frequency VARCHAR(30) DEFAULT NULL",
         "ALTER TABLE platform_shared.positions ADD COLUMN IF NOT EXISTS sector VARCHAR(100) DEFAULT NULL",
+        "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS sector VARCHAR(100) DEFAULT NULL",
+        "ALTER TABLE platform_shared.securities ADD COLUMN IF NOT EXISTS industry VARCHAR(150) DEFAULT NULL",
     ]:
         try:
             conn.execute(text(ddl))
@@ -566,6 +615,7 @@ def get_positions(portfolio_id: str):
                     COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(s.asset_type, 'Unknown')   AS asset_type,
                     COALESCE(p.sector, s.sector, '')     AS sector,
+                    COALESCE(s.industry, '')             AS industry,
                     p.quantity                           AS shares,
                     COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0)
                                                          AS cost_basis,
@@ -785,6 +835,7 @@ def get_position_by_symbol(symbol: str):
                     COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(s.asset_type, 'Unknown')   AS asset_type,
                     COALESCE(p.sector, s.sector, '')     AS sector,
+                    COALESCE(s.industry, '')             AS industry,
                     p.quantity                           AS shares,
                     COALESCE(p.total_cost_basis, p.avg_cost_basis * p.quantity, 0)
                                                          AS cost_basis,
@@ -856,6 +907,7 @@ class PositionUpdate(BaseModel):
     current_price: Optional[float] = None
     asset_type: Optional[str] = None             # updates securities.asset_type
     sector: Optional[str] = None                 # updates securities.sector
+    industry: Optional[str] = None               # updates securities.industry
     dividend_frequency: Optional[str] = None     # stored in positions.dividend_frequency
 
 
@@ -910,16 +962,20 @@ def update_position(position_id: str, update: PositionUpdate):
                 "id": position_id,
             })
 
-            # Update asset_type, sector, and/or dividend_frequency in securities if provided
-            if update.asset_type is not None or update.sector is not None or update.dividend_frequency is not None:
+            # Update asset_type, sector, industry, and/or dividend_frequency in securities if provided
+            if any(v is not None for v in [update.asset_type, update.sector, update.industry, update.dividend_frequency]):
                 conn.execute(text("""
                     UPDATE platform_shared.securities
                     SET asset_type         = COALESCE(NULLIF(:asset_type, ''), asset_type),
                         sector             = COALESCE(:sector, sector),
+                        industry           = COALESCE(NULLIF(:industry, ''), industry),
                         dividend_frequency = COALESCE(:freq, dividend_frequency),
                         updated_at         = NOW()
                     WHERE symbol = :sym
-                """), {"asset_type": update.asset_type, "sector": update.sector, "freq": update.dividend_frequency, "sym": sym})
+                """), {
+                    "asset_type": update.asset_type, "sector": update.sector,
+                    "industry": update.industry, "freq": update.dividend_frequency, "sym": sym,
+                })
 
             # Refresh portfolio total
             conn.execute(text("""

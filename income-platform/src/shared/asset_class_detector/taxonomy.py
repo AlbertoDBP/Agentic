@@ -10,6 +10,7 @@ from typing import Optional, List, Dict
 class AssetClass(str, Enum):
     DIVIDEND_STOCK = "DIVIDEND_STOCK"
     COVERED_CALL_ETF = "COVERED_CALL_ETF"
+    CEF = "CEF"
     BOND = "BOND"
     EQUITY_REIT = "EQUITY_REIT"
     MORTGAGE_REIT = "MORTGAGE_REIT"
@@ -59,6 +60,17 @@ ASSET_CLASS_HIERARCHY: Dict[AssetClass, AssetClassInfo] = {
         tax_treatment="ordinary",
         valuation_method="yield + nav_trend",
         rate_sensitivity="low",
+        principal_at_risk=True,
+        nav_erosion_tracking=True,
+        preferred_account="IRA",
+    ),
+    AssetClass.CEF: AssetClassInfo(
+        asset_class=AssetClass.CEF,
+        parent_class=ParentClass.FUND,
+        income_type="fund_distribution",
+        tax_treatment="ordinary",
+        valuation_method="yield + nav_discount",
+        rate_sensitivity="medium",
         principal_at_risk=True,
         nav_erosion_tracking=True,
         preferred_account="IRA",

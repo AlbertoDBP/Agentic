@@ -368,17 +368,19 @@ class FMPClient(BaseDataProvider):
             if fcf_values:
                 free_cash_flow = sum(fcf_values) / len(fcf_values)
 
-        # --- market_cap and sector ---
+        # --- market_cap, sector, and industry ---
         # Stable profile field: "marketCap" (was "mktCap" in legacy v3).
         # Profile failure is non-fatal; log and continue.
         market_cap = None
         sector     = None
+        industry   = None
         if isinstance(profile_result, Exception):
             logger.warning(f"FMP /profile unavailable for {symbol}: {profile_result}")
         elif isinstance(profile_result, list) and profile_result:
             p = profile_result[0]
             market_cap = _safe_float(p.get("marketCap") or p.get("mktCap"))
             sector     = p.get("sector")
+            industry   = p.get("industry")
 
         out = {
             "pe_ratio":        pe_ratio,
@@ -389,6 +391,7 @@ class FMPClient(BaseDataProvider):
             "credit_rating":   None,   # available via /rating, not fetched here
             "market_cap":      market_cap,
             "sector":          sector,
+            "industry":        industry,
         }
         await self._cache_set(cache_key, out, _TTL_FUNDAMENTALS)
         return out
@@ -491,6 +494,57 @@ class FMPClient(BaseDataProvider):
         }
         await self._cache_set(cache_key, out, _TTL_FUNDAMENTALS)
         return out
+
+    async def get_company_screener(self, symbols: list[str]) -> list[dict]:
+        """Return sector, industry, isEtf, isFund, and type for a batch of symbols
+        using the /company-screener endpoint.
+
+        Args:
+            symbols: List of ticker symbols (up to 100 per call recommended).
+
+        Returns:
+            List of dicts with keys: symbol, sector, industry, is_etf, is_fund,
+            exchange, market_cap.  Missing symbols are omitted from results.
+        """
+        if not symbols:
+            return []
+
+        symbol_str = ",".join(s.upper() for s in symbols)
+        cache_key = f"fmp:screener:{symbol_str[:80]}"  # key capped for Redis
+
+        if self._cache:
+            try:
+                cached = await self._cache.get(cache_key)
+                if cached:
+                    return cached
+            except Exception as e:
+                logger.warning(f"Cache read error for screener: {e}")
+
+        try:
+            data = await self._get("/company-screener", params={"symbol": symbol_str})
+        except Exception as e:
+            logger.warning(f"FMP /company-screener failed: {e}")
+            return []
+
+        items = data if isinstance(data, list) else []
+        results = []
+        for item in items:
+            try:
+                results.append({
+                    "symbol":     (item.get("symbol") or "").upper(),
+                    "sector":     item.get("sector"),
+                    "industry":   item.get("industry"),
+                    "is_etf":     bool(item.get("isEtf", False)),
+                    "is_fund":    bool(item.get("isFund", False)),
+                    "exchange":   item.get("exchangeShortName"),
+                    "market_cap": _safe_float(item.get("marketCap")),
+                })
+            except Exception:
+                continue
+
+        logger.info(f"FMP screener returned {len(results)}/{len(symbols)} symbols")
+        await self._cache_set(cache_key, results, _TTL_FUNDAMENTALS)
+        return results
 
     # ------------------------------------------------------------------
     # Internal helpers

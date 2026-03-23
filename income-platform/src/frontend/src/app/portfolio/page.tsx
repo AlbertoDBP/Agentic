@@ -34,6 +34,7 @@ const TAB_LABELS: Record<PortfolioTab, string> = {
 };
 
 const ASSET_TYPES = [
+  "CEF",
   "COVERED_CALL_ETF",
   "BDC",
   "MORTGAGE_REIT",
@@ -565,6 +566,7 @@ function PortfolioContent() {
           yield_on_cost: yoc,
           asset_type: updated.asset_type ?? "",
           sector: updated.sector ?? "",
+          industry: updated.industry ?? "",
           dividend_frequency: updated.dividend_frequency ?? "",
         }),
       });
@@ -1175,7 +1177,7 @@ function PortfolioContent() {
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-6 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 <div className="space-y-0.5">
                   <p className="text-[10px] text-muted-foreground">Type</p>
                   <select value={editForm.asset_type || "Common Stock"} onChange={(e) => setEditForm({ ...editForm, asset_type: e.target.value })}
@@ -1198,9 +1200,16 @@ function PortfolioContent() {
                   <input type="number" step="0.01" value={editForm.annual_income} onChange={(e) => setEditForm({ ...editForm, annual_income: Number(e.target.value) })} placeholder="Annual Income"
                     className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring" />
                 </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-0.5">
                   <p className="text-[10px] text-muted-foreground">Sector</p>
                   <input value={editForm.sector || ""} onChange={(e) => setEditForm({ ...editForm, sector: e.target.value })} placeholder="Sector"
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-[10px] text-muted-foreground">Industry</p>
+                  <input value={editForm.industry || ""} onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })} placeholder="Industry"
                     className="w-full rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
                 </div>
                 <div className="space-y-0.5">
