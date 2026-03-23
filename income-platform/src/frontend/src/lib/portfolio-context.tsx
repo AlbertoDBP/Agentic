@@ -37,19 +37,8 @@ const PortfolioContext = createContext<PortfolioContextValue>({
 async function fetchPortfoliosFromAPI(): Promise<Portfolio[]> {
   const res = await fetch(`${API_BASE_URL}/api/portfolios`, { credentials: "include" });
   if (!res.ok) throw new Error(`API ${res.status}`);
-  const data: {
-    id: string; name: string; account_type: string; broker: string;
-    cash_balance: number; total_value: number; position_count: number;
-  }[] = await res.json();
-  return data.map((p) => ({
-    id: p.id,
-    name: p.name,
-    account_type: p.account_type,
-    broker: p.broker,
-    cash_balance: p.cash_balance,
-    total_value: p.total_value,
-    position_count: p.position_count,
-  }));
+  const data = await res.json() as Portfolio[];
+  return data;
 }
 
 export function PortfolioProvider({ children }: { children: ReactNode }) {
