@@ -12,6 +12,7 @@ import { PortfolioTab }   from "./tabs/portfolio-tab";
 import { MarketTab }      from "./tabs/market-tab";
 import { HealthTab }      from "./tabs/health-tab";
 import { SimulationContent } from "@/app/income-simulation/page";
+import { ProjectionContent } from "@/app/income-projection/page";
 
 type Tab = "portfolio" | "market" | "health" | "simulation" | "projection";
 const TABS: { key: Tab; label: string }[] = [
@@ -169,7 +170,7 @@ export default function PortfolioPage() {
       {activeTab === "market"     && <MarketTab portfolioId={id} />}
       {activeTab === "health"     && <HealthTab portfolioId={id} />}
       {activeTab === "simulation" && <SimulationContent defaultPortfolioId={id} />}
-      {activeTab === "projection" && <div className="p-4 text-muted-foreground text-sm">Income Projection coming soon</div>}
+      {activeTab === "projection" && <ProjectionContent defaultPortfolioId={id} />}
     </div>
   );
 }

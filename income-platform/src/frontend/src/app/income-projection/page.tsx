@@ -32,6 +32,11 @@ interface ProjectionRow {
   high: number;
 }
 
+/** Named export for embedding in the portfolio page Projection tab. */
+export function ProjectionContent({ defaultPortfolioId: _unused }: { defaultPortfolioId?: string }) {
+  return <ProjectionPage />;
+}
+
 export default function ProjectionPage() {
   const { portfolios, activePortfolio } = usePortfolio();
   const [selectedScope, setSelectedScope] = useState<string>("active");
