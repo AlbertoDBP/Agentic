@@ -12,9 +12,9 @@ interface PortfolioCardProps {
 
 export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
   return (
-    <div
-      className="bg-card border border-border rounded-xl flex-shrink-0 w-[300px] overflow-hidden cursor-pointer hover:border-border/80 transition-colors"
-      style={{ scrollSnapAlign: "start" }}
+    <Link
+      href={`/portfolios/${p.id}`}
+      className="bg-card border border-border rounded-xl flex-shrink-0 w-[300px] overflow-hidden snap-start hover:border-border/80 transition-colors"
     >
       {/* Header */}
       <div className="flex items-start justify-between px-3.5 pt-3 pb-2 border-b border-border/50">
@@ -40,13 +40,13 @@ export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
           { label: "Value",        value: formatCurrency(p.total_value) },
           { label: "Ann. Income",  value: formatCurrency(p.annual_income) },
           { label: "Yield",        value: p.naa_yield != null ? formatPercent(p.naa_yield) : "—" },
-          { label: "Total Return", value: "—" },
+          { label: "Total Return", value: "—" }, // total_return not yet in PortfolioListItem
           { label: "Positions",    value: p.holding_count },
           { label: "HHI",         value: p.hhi != null ? p.hhi.toFixed(3) : "—" },
         ].map((kpi, i) => (
           <div key={i} className="bg-card px-2.5 py-1.5">
             <div className="text-[0.55rem] font-bold uppercase text-muted-foreground">{kpi.label}</div>
-            <div className={cn("text-xs font-bold mt-0.5 text-foreground")}>
+            <div className="text-xs font-bold mt-0.5 text-foreground">
               {kpi.value}
             </div>
           </div>
@@ -67,22 +67,17 @@ export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
             <span className="bg-red-950 text-red-400 rounded px-1.5 py-0.5 font-bold">⚠ {p.unsafe_count} UNSAFE</span>
           )}
         </div>
-        <Link
-          href={`/portfolios/${p.id}`}
-          className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 font-medium"
-          onClick={(e) => e.stopPropagation()}
-        >
+        <span className="flex items-center gap-1 text-xs text-blue-400 font-medium">
           Open <ArrowRight className="h-3 w-3" />
-        </Link>
+        </span>
       </div>
-    </div>
+    </Link>
   );
 }
 
 export function AddPortfolioCard() {
   return (
-    <div className="flex-shrink-0 w-[300px] border-2 border-dashed border-border rounded-xl flex items-center justify-center min-h-[200px] text-muted-foreground text-sm"
-      style={{ scrollSnapAlign: "start" }}>
+    <div className="flex-shrink-0 w-[300px] border-2 border-dashed border-border rounded-xl flex items-center justify-center min-h-[200px] text-muted-foreground text-sm snap-start">
       <div className="text-center p-4">
         <div className="text-2xl mb-2">+</div>
         <div className="font-medium">Add Portfolio</div>

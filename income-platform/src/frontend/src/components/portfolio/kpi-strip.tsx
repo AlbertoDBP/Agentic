@@ -22,9 +22,9 @@ export function KpiStrip({ items, className }: KpiStripProps) {
       "grid-cols-2 sm:grid-cols-4 lg:grid-cols-8",
       className
     )}>
-      {items.map((item, i) => (
+      {items.map((item) => (
         <div
-          key={i}
+          key={item.label}
           className={cn(
             "bg-card border rounded-lg px-2.5 py-1.5",
             item.alert && "border-red-900/50 bg-red-950/30"

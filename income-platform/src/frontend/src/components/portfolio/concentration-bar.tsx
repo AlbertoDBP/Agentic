@@ -32,9 +32,9 @@ export function ConcentrationBar({ items, label, helpText, className }: Concentr
       )}
       {/* Stacked bar */}
       <div className="flex h-2.5 w-full rounded overflow-hidden gap-px">
-        {withColors.map((item, i) => (
+        {withColors.map((item) => (
           <div
-            key={i}
+            key={item.label}
             className={cn("h-full", item.colorClass)}
             style={{ width: `${item.pct}%` }}
             title={`${item.label}: ${item.pct}%`}
@@ -43,8 +43,8 @@ export function ConcentrationBar({ items, label, helpText, className }: Concentr
       </div>
       {/* Legend */}
       <div className="flex flex-wrap gap-x-3 gap-y-1">
-        {withColors.map((item, i) => (
-          <div key={i} className="flex items-center gap-1 text-[0.6rem] text-muted-foreground">
+        {withColors.map((item) => (
+          <div key={item.label} className="flex items-center gap-1 text-[0.6rem] text-muted-foreground">
             <div className={cn("w-2 h-2 rounded-sm flex-shrink-0", item.colorClass)} />
             {item.label} {item.pct.toFixed(0)}%
           </div>

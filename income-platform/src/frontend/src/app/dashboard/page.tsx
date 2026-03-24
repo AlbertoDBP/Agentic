@@ -29,13 +29,15 @@ export default function DashboardPage() {
   // Aggregate strip computations
   const totalAum    = portfolios?.reduce((s, p) => s + (p.total_value ?? 0), 0) ?? 0;
   const totalIncome = portfolios?.reduce((s, p) => s + (p.annual_income ?? 0), 0) ?? 0;
-  const unsafeTotal = portfolios?.reduce((s, p) => s + (p.unsafe_count ?? 0), 0) ?? 0;
+  const unsafeTotal = portfolios?.reduce((s, p) => s + p.unsafe_count, 0) ?? 0;
   const avgHhs = (() => {
     if (!portfolios?.length) return null;
-    const withHhs = portfolios.filter(p => p.agg_hhs != null && p.total_value);
+    const withHhs = (portfolios ?? []).filter((p): p is typeof p & { agg_hhs: number } =>
+      p.agg_hhs != null && p.total_value > 0
+    );
     if (!withHhs.length) return null;
     const totalVal = withHhs.reduce((s, p) => s + p.total_value, 0);
-    return withHhs.reduce((s, p) => s + (p.agg_hhs! * p.total_value / totalVal), 0);
+    return withHhs.reduce((s, p) => s + (p.agg_hhs * p.total_value / totalVal), 0);
   })();
 
   const kpis = [
@@ -72,7 +74,7 @@ export default function DashboardPage() {
         <div className="relative">
           <div
             ref={scrollRef}
-            className="flex gap-3 overflow-x-auto pb-2 scroll-snap-x mandatory"
+            className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory"
             style={{ scrollbarWidth: "thin" }}
           >
             {portfolios.map(p => <PortfolioCard key={p.id} portfolio={p} />)}
@@ -80,8 +82,8 @@ export default function DashboardPage() {
           </div>
           {canScroll && (
             <div className="flex gap-2 justify-end mt-2">
-              <button onClick={() => scroll("left")} className="p-1 rounded border border-border text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" /></button>
-              <button onClick={() => scroll("right")} className="p-1 rounded border border-border text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4" /></button>
+              <button aria-label="Scroll left" onClick={() => scroll("left")} className="p-1 rounded border border-border text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" /></button>
+              <button aria-label="Scroll right" onClick={() => scroll("right")} className="p-1 rounded border border-border text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4" /></button>
             </div>
           )}
           {portfolios.length === 0 && (
