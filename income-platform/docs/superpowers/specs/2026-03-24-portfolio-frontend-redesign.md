@@ -54,38 +54,43 @@ class ScoreResponse(BaseModel):
 
 ### 1.2 HHS computation logic
 
-Add `_compute_hhs()` helper in `scores.py`, called **after** signal penalty is applied and **before** DB persist. The helper receives the final `ScoreResult` and the `ScoringWeightProfile`.
+Add `_compute_hhs()` helper in `scores.py`, called **after** signal penalty is applied and **before** DB persist. The helper receives the final `ScoreResult` and the weight profile `dict` (as already used throughout `income_scorer.py`).
+
+`_compute_ceilings()` is the existing standalone function in `income_scorer.py` — import it in `scores.py`.
+
+The income and durability pillar scores are derived directly from the already-computed sub-totals (`valuation_yield_score`, `financial_durability_score`), normalized to 0–100 using the pillar budget from the weight profile. This avoids re-summing from `factor_details` and keeps `fcf_coverage` in the Income pillar (consistent with §1.3).
 
 ```python
-def _compute_hhs(result: ScoreResult, profile: ScoringWeightProfile, quality_gate_status: str) -> dict:
+# At top of scores.py — add to existing import:
+from .income_scorer import _compute_ceilings
+
+_HHS_UNSAFE_THRESHOLD = 20  # durability ≤ this → UNSAFE flag
+
+
+def _compute_hhs(result: ScoreResult, profile: dict, quality_gate_status: str) -> dict:
     if quality_gate_status != "PASS":
         return {
             "hhs_score": None, "income_pillar_score": None,
             "durability_pillar_score": None, "unsafe_flag": None,
             "hhs_status": "GATE_FAIL" if quality_gate_status == "FAIL" else "INSUFFICIENT",
             "income_weight": None, "durability_weight": None,
+            "unsafe_threshold": _HHS_UNSAFE_THRESHOLD,
         }
 
-    # Durability: re-normalize from 0–40 scale
-    dur_norm = (result.financial_durability_score / 40) * 100
+    wy = float(profile["weight_yield"])       # e.g. 40.0
+    wd = float(profile["weight_durability"])  # e.g. 40.0
 
-    # Income: use only yield sub-components from factor_details
-    # yield sub-components: yield_vs_market + payout_sustainability
-    # max pts for these come from _compute_ceilings() already stored in the profile
-    ceilings = profile.get_ceilings()  # existing method
-    max_yield_pts = ceilings["yield_vs_market"] + ceilings["payout_sustainability"]
-    raw_yield_pts = (
-        result.factor_details.get("yield_vs_market", {}).get("score", 0)
-        + result.factor_details.get("payout_sustainability", {}).get("score", 0)
-    )
-    inc_norm = (raw_yield_pts / max_yield_pts * 100) if max_yield_pts > 0 else 0
+    # Normalize each pillar to 0–100 using its pillar budget as the max
+    inc_norm = round((result.valuation_yield_score  / wy) * 100, 2) if wy > 0 else 0.0
+    dur_norm = round((result.financial_durability_score / wd) * 100, 2) if wd > 0 else 0.0
 
-    income_w = profile.income_weight  # from ScoringWeightProfile per class
-    dur_w = 1.0 - income_w
+    # HHS weights: income vs durability, ignoring the technical pillar
+    total_hhs_budget = wy + wd
+    income_w   = round(wy / total_hhs_budget, 4) if total_hhs_budget > 0 else 0.5
+    dur_w      = round(1.0 - income_w, 4)
 
     hhs = round((inc_norm * income_w) + (dur_norm * dur_w), 2)
-    threshold = profile.unsafe_threshold  # default 20, per risk profile
-    unsafe = dur_norm <= threshold
+    unsafe = dur_norm <= _HHS_UNSAFE_THRESHOLD
 
     if unsafe:
         status = "UNSAFE"
@@ -99,27 +104,33 @@ def _compute_hhs(result: ScoreResult, profile: ScoringWeightProfile, quality_gat
         status = "CONCERN"
 
     return {
-        "hhs_score": hhs, "income_pillar_score": round(inc_norm, 2),
-        "durability_pillar_score": round(dur_norm, 2),
-        "income_weight": income_w, "durability_weight": dur_w,
-        "unsafe_flag": unsafe, "unsafe_threshold": threshold, "hhs_status": status,
+        "hhs_score": hhs,
+        "income_pillar_score": inc_norm,
+        "durability_pillar_score": dur_norm,
+        "income_weight": income_w,
+        "durability_weight": dur_w,
+        "unsafe_flag": unsafe,
+        "unsafe_threshold": _HHS_UNSAFE_THRESHOLD,
+        "hhs_status": status,
     }
 ```
 
 ### 1.3 Factor-to-pillar mapping
 
-The existing `factor_details` keys map to HHS pillars as follows. This mapping is used by the frontend Health Tab factor breakdown table (§5.4) and by `_compute_hhs()`.
+The existing `factor_details` keys map to HHS pillars as follows. This mapping is used by the frontend Health Tab factor breakdown table (§5.4).
+
+The **Income pillar score** is the full `valuation_yield_score` (all three yield sub-components: `yield_vs_market` + `payout_sustainability` + `fcf_coverage`), normalized to 0–100. The **Durability pillar score** is the full `financial_durability_score` (three durability sub-components), normalized to 0–100. Technical sub-components feed IES only and are excluded from HHS.
 
 | `factor_details` key | HHS Pillar | Notes |
 | ------------------- | --------- | ----- |
 | `yield_vs_market` | **INC** | Yield sub-component |
 | `payout_sustainability` | **INC** | Yield sub-component (payout ratio) |
-| `fcf_coverage` | **INC** | Yield sub-component |
+| `fcf_coverage` | **INC** | Yield sub-component (dividend coverage by FCF) |
 | `debt_safety` | **DUR** | Durability sub-component |
 | `dividend_consistency` | **DUR** | Durability sub-component |
 | `volatility_score` | **DUR** | Durability sub-component |
-| `price_momentum` | **IES** | Moved to IES (Technical) |
-| `price_range_position` | **IES** | Moved to IES (Technical) |
+| `price_momentum` | **IES** | Technical — not part of HHS |
+| `price_range_position` | **IES** | Technical — not part of HHS |
 | `chowder_number` | **INC** (informational) | 0% weight, display only |
 | `chowder_signal` | **INC** (informational) | display only |
 
@@ -127,10 +138,22 @@ Asset-class specific keys (e.g., `nav_erosion` for CEFs, `nii_coverage` for BDCs
 
 ### 1.4 IES gate
 
+IES = Valuation 60% + Technical 40%, normalized to 0–100 using the pillar budgets. `compute_ies()` is a new helper added to `scores.py`:
+
 ```python
-if hhs_score > 50 and not unsafe_flag:
-    ies_score = compute_ies(result)  # existing valuation+technical logic
+def compute_ies(result: ScoreResult, profile: dict) -> float:
+    wy = float(profile["weight_yield"])
+    wt = float(profile["weight_technical"])
+    ies_raw = result.valuation_yield_score * 0.60 + result.technical_entry_score * 0.40
+    ies_max = wy * 0.60 + wt * 0.40
+    return round((ies_raw / ies_max) * 100, 2) if ies_max > 0 else 0.0
+
+
+# IES gate — called after _compute_hhs():
+if hhs_score is not None and hhs_score > 50 and not unsafe_flag:
+    ies_score = compute_ies(result, profile)
     ies_calculated = True
+    ies_blocked_reason = None
 else:
     ies_score = None
     ies_calculated = False
@@ -143,7 +166,7 @@ Add `_generate_hhs_commentary()` alongside existing `_generate_commentary()`. Ne
 
 ### 1.6 New portfolio aggregate endpoints
 
-Two new endpoints added to the existing API (e.g., `broker-service` or a new `portfolio-service`):
+Two new endpoints added to the **`broker-service`** (the existing service that owns portfolio and position data):
 
 ```text
 GET /portfolios
@@ -160,9 +183,11 @@ GET /portfolios/{id}/summary
 
 These endpoints aggregate from existing position and score data in the DB. If NAA Yield data is partially unavailable (tax data missing), individual holdings fall back to gross yield and the aggregate is flagged with `naa_yield_pre_tax: true` (per HHS spec §3.5).
 
-### 1.7 DB migration
+### 1.7 DB migration and ORM hydration
 
 `income_scores` table gains nullable columns for all new `ScoreResponse` fields. Existing rows return `NULL` until re-scored. No data loss.
+
+`_orm_to_response()` in `scores.py` must be updated to hydrate all new HHS/IES fields from the ORM row. New fields read directly from the `IncomeScore` ORM model columns (same names as `ScoreResponse`). The `IncomeScore` SQLAlchemy model must also be extended with these columns. When serving cached scores via `GET /scores/{ticker}`, the new fields populate from the DB row; legacy rows (scored before this release) return `None` for all HHS/IES fields — the frontend treats this as "not yet scored under HHS framework" and shows a "Rescore to see HHS" prompt.
 
 ---
 
@@ -208,7 +233,7 @@ These endpoints aggregate from existing position and score data in the DB. If NA
 | 1 | Total AUM | Sum of market value | "Combined market value across all portfolios." |
 | 2 | Ann. Income | Sum of projected annual dividends | "Projected annual income based on current dividends." |
 | 3 | Blended NAA Yield | Income-weighted average NAA Yield across all holdings. Holdings missing tax data use gross yield; strip shows `PRE_TAX*` indicator if any fallback applied. | "Net After-All Yield weighted by income contribution. * = some holdings shown pre-tax." |
-| 4 | Avg HHS | Value-weighted average `hhs_score` (gate-failed excluded) | "Position-weighted average HHS across all portfolios. Gate-failed holdings excluded." |
+| 4 | Avg HHS | Value-weighted average `hhs_score` (gate-failed and stale >24h excluded) | "Position-weighted average HHS across all portfolios. Gate-failed and stale holdings excluded." |
 | 5 | Portfolios | Count of active portfolios | — |
 | 6 | ⚠ UNSAFE | Count of `unsafe_flag = True` across all portfolios | "Holdings where Durability ≤ unsafe threshold. Immediate review recommended." |
 
@@ -285,8 +310,8 @@ Collapsible header bar between KPI strip and tab bar. **Default: expanded.**
 #### Panel C — Sector / Industry Concentration
 
 - Row list: sector · proportional bar · %
-- Amber warning when any sector exceeds active risk profile's HHI threshold
-- Risk profile sourced from portfolio settings (conservative 8% / moderate 10% / aggressive 15%)
+- Amber warning when any single sector exceeds the active risk profile's **sector concentration threshold**: conservative 20% / moderate 25% / aggressive 35% (distinct from the single-holding HHI thresholds in the HHS spec §6.2)
+- Risk profile sourced from portfolio settings
 
 ### 4.4 Tab Bar
 
@@ -337,7 +362,7 @@ Every tab table implements:
 
 1. **Position** — shares, avg cost, price, value, cost basis, unrealized G/L, total return, % portfolio, % income
 2. **Income** — annual dividend, monthly income, gross yield, NAA yield, tax drag, income type, ex-date, pay date, frequency
-3. **Health Summary** — HHS with Income/Durability bars, UNSAFE alert (if applicable), gate status badge, grade, Chowder #/signal, scored timestamp
+3. **Health Summary** — HHS with Income/Durability bars, UNSAFE alert (if applicable), gate status badge, grade, Chowder #/signal, scored timestamp. **Fallback for legacy scores:** when `hhs_score` is `None` (scored before this release), show a muted "Rescore to see HHS" prompt with a Refresh button in place of the pillar bars.
 
 ### 5.3 Market Tab
 
@@ -395,6 +420,8 @@ Every tab table implements:
 
 Existing `/income-simulation` content scoped to the current portfolio via `?portfolio_id=[id]` query param passed at tab load. Standalone `/income-simulation` route remains accessible.
 
+**`portfolio_id` scoping behavior:** When `portfolio_id` is present, the simulation pre-populates the holdings list with the portfolio's current positions and filters all scenario views to that portfolio. Users may still add or remove holdings manually within the simulation. The internal logic (scenarios, projections, calculation engine) is unchanged; only the initial data load is filtered.
+
 **Design-system alignment:**
 
 - Replace current score display with `hhs_score`, `hhs_status`, `unsafe_flag` from `ScoreResponse`
@@ -437,7 +464,7 @@ Same design-system alignment as §5.5. `hhs_score` used as reliability weighting
 --green:    #22c55e;  --green-dim: #14532d;  --green-bg: #0d2718
 --blue:     #3b82f6;  --blue-dim:  #1e3a5f;  --blue-bg:  #071428
 --amber:    #f59e0b;  --amber-dim: #78350f;  --amber-bg: #1a0e00
---orange:   #f97316;  --orange-dim:#7c2d12              /* CONCERN status */
+--orange:   #f97316;  --orange-dim:#7c2d12;  --orange-bg: #1a0d00  /* CONCERN status */
 --red:      #ef4444;  --red-dim:   #7f1d1d;  --red-bg:   #1a0808
 
 /* Asset classes */
@@ -465,7 +492,7 @@ Body: `system-ui, -apple-system, sans-serif`.
 | KPI value | 0.95rem | 800 |
 | KPI label | **0.625rem** | 700 uppercase |
 | Detail pane value | 0.88rem | 700 |
-| Detail pane label | 0.62rem | 400 |
+| Detail pane label | 0.625rem | 400 |
 | Tooltip | 0.68rem | 400 |
 | Badge | 0.66rem | 700 |
 
@@ -508,7 +535,7 @@ Card scroll row: `overflow-x: auto` flex row on all viewports.
 | `/portfolios/[id]?tab=simulation` | Simulation tab | Deep-linkable |
 | `/portfolios/[id]?tab=projection` | Income Projection tab | Deep-linkable |
 | `/portfolio/[symbol]` | Individual stock detail | **Unchanged.** Existing route retained as-is (symbol ≠ portfolio id — no collision) |
-| `/market/[symbol]` | Individual stock detail | Optional alias for `/portfolio/[symbol]` — add in same PR for clarity |
+| `/market/[symbol]` | Individual stock detail | **Already exists** in the codebase. No action required — this route is already the alias. |
 
 ---
 
@@ -531,7 +558,7 @@ Card scroll row: `overflow-x: auto` flex row on all viewports.
 - Agent 03 internal scoring engine, curves, quality gates, Chowder computation
 - V6 SAIS sub-metrics and scoring curves
 - Existing `/scanner` page
-- Existing `/calendar`, `/alerts`, `/market/[symbol]`, `/portfolio/[symbol]` pages
+- Existing `/calendar`, `/alerts`, `/market/[symbol]` (already exists — no change), `/portfolio/[symbol]` pages
 - Agent 02–12 behavior
 - Simulation and Income Projection internal logic
 - `ScoringWeightProfile` model (read-only from frontend)
