@@ -10,10 +10,13 @@ GET  /broker/providers         List supported broker providers
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timezone
 from typing import Optional
 from uuid import uuid4
+
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -24,6 +27,7 @@ from app.config import settings
 from app.database import get_db
 from app.providers.alpaca import AlpacaProvider
 from app.providers.base import BaseBrokerProvider, OrderRequest
+from app.services.portfolio_aggregator import aggregate_portfolio, fetch_score
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/broker")
@@ -371,6 +375,89 @@ async def cancel_order(order_id: str, broker: str = "alpaca"):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"cancelled": cancelled, "order_id": order_id, "broker": broker}
+
+
+@router.get("/portfolios")
+async def list_portfolios(db: Session = Depends(get_db)):
+    """List all portfolios with aggregate KPIs."""
+    rows = db.execute(text("""
+        SELECT p.id, p.name, p.account_type AS tax_status, a.broker,
+               COUNT(pos.id) AS holding_count, p.last_refreshed_at,
+               SUM(pos.current_value) AS total_value,
+               SUM(pos.annual_income) AS annual_income
+        FROM platform_shared.portfolios p
+        LEFT JOIN platform_shared.accounts a ON a.portfolio_id = p.id
+        LEFT JOIN platform_shared.positions pos ON pos.portfolio_id = p.id
+        GROUP BY p.id, p.name, p.account_type, a.broker, p.last_refreshed_at
+        ORDER BY p.name
+    """)).mappings().all()
+
+    results = []
+    for row in rows:
+        # Fetch positions for this portfolio
+        positions = _get_positions_for_portfolio(db, row["id"])
+        # Fetch scores from Agent 03 (concurrent)
+        scores = await _fetch_scores_for_positions(positions)
+        agg = aggregate_portfolio(positions, scores)
+        results.append({
+            "id": str(row["id"]),
+            "name": row["name"],
+            "tax_status": row["tax_status"],
+            "broker": row["broker"],
+            "last_refresh": row["last_refreshed_at"].isoformat() if row["last_refreshed_at"] else None,
+            **agg,
+        })
+    return results
+
+
+@router.get("/portfolios/{portfolio_id}/summary")
+async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
+    """Full portfolio summary for the portfolio page."""
+    row = db.execute(text("""
+        SELECT p.id, p.name, p.account_type AS tax_status, a.broker,
+               p.last_refreshed_at
+        FROM platform_shared.portfolios p
+        LEFT JOIN platform_shared.accounts a ON a.portfolio_id = p.id
+        WHERE p.id = :id
+        LIMIT 1
+    """), {"id": portfolio_id}).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    positions = _get_positions_for_portfolio(db, portfolio_id)
+    scores = await _fetch_scores_for_positions(positions)
+    agg = aggregate_portfolio(positions, scores)
+
+    return {
+        "id": str(row["id"]),
+        "name": row["name"],
+        "tax_status": row["tax_status"],
+        "broker": row["broker"],
+        "last_refresh": row["last_refreshed_at"].isoformat() if row["last_refreshed_at"] else None,
+        **agg,
+        "scores_unavailable": not scores,
+    }
+
+
+def _get_positions_for_portfolio(db: Session, portfolio_id: str) -> list[dict]:
+    rows = db.execute(text("""
+        SELECT pos.symbol, pos.current_value, pos.annual_income,
+               pos.asset_type, pos.sector, pos.industry
+        FROM platform_shared.positions pos
+        WHERE pos.portfolio_id = :pid
+    """), {"pid": portfolio_id}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def _fetch_scores_for_positions(positions: list[dict]) -> dict[str, dict]:
+    """Fetch scores concurrently from Agent 03 for all unique tickers."""
+    tickers = list({p["symbol"] for p in positions if p.get("symbol")})
+    if not tickers:
+        return {}
+    tasks = [fetch_score(t, settings.scoring_service_url, settings.service_token) for t in tickers]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return {t: r for t, r in zip(tickers, results) if isinstance(r, dict)}
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

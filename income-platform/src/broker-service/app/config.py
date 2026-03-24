@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # schwab_client_id: str = ""
     # schwab_client_secret: str = ""
 
+    # ── Downstream services ──
+    scoring_service_url: str = "http://agent-03-income-scoring:8003"
+    service_token: str = ""          # read from SERVICE_TOKEN env var
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
 
