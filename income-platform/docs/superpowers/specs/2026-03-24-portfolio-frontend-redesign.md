@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-24
 **Status:** Design Approved — Pending Implementation
-**Depends on:** `2026-03-24-holding-health-score-framework-design.md` (HHS/IES framework)
+**Depends on:** `docs/superpowers/specs/2026-03-24-holding-health-score-framework-design.md` (HHS/IES framework — implementers must read this document; it defines pillar sub-metrics, IES valuation/technical breakdown, and asset-class-specific factor mappings referenced in §1.3 and §5.4)
 
 ---
 
@@ -92,9 +92,9 @@ def _compute_hhs(result: ScoreResult, profile: dict, gate_status: str) -> dict:
     wy = float(profile["weight_yield"])       # e.g. 40.0
     wd = float(profile["weight_durability"])  # e.g. 40.0
 
-    # Normalize each pillar to 0–100, clamp to handle edge values
-    inc_norm = min(100.0, round((result.valuation_yield_score  / wy) * 100, 2)) if wy > 0 else 0.0
-    dur_norm = min(100.0, round((result.financial_durability_score / wd) * 100, 2)) if wd > 0 else 0.0
+    # Normalize each pillar to 0–100, clamp to [0, 100] to handle edge values
+    inc_norm = max(0.0, min(100.0, round((result.valuation_yield_score  / wy) * 100, 2))) if wy > 0 else 0.0
+    dur_norm = max(0.0, min(100.0, round((result.financial_durability_score / wd) * 100, 2))) if wd > 0 else 0.0
 
     # HHS weights: income vs durability proportionally (technical pillar excluded from HHS)
     total_hhs_budget = wy + wd
@@ -188,6 +188,19 @@ Add `_generate_hhs_commentary()` alongside existing `_generate_commentary()`. Ne
 
 **Note:** `score_commentary` is **not** persisted in the DB — it is regenerated at read time inside `_orm_to_response()`. `hhs_commentary` works differently: it is **persisted as a new string column** in `income_scores` (requires adding `hhs_commentary = Column(Text, nullable=True)` to the `IncomeScore` ORM model and writing it in the `evaluate_score` DB persist block). `_orm_to_response()` reads it back from the ORM row directly — no regeneration. Legacy rows have `NULL`; the frontend falls back to `score_commentary` with a "V6 commentary" label.
 
+`_generate_hhs_commentary()` call signature and placement in `evaluate_score`:
+
+```python
+# Called after _compute_hhs() / _compute_ies_gate(), before the IncomeScore persist block:
+hhs_commentary = _generate_hhs_commentary(
+    hhs_fields=hhs_fields,          # dict from _compute_hhs()
+    factor_details=result.factor_details,
+    asset_class=asset_class,
+)
+# Then in the IncomeScore(...) constructor, add:
+#   hhs_commentary=hhs_commentary,
+```
+
 ### 1.6 New portfolio aggregate endpoints
 
 Two new endpoints added to **`src/broker-service/`** (the existing service that owns portfolio and position data). The broker-service fetches HHS/IES score data for each holding by calling `GET /scores/{ticker}` on Agent 03's API (same pattern used by Agent 07). Aggregation (weighted averages, HHI, concentration bars) is computed in the broker-service from the collected `ScoreResponse` objects. If Agent 03 is unavailable, the endpoint returns portfolio identity fields with all aggregate score fields as `null` and an `"scores_unavailable": true` flag — the frontend renders KPI cells as "—" in this case.
@@ -212,6 +225,29 @@ These endpoints aggregate from existing position and score data in the DB. If NA
 `income_scores` table gains nullable columns for all new `ScoreResponse` fields. Existing rows return `NULL` until re-scored. No data loss.
 
 `_orm_to_response()` in `scores.py` must be updated to hydrate all new HHS/IES fields from the ORM row. New fields read directly from the `IncomeScore` ORM model columns (same names as `ScoreResponse`). The `IncomeScore` SQLAlchemy model must also be extended with these columns. When serving cached scores via `GET /scores/{ticker}`, the new fields populate from the DB row; legacy rows (scored before this release) return `None` for all HHS/IES fields — the frontend treats this as "not yet scored under HHS framework" and shows a "Rescore to see HHS" prompt.
+
+New keyword arguments to add to the `ScoreResponse(...)` constructor call in `_orm_to_response()` (all read from `score.<column_name>`):
+
+```python
+# Add to _orm_to_response() ScoreResponse(...) constructor:
+hhs_score=score.hhs_score,
+income_pillar_score=score.income_pillar_score,
+durability_pillar_score=score.durability_pillar_score,
+income_weight=score.income_weight,
+durability_weight=score.durability_weight,
+unsafe_flag=score.unsafe_flag,
+unsafe_threshold=score.unsafe_threshold or 20,
+hhs_status=score.hhs_status,
+ies_score=score.ies_score,
+ies_calculated=score.ies_calculated or False,
+ies_blocked_reason=score.ies_blocked_reason,
+quality_gate_status=score.quality_gate_status or "PASS",
+quality_gate_reasons=score.quality_gate_reasons,
+hhs_commentary=score.hhs_commentary,
+valid_until=score.valid_until,   # needed for stale-exclusion in broker-service aggregates
+```
+
+Add `valid_until: Optional[datetime] = None` to `ScoreResponse` (already on the ORM model; expose it in the API response so the broker-service can filter stale scores without a separate DB query).
 
 ---
 
@@ -460,6 +496,8 @@ Existing `/income-simulation` content scoped to the current portfolio via `?port
 
 Existing `income-projection/page.tsx` content scoped via `defaultPortfolioId` prop. `income-projection/page.tsx` currently exports only a default `ProjectionPage` — add a named `ProjectionContent` export accepting `{ defaultPortfolioId?: string }` (mirrors the existing `SimulationContent` pattern in `income-simulation/page.tsx`). Standalone route remains.
 
+**Tab mount mechanism:** Both Simulation and Projection tabs embed the content component **inline** as a React component (not a navigation or iframe): `<SimulationContent defaultPortfolioId={portfolioId} />` and `<ProjectionContent defaultPortfolioId={portfolioId} />`. This keeps the portfolio page URL (`/portfolios/[id]?tab=simulation`) stable and preserves the tab bar's deep-linking. The `portfolioId` is read from the `[id]` path param.
+
 Same design-system alignment as §5.5. `hhs_score` used as reliability weighting: lower HHS → wider confidence band on projected income. UNSAFE holdings flagged in the projection timeline with ⚠ annotation.
 
 ---
@@ -524,7 +562,7 @@ Minimum label size is **0.625rem** (10px at 16px base) to meet WCAG AA for bold 
 
 ### 6.3 Context Help System
 
-Single global tooltip implemented as a **React Portal** (consistent with the existing `HelpTooltip` component pattern). A `<TooltipPortal>` renders into `document.body` at app init.
+The existing `HelpTooltip` component already handles tooltip rendering via the `base-ui` `TooltipProvider` tree. No new portal implementation is needed — use `<HelpTooltip text="..." />` as-is wherever a `?` bubble is required.
 
 **Bubble markup:** `<HelpTooltip text="..." />` — the existing `HelpTooltip` component (uses `text` prop, not `tip`), styled as a 14×14px circle with `?`.
 
@@ -582,7 +620,7 @@ Card scroll row: `overflow-x: auto` flex row on all viewports.
 - Agent 03 internal scoring engine, curves, quality gates, Chowder computation
 - V6 SAIS sub-metrics and scoring curves
 - Existing `/scanner` page
-- Existing `/calendar`, `/alerts`, `/market/[symbol]` (already exists — no change), `/portfolio/[symbol]` pages
+- Existing `/calendar`, `/alerts`, `/market/[symbol]` (already exists — no change), `/portfolio/[symbol]`, `/projection` pages
 - Agent 02–12 behavior
 - Simulation and Income Projection internal logic
 - `ScoringWeightProfile` model (read-only from frontend)
