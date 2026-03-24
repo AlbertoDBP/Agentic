@@ -28,7 +28,7 @@ from app.scoring.classification_feedback import (
     SOURCE_MANUAL,
 )
 from app.scoring.data_client import MarketDataClient
-from app.scoring.income_scorer import IncomeScorer, ScoreResult
+from app.scoring.income_scorer import IncomeScorer, ScoreResult, _compute_ceilings
 from app.scoring.nav_erosion import NAVErosionAnalyzer
 from app.scoring.signal_penalty import SignalPenaltyEngine
 from app.scoring.weight_profile_loader import weight_profile_loader
@@ -42,6 +42,8 @@ from app.scoring.quality_gate import (
 )
 
 logger = logging.getLogger(__name__)
+
+_HHS_UNSAFE_THRESHOLD = 20  # durability pillar ≤ this → UNSAFE flag
 
 router          = APIRouter()
 _scorer          = IncomeScorer()
@@ -98,6 +100,29 @@ class ScoreResponse(BaseModel):
     signal_penalty_details: Optional[dict] = None
     # v2.1: human-readable score explanation
     score_commentary: str = ""
+
+    # ── HHS pillars (v3.0) ────────────────────────────────────────────────────
+    hhs_score: Optional[float] = None
+    income_pillar_score: Optional[float] = None
+    durability_pillar_score: Optional[float] = None
+    income_weight: Optional[float] = None
+    durability_weight: Optional[float] = None
+    unsafe_flag: Optional[bool] = None               # None = not evaluated
+    unsafe_threshold: int = 20                        # snapshot of threshold at score time
+    hhs_status: Optional[str] = None                 # STRONG|GOOD|WATCH|CONCERN|UNSAFE|INSUFFICIENT
+
+    # ── IES ──────────────────────────────────────────────────────────────────
+    ies_score: Optional[float] = None
+    ies_calculated: bool = False
+    ies_blocked_reason: Optional[str] = None         # UNSAFE_FLAG|HHS_BELOW_THRESHOLD|INSUFFICIENT_DATA
+
+    # ── Quality gate surface ──────────────────────────────────────────────────
+    quality_gate_status: str = "PASS"
+    quality_gate_reasons: Optional[list] = None
+
+    # ── HHS commentary ────────────────────────────────────────────────────────
+    hhs_commentary: Optional[str] = None
+    valid_until: Optional[datetime] = None            # expose for broker-service staleness check
 
 
 class ScoreListItem(BaseModel):
@@ -214,6 +239,121 @@ def _generate_commentary(
 
     except Exception:
         return f"Score {total_score:.0f} ({grade}) — {recommendation.replace('_', ' ').title()}."
+
+
+def _compute_hhs(result: ScoreResult, profile: dict, gate_status: str) -> dict:
+    """Compute HHS score, pillar normalizations, and UNSAFE flag.
+
+    gate_status: "PASS" (normal) or "INSUFFICIENT_DATA" (provisional pass —
+    scoring proceeded but gate lacked data to fully evaluate).
+    Hard-fail gates never reach this function (vetoed with HTTP 422 in evaluate_score).
+    """
+    if gate_status == "INSUFFICIENT_DATA":
+        return {
+            "hhs_score": None,
+            "income_pillar_score": None,
+            "durability_pillar_score": None,
+            "unsafe_flag": None,
+            "hhs_status": "INSUFFICIENT",
+            "income_weight": None,
+            "durability_weight": None,
+            "unsafe_threshold": _HHS_UNSAFE_THRESHOLD,
+        }
+
+    wy = float(profile["weight_yield"])
+    wd = float(profile["weight_durability"])
+
+    # Normalize each pillar to 0–100 using its budget as the max; clamp to [0, 100]
+    # valuation_yield_score includes yield_vs_market + payout_sustainability + fcf_coverage
+    # financial_durability_score includes debt_safety + dividend_consistency + volatility_score
+    inc_norm = max(0.0, min(100.0, round((result.valuation_yield_score / wy) * 100, 2))) if wy > 0 else 0.0
+    dur_norm = max(0.0, min(100.0, round((result.financial_durability_score / wd) * 100, 2))) if wd > 0 else 0.0
+
+    total_hhs_budget = wy + wd
+    income_w = round(wy / total_hhs_budget, 4) if total_hhs_budget > 0 else 0.5
+    dur_w = round(1.0 - income_w, 4)
+
+    hhs = round((inc_norm * income_w) + (dur_norm * dur_w), 2)
+    unsafe = dur_norm <= _HHS_UNSAFE_THRESHOLD
+
+    if unsafe:
+        hhs_status = "UNSAFE"
+    elif hhs >= 85:
+        hhs_status = "STRONG"
+    elif hhs >= 70:
+        hhs_status = "GOOD"
+    elif hhs >= 50:
+        hhs_status = "WATCH"
+    else:
+        hhs_status = "CONCERN"
+
+    return {
+        "hhs_score": hhs,
+        "income_pillar_score": inc_norm,
+        "durability_pillar_score": dur_norm,
+        "income_weight": income_w,
+        "durability_weight": dur_w,
+        "unsafe_flag": unsafe,
+        "unsafe_threshold": _HHS_UNSAFE_THRESHOLD,
+        "hhs_status": hhs_status,
+    }
+
+
+def _compute_ies_gate(result: ScoreResult, profile: dict, hhs_fields: dict) -> dict:
+    """Compute IES (Income Entry Score) if HHS gate allows.
+
+    IES = Valuation 60% + Technical 40% (fixed weights per HHS spec §4.2).
+    Gate: hhs_score > 50 AND unsafe_flag is explicitly False (not None).
+    """
+    hhs_score = hhs_fields["hhs_score"]
+    unsafe_flag = hhs_fields["unsafe_flag"]
+
+    if hhs_score is not None and hhs_score > 50 and unsafe_flag is False:
+        wy = float(profile["weight_yield"])
+        wt = float(profile["weight_technical"])
+        raw = result.valuation_yield_score * 0.60 + result.technical_entry_score * 0.40
+        mx = wy * 0.60 + wt * 0.40
+        ies = max(0.0, min(100.0, round((raw / mx) * 100, 2))) if mx > 0 else 0.0
+        return {"ies_score": ies, "ies_calculated": True, "ies_blocked_reason": None}
+
+    if hhs_score is None:
+        reason = "INSUFFICIENT_DATA"
+    elif unsafe_flag is True:
+        reason = "UNSAFE_FLAG"
+    else:
+        reason = "HHS_BELOW_THRESHOLD"
+
+    return {"ies_score": None, "ies_calculated": False, "ies_blocked_reason": reason}
+
+
+def _generate_hhs_commentary(hhs_fields: dict, factor_details: dict, asset_class: str) -> Optional[str]:
+    """Generate a plain-English HHS commentary referencing only INC/DUR pillars."""
+    hhs_score = hhs_fields.get("hhs_score")
+    if hhs_score is None:
+        return None
+
+    hhs_status = hhs_fields.get("hhs_status", "")
+    inc = hhs_fields.get("income_pillar_score", 0)
+    dur = hhs_fields.get("durability_pillar_score", 0)
+    unsafe = hhs_fields.get("unsafe_flag", False)
+
+    parts = []
+    if unsafe:
+        parts.append(f"UNSAFE: Durability pillar {dur:.0f}/100 is at or below the safety threshold.")
+    else:
+        parts.append(f"HHS {hhs_score:.0f} ({hhs_status}): Income {inc:.0f}/100 · Durability {dur:.0f}/100.")
+
+    # Highlight weakest sub-component
+    fd = factor_details or {}
+    dur_factors = {k: v for k, v in fd.items() if k in ("debt_safety", "dividend_consistency", "volatility_score")}
+    if dur_factors:
+        weakest = min(dur_factors, key=lambda k: (dur_factors[k] or {}).get("score", 99))
+        w_score = (dur_factors[weakest] or {}).get("score", 0)
+        w_max = (dur_factors[weakest] or {}).get("max", 1)
+        if w_max and (w_score / w_max) < 0.5:
+            parts.append(f"Weakest durability factor: {weakest.replace('_', ' ')} ({w_score:.0f}/{w_max:.0f} pts).")
+
+    return " ".join(parts)
 
 
 def _orm_to_response(score: IncomeScore, tax_efficiency: Optional[dict] = None) -> ScoreResponse:
