@@ -34,13 +34,13 @@ class ScoreResponse(BaseModel):
     income_weight: Optional[float] = None         # e.g. 0.35
     durability_weight: Optional[float] = None     # complement of income_weight
     unsafe_flag: Optional[bool] = None            # None when gate failed/insufficient
-    unsafe_threshold: int = 20
+    unsafe_threshold: int = 20    # snapshot of threshold used at score time; always stored as a column
     hhs_status: Optional[str] = None             # STRONG|GOOD|WATCH|CONCERN|UNSAFE|GATE_FAIL|INSUFFICIENT
 
     # ── IES additions ──
     ies_score: Optional[float] = None
     ies_calculated: bool = False
-    ies_blocked_reason: Optional[str] = None      # UNSAFE_FLAG|HHS_BELOW_THRESHOLD|GATE_FAIL
+    ies_blocked_reason: Optional[str] = None      # UNSAFE_FLAG|HHS_BELOW_THRESHOLD|INSUFFICIENT_DATA
 
     # ── Quality Gate surface ──
     quality_gate_status: str = "PASS"             # PASS|FAIL|INSUFFICIENT_DATA
@@ -73,6 +73,9 @@ _gate_status = (
 )
 hhs_fields  = _compute_hhs(result, weight_profile, _gate_status)
 ies_fields  = _compute_ies_gate(result, weight_profile, hhs_fields)
+# Derive quality_gate_status/reasons for storage — must be persisted to IncomeScore
+quality_gate_status  = _gate_status                          # "PASS" or "INSUFFICIENT_DATA"
+quality_gate_reasons = getattr(gate_proxy, "fail_reasons", None) or []
 ```
 
 ```python
@@ -152,6 +155,8 @@ Asset-class specific keys (e.g., `nav_erosion` for CEFs, `nii_coverage` for BDCs
 
 IES = Valuation 60% + Technical 40%, normalized to 0–100 using the pillar budgets. `_compute_ies_gate()` is a new helper added to `scores.py`. It receives the `hhs_fields` dict returned by `_compute_hhs()`, unpacks the needed values, and returns a second dict with all IES fields.
 
+**IES 60/40 split is fixed:** The 0.60 / 0.40 weights are constants per the HHS framework spec §4.2 — they are not read from `ScoringWeightProfile`. The weight profile budget values (`wy`, `wt`) are used only as the *normalization denominator* to convert raw points to 0–100 scale.
+
 ```python
 def _compute_ies_gate(result: ScoreResult, profile: dict, hhs_fields: dict) -> dict:
     hhs_score   = hhs_fields["hhs_score"]    # float or None
@@ -173,7 +178,7 @@ def _compute_ies_gate(result: ScoreResult, profile: dict, hhs_fields: dict) -> d
 
     # Determine why IES was blocked
     if hhs_score is None:
-        reason = "GATE_FAIL"             # gate-failed / INSUFFICIENT_DATA → no HHS
+        reason = "INSUFFICIENT_DATA"     # gate returned INSUFFICIENT_DATA → no HHS score
     elif unsafe_flag is True:
         reason = "UNSAFE_FLAG"
     else:
@@ -498,7 +503,7 @@ Existing `income-projection/page.tsx` content scoped via `defaultPortfolioId` pr
 
 **Tab mount mechanism:** Both Simulation and Projection tabs embed the content component **inline** as a React component (not a navigation or iframe): `<SimulationContent defaultPortfolioId={portfolioId} />` and `<ProjectionContent defaultPortfolioId={portfolioId} />`. This keeps the portfolio page URL (`/portfolios/[id]?tab=simulation`) stable and preserves the tab bar's deep-linking. The `portfolioId` is read from the `[id]` path param.
 
-Same design-system alignment as §5.5. `hhs_score` used as reliability weighting: lower HHS → wider confidence band on projected income. UNSAFE holdings flagged in the projection timeline with ⚠ annotation.
+Same design-system alignment as §5.5. UNSAFE holdings flagged in the projection timeline with ⚠ annotation. HHS-based confidence band widening is deferred — see §10.
 
 ---
 
@@ -634,3 +639,4 @@ Card scroll row: `overflow-x: auto` flex row on all viewports.
 - **Cross-portfolio health sweep:** aggregate holdings across portfolios — future spec.
 - **Circuit Breaker integration:** CB Level column renders "—" in Phase 1. Full integration is a future spec.
 - **Simulation / Projection deep redesign:** §5.5 and §5.6 cover design-system alignment only.
+- **HHS confidence band in Income Projection:** Using `hhs_score` to widen the projected income confidence band (lower HHS → wider band) requires a formula and threshold table. Deferred to a future spec.
