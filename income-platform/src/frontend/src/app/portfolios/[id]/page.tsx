@@ -12,8 +12,6 @@ import { PortfolioTab }   from "./tabs/portfolio-tab";
 import { MarketTab }      from "./tabs/market-tab";
 import { HealthTab }      from "./tabs/health-tab";
 import { SimulationContent } from "@/app/income-simulation/page";
-// ProjectionContent not yet exported — Task 16 will add it
-// import { ProjectionContent } from "@/app/income-projection/page";
 
 type Tab = "portfolio" | "market" | "health" | "simulation" | "projection";
 const TABS: { key: Tab; label: string }[] = [
@@ -28,7 +26,11 @@ export default function PortfolioPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const activeTab = (searchParams.get("tab") as Tab) ?? "portfolio";
+  const rawTab = searchParams.get("tab");
+  const activeTab: Tab =
+    (TABS.map(t => t.key) as string[]).includes(rawTab ?? "")
+      ? (rawTab as Tab)
+      : "portfolio";
   const [summaryOpen, setSummaryOpen] = useState(true);
 
   const { data: summary, isLoading, error, refetch } = usePortfolioSummary(id);
@@ -39,11 +41,12 @@ export default function PortfolioPage() {
     router.replace(`/portfolios/${id}?${params.toString()}`);
   };
 
+  // built after early-returns; summary may be undefined, handled by ?? fallbacks
   const kpis = [
     { label: "Agg HHS",     value: summary?.agg_hhs?.toFixed(1) ?? "—",
       colorClass: summary?.agg_hhs != null ? (summary.agg_hhs >= 70 ? "text-green-400" : summary.agg_hhs >= 50 ? "text-amber-400" : "text-red-400") : undefined,
       helpText: HHS_HELP.agg_hhs },
-    { label: "NAA Yield",   value: summary?.naa_yield != null ? `${(summary.naa_yield * 100).toFixed(2)}%` : "—", colorClass: "text-green-400", helpText: HHS_HELP.naa_yield },
+    { label: "NAA Yield",   value: summary?.naa_yield != null ? `${(summary.naa_yield * 100).toFixed(2)}%` : "—", colorClass: summary?.naa_yield != null ? "text-green-400" : undefined, helpText: HHS_HELP.naa_yield },
     { label: "Value",       value: summary ? formatCurrency(summary.total_value) : "—" },
     { label: "Ann. Income", value: summary ? formatCurrency(summary.annual_income) : "—", colorClass: "text-blue-400" },
     { label: "HHI",         value: summary?.hhi?.toFixed(3) ?? "—",
@@ -70,7 +73,7 @@ export default function PortfolioPage() {
       <div className="flex items-start justify-between mb-3">
         <div>
           <div className="flex items-center gap-2">
-            <button onClick={() => router.push("/dashboard")} className="text-muted-foreground hover:text-foreground">
+            <button onClick={() => router.push("/dashboard")} className="text-muted-foreground hover:text-foreground" aria-label="Back to dashboard">
               <ArrowLeft className="h-4 w-4" />
             </button>
             <h1 className="text-lg font-bold">{summary?.name ?? id}</h1>
@@ -87,7 +90,7 @@ export default function PortfolioPage() {
             {summary?.last_refresh && <span>Refreshed {new Date(summary.last_refresh).toLocaleDateString()}</span>}
           </div>
         </div>
-        <button onClick={() => refetch()} className="p-1.5 text-muted-foreground hover:text-foreground" title="Refresh">
+        <button onClick={() => refetch()} className="p-1.5 text-muted-foreground hover:text-foreground" aria-label="Refresh portfolio">
           <RefreshCw className="h-4 w-4" />
         </button>
       </div>
@@ -104,7 +107,7 @@ export default function PortfolioPage() {
           <span>
             {!summaryOpen && summary && (
               <span className="text-foreground font-normal">
-                {summary.concentration_by_class?.[0] && `${summary.concentration_by_class[0].class} ${summary.concentration_by_class[0].pct}%`}
+                {summary.concentration_by_class?.[0] && `${summary.concentration_by_class[0].class} ${Number(summary.concentration_by_class[0].pct).toFixed(0)}%`}
                 {(summary?.unsafe_count ?? 0) > 0 && ` · ⚠ ${summary.unsafe_count} UNSAFE`}
               </span>
             )}
@@ -123,8 +126,8 @@ export default function PortfolioPage() {
             <div>
               <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-1.5">Top Income</div>
               <div className="space-y-1">
-                {(summary.top_income_holdings ?? []).map((h, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs">
+                {(summary.top_income_holdings ?? []).map((h) => (
+                  <div key={h.ticker} className="flex items-center justify-between text-xs">
                     <span className={cn("font-medium", h.unsafe && "text-amber-400")}>
                       {h.unsafe && "⚠ "}{h.ticker}
                     </span>
