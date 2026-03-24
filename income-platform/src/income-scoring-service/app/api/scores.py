@@ -614,6 +614,13 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         except (ValueError, AttributeError):
             pass
 
+    # Merge chowder_number / chowder_signal into factor_details so that
+    # _orm_to_response (used by GET /scores/{ticker}) can retrieve them
+    # when serving cached scores without re-running evaluate.
+    _factor_details = dict(result.factor_details or {})
+    _factor_details["chowder_number"] = result.chowder_number
+    _factor_details["chowder_signal"] = result.chowder_signal
+
     db_score = IncomeScore(
         ticker=ticker,
         asset_class=asset_class,
@@ -625,7 +632,7 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         total_score=result.total_score,
         grade=result.grade,
         recommendation=result.recommendation,
-        factor_details=result.factor_details,
+        factor_details=_factor_details,
         nav_erosion_details=nav_erosion_details,
         data_quality_score=result.data_quality_score,
         data_completeness_pct=result.data_completeness_pct,
