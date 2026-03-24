@@ -54,25 +54,35 @@ class ScoreResponse(BaseModel):
 
 ### 1.2 HHS computation logic
 
-Add `_compute_hhs()` helper in `scores.py`, called **after** signal penalty is applied and **before** DB persist. The helper receives the final `ScoreResult` and the weight profile `dict` (as already used throughout `income_scorer.py`).
+Add `_compute_hhs()` helper in `scores.py`, called **after** signal penalty is applied and **before** DB persist (between steps 5b and 6 in `evaluate_score`).
 
-`_compute_ceilings()` is the existing standalone function in `income_scorer.py` — import it in `scores.py`.
+`_compute_ceilings()` is the existing standalone function in `income_scorer.py` — no new import needed (it is already in scope via `from app.scoring.income_scorer import IncomeScorer, ScoreResult`; add `_compute_ceilings` to that import).
 
-The income and durability pillar scores are derived directly from the already-computed sub-totals (`valuation_yield_score`, `financial_durability_score`), normalized to 0–100 using the pillar budget from the weight profile. This avoids re-summing from `factor_details` and keeps `fcf_coverage` in the Income pillar (consistent with §1.3).
+The income and durability pillar scores are derived directly from the already-computed sub-totals (`valuation_yield_score`, `financial_durability_score`), normalized to 0–100 using the pillar budget from the weight profile. Scores are clamped to `[0, 100]` to handle edge cases where sub-component totals exceed the pillar ceiling (e.g., NAV erosion applied before this helper runs). `fcf_coverage` is part of `valuation_yield_score` and therefore included in the Income pillar (consistent with §1.3).
+
+**`quality_gate_status` derivation — call site in `evaluate_score`:** In the existing code, failed gates are vetoed before scoring via HTTP 422. The only non-PASS case that reaches the scorer is `GateStatus.INSUFFICIENT_DATA` (treated as provisional pass). Derive the status string at the call site:
 
 ```python
-# At top of scores.py — add to existing import:
-from .income_scorer import _compute_ceilings
+# After step 5b (signal penalty), before step 6 (DB persist):
+_gate_status = (
+    "INSUFFICIENT_DATA"
+    if getattr(gate_proxy, "status", None) == GateStatus.INSUFFICIENT_DATA
+    else "PASS"
+)
+hhs_fields  = _compute_hhs(result, weight_profile, _gate_status)
+ies_fields  = _compute_ies_gate(result, weight_profile, hhs_fields)
+```
 
-_HHS_UNSAFE_THRESHOLD = 20  # durability ≤ this → UNSAFE flag
+```python
+_HHS_UNSAFE_THRESHOLD = 20  # durability pillar ≤ this → UNSAFE flag
 
 
-def _compute_hhs(result: ScoreResult, profile: dict, quality_gate_status: str) -> dict:
-    if quality_gate_status != "PASS":
+def _compute_hhs(result: ScoreResult, profile: dict, gate_status: str) -> dict:
+    if gate_status == "INSUFFICIENT_DATA":
         return {
             "hhs_score": None, "income_pillar_score": None,
             "durability_pillar_score": None, "unsafe_flag": None,
-            "hhs_status": "GATE_FAIL" if quality_gate_status == "FAIL" else "INSUFFICIENT",
+            "hhs_status": "INSUFFICIENT",
             "income_weight": None, "durability_weight": None,
             "unsafe_threshold": _HHS_UNSAFE_THRESHOLD,
         }
@@ -80,28 +90,28 @@ def _compute_hhs(result: ScoreResult, profile: dict, quality_gate_status: str) -
     wy = float(profile["weight_yield"])       # e.g. 40.0
     wd = float(profile["weight_durability"])  # e.g. 40.0
 
-    # Normalize each pillar to 0–100 using its pillar budget as the max
-    inc_norm = round((result.valuation_yield_score  / wy) * 100, 2) if wy > 0 else 0.0
-    dur_norm = round((result.financial_durability_score / wd) * 100, 2) if wd > 0 else 0.0
+    # Normalize each pillar to 0–100, clamp to handle edge values
+    inc_norm = min(100.0, round((result.valuation_yield_score  / wy) * 100, 2)) if wy > 0 else 0.0
+    dur_norm = min(100.0, round((result.financial_durability_score / wd) * 100, 2)) if wd > 0 else 0.0
 
-    # HHS weights: income vs durability, ignoring the technical pillar
+    # HHS weights: income vs durability proportionally (technical pillar excluded from HHS)
     total_hhs_budget = wy + wd
-    income_w   = round(wy / total_hhs_budget, 4) if total_hhs_budget > 0 else 0.5
-    dur_w      = round(1.0 - income_w, 4)
+    income_w = round(wy / total_hhs_budget, 4) if total_hhs_budget > 0 else 0.5
+    dur_w    = round(1.0 - income_w, 4)
 
-    hhs = round((inc_norm * income_w) + (dur_norm * dur_w), 2)
+    hhs    = round((inc_norm * income_w) + (dur_norm * dur_w), 2)
     unsafe = dur_norm <= _HHS_UNSAFE_THRESHOLD
 
     if unsafe:
-        status = "UNSAFE"
+        hhs_status = "UNSAFE"
     elif hhs >= 85:
-        status = "STRONG"
+        hhs_status = "STRONG"
     elif hhs >= 70:
-        status = "GOOD"
+        hhs_status = "GOOD"
     elif hhs >= 50:
-        status = "WATCH"
+        hhs_status = "WATCH"
     else:
-        status = "CONCERN"
+        hhs_status = "CONCERN"
 
     return {
         "hhs_score": hhs,
@@ -111,7 +121,7 @@ def _compute_hhs(result: ScoreResult, profile: dict, quality_gate_status: str) -
         "durability_weight": dur_w,
         "unsafe_flag": unsafe,
         "unsafe_threshold": _HHS_UNSAFE_THRESHOLD,
-        "hhs_status": status,
+        "hhs_status": hhs_status,
     }
 ```
 
@@ -138,35 +148,47 @@ Asset-class specific keys (e.g., `nav_erosion` for CEFs, `nii_coverage` for BDCs
 
 ### 1.4 IES gate
 
-IES = Valuation 60% + Technical 40%, normalized to 0–100 using the pillar budgets. `compute_ies()` is a new helper added to `scores.py`:
+IES = Valuation 60% + Technical 40%, normalized to 0–100 using the pillar budgets. `_compute_ies_gate()` is a new helper added to `scores.py`. It receives the `hhs_fields` dict returned by `_compute_hhs()`, unpacks the needed values, and returns a second dict with all IES fields.
 
 ```python
-def compute_ies(result: ScoreResult, profile: dict) -> float:
-    wy = float(profile["weight_yield"])
-    wt = float(profile["weight_technical"])
-    ies_raw = result.valuation_yield_score * 0.60 + result.technical_entry_score * 0.40
-    ies_max = wy * 0.60 + wt * 0.40
-    return round((ies_raw / ies_max) * 100, 2) if ies_max > 0 else 0.0
+def _compute_ies_gate(result: ScoreResult, profile: dict, hhs_fields: dict) -> dict:
+    hhs_score   = hhs_fields["hhs_score"]    # float or None
+    unsafe_flag = hhs_fields["unsafe_flag"]  # bool or None
 
+    # IES requires PASS gate (hhs_score not None) + HHS > 50 + not UNSAFE
+    # unsafe_flag is False (not None) must be checked explicitly to avoid
+    # treating None (gate-failed / INSUFFICIENT_DATA) as "safe"
+    if hhs_score is not None and hhs_score > 50 and unsafe_flag is False:
+        wy  = float(profile["weight_yield"])
+        wt  = float(profile["weight_technical"])
+        raw = result.valuation_yield_score * 0.60 + result.technical_entry_score * 0.40
+        mx  = wy * 0.60 + wt * 0.40
+        return {
+            "ies_score": min(100.0, round((raw / mx) * 100, 2)) if mx > 0 else 0.0,
+            "ies_calculated": True,
+            "ies_blocked_reason": None,
+        }
 
-# IES gate — called after _compute_hhs():
-if hhs_score is not None and hhs_score > 50 and not unsafe_flag:
-    ies_score = compute_ies(result, profile)
-    ies_calculated = True
-    ies_blocked_reason = None
-else:
-    ies_score = None
-    ies_calculated = False
-    ies_blocked_reason = "UNSAFE_FLAG" if unsafe_flag else "HHS_BELOW_THRESHOLD"
+    # Determine why IES was blocked
+    if hhs_score is None:
+        reason = "HHS_BELOW_THRESHOLD"   # gate-failed / INSUFFICIENT_DATA → no HHS
+    elif unsafe_flag is True:
+        reason = "UNSAFE_FLAG"
+    else:
+        reason = "HHS_BELOW_THRESHOLD"
+
+    return {"ies_score": None, "ies_calculated": False, "ies_blocked_reason": reason}
 ```
 
 ### 1.5 HHS commentary
 
 Add `_generate_hhs_commentary()` alongside existing `_generate_commentary()`. New function references only INC/DUR pillar components. Existing `score_commentary` is unchanged (still V6-based for backward compat). `hhs_commentary` is the field shown in the Health Tab detail pane.
 
+`hhs_commentary` is **persisted as a plain string column** in `income_scores` (same as `score_commentary`). It is generated at score time by `_generate_hhs_commentary()` and written to the DB alongside the other HHS fields. `_orm_to_response()` reads it back directly from the ORM row — it is never regenerated at read time. Legacy rows (no HHS data) have `NULL` for this column; the frontend falls back to `score_commentary` with a "V6 commentary" label.
+
 ### 1.6 New portfolio aggregate endpoints
 
-Two new endpoints added to the **`broker-service`** (the existing service that owns portfolio and position data):
+Two new endpoints added to the **`broker-service`** (the existing service that owns portfolio and position data). The broker-service fetches HHS/IES score data for each holding by calling `GET /scores/{ticker}` on Agent 03's API (same pattern used by Agent 07). Aggregation (weighted averages, HHI, concentration bars) is computed in the broker-service from the collected `ScoreResponse` objects. If Agent 03 is unavailable, the endpoint returns portfolio identity fields with all aggregate score fields as `null` and an `"scores_unavailable": true` flag — the frontend renders KPI cells as "—" in this case.
 
 ```text
 GET /portfolios
@@ -198,7 +220,7 @@ These endpoints aggregate from existing position and score data in the DB. If NA
   └── /portfolios/[id]?tab=portfolio|market|health|simulation|projection
 ```
 
-**Route rename:** The existing `/portfolio/[symbol]` individual-stock detail page moves to `/market/[symbol]` (or remains at `/portfolio/[symbol]` with a distinct path structure — see §7). The new portfolio-level routes use `/portfolios/[id]` (plural) to eliminate the naming conflict.
+**No route rename needed:** `/market/[symbol]` already exists in the codebase as the individual-stock detail page. `/portfolio/[symbol]` also exists and is retained unchanged (see §7). The new portfolio-level routes use `/portfolios/[id]` (plural), which has no collision with either existing route.
 
 ---
 
