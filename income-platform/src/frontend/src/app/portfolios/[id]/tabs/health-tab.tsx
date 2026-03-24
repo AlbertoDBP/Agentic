@@ -5,7 +5,7 @@ import { DataTable } from "@/components/data-table";
 import { TickerBadge } from "@/components/ticker-badge";
 import { HhsBadge } from "@/components/portfolio/hhs-badge";
 import { ColHeader } from "@/components/help-tooltip";
-import { HHS_HELP } from "@/lib/help-content";
+import { HHS_HELP, HOLDINGS_HELP } from "@/lib/help-content";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
@@ -26,7 +26,7 @@ interface HealthTabProps { portfolioId: string; }
 
 export function HealthTab({ portfolioId }: HealthTabProps) {
   const [positions, setPositions] = useState<Position[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Position | null>(null);
 
@@ -39,9 +39,12 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
       headers: { Authorization: `Bearer ${token}` },
       credentials: "include",
     })
-      .then((r) => r.ok ? r.json() as Promise<Position[]> : Promise.resolve([]))
-      .then((data) => { setPositions(data); setLoading(false); })
-      .catch(() => { setError("Failed to load positions."); setLoading(false); });
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<Position[]>;
+      })
+      .then(data => { setPositions(data); setLoading(false); })
+      .catch(err => { setError(err.message); setLoading(false); });
   }, [portfolioId]);
 
   const filtered = useMemo(
@@ -52,7 +55,7 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
   const columns: ColumnDef<Position>[] = [
     {
       accessorKey: "symbol",
-      header: () => <ColHeader label="Ticker" helpKey="hhs_score" helpMap={HHS_HELP} />,
+      header: () => <ColHeader label="Ticker" helpKey="symbol" helpMap={HOLDINGS_HELP} />,
       cell: ({ row }) => <TickerBadge symbol={row.original.symbol} assetType={row.original.asset_type} />,
     },
     { accessorKey: "asset_type", header: "Class" },
@@ -214,7 +217,7 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
           <section>
             <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">Quality Gate</div>
             <div className={cn("text-xs font-medium", selected.quality_gate_status === "PASS" ? "text-green-400" : "text-amber-400")}>
-              {selected.quality_gate_status ?? "PASS"}
+              {selected.quality_gate_status ?? "—"}
             </div>
             {selected.quality_gate_reasons?.length ? (
               <ul className="mt-1 space-y-0.5">
