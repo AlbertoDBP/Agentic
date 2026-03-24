@@ -62,3 +62,14 @@ class TestAggregatePortfolio:
         stale_scores = {k: {**v, "valid_until": "2000-01-01T00:00:00+00:00"} for k, v in SCORES.items()}
         result = aggregate_portfolio(POSITIONS, stale_scores)
         assert result["agg_hhs"] is None   # all stale → no HHS data
+
+    def test_gate_fail_excluded_from_hhs_and_counted(self):
+        scores_with_gate_fail = {
+            "MAIN": {"asset_class": "BDC", "hhs_score": 80.0, "unsafe_flag": False, "quality_gate_status": "PASS", "valid_until": "2099-01-01T00:00:00+00:00"},
+            "JEPI": {"asset_class": "COVERED_CALL_ETF", "hhs_score": None, "unsafe_flag": None, "quality_gate_status": "INSUFFICIENT_DATA", "valid_until": "2099-01-01T00:00:00+00:00"},
+            "O":    {"asset_class": "EQUITY_REIT", "hhs_score": None, "unsafe_flag": None, "quality_gate_status": "FAIL", "valid_until": "2099-01-01T00:00:00+00:00"},
+        }
+        result = aggregate_portfolio(POSITIONS, scores_with_gate_fail)
+        assert result["gate_fail_count"] == 2   # JEPI (INSUFFICIENT_DATA) + O (FAIL)
+        # Only MAIN contributes to agg_hhs (JEPI and O have gate status != PASS)
+        assert result["agg_hhs"] is not None

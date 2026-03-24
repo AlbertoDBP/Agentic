@@ -36,7 +36,8 @@ def _is_stale(score: dict) -> bool:
     try:
         exp = datetime.fromisoformat(vu.replace("Z", "+00:00"))
         return exp < datetime.now(timezone.utc)
-    except Exception:
+    except Exception as e:
+        logger.warning("Unparseable valid_until value %r: %s", vu, e)
         return False
 
 
@@ -76,6 +77,12 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
         sector = p.get("sector") or "Other"
         sector_totals[sector] = sector_totals.get(sector, 0) + val
 
+        if score:
+            if score.get("unsafe_flag") is True:
+                unsafe_count += 1
+            if score.get("quality_gate_status") in ("FAIL", "INSUFFICIENT_DATA"):
+                gate_fail_count += 1
+
         if not score or _is_stale(score):
             continue
 
@@ -84,11 +91,6 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
             weight = val / total_value if total_value > 0 else 0
             hhs_values.append(hhs * weight)
             hhs_weights.append(weight)
-
-        if score.get("unsafe_flag") is True:
-            unsafe_count += 1
-        if score.get("quality_gate_status") in ("FAIL", "INSUFFICIENT_DATA"):
-            gate_fail_count += 1
 
     # Weighted average HHS
     agg_hhs = round(sum(hhs_values), 2) if hhs_values else None
