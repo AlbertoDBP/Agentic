@@ -143,3 +143,19 @@ export const PENALTY_HELP: Record<string, string> = {
   signal_penalty:
     "Penalty applied when multiple technical indicators (RSI overbought, death cross, price below support) align bearishly, suggesting a poor entry timing.",
 };
+
+// ── HHS / IES v3.0 explanations ───────────────────────────────────────────────
+export const HHS_HELP: Record<string, string> = {
+  hhs_score: "Holding Health Score (0–100): Income pillar × income weight + Durability pillar × durability weight. Gate-failed holdings show — until rescored.",
+  income_pillar: "Income Pillar (0–100): Yield attractiveness, payout sustainability, and FCF coverage — normalized to 0–100 from the raw yield score.",
+  durability_pillar: "Durability Pillar (0–100): Debt safety, dividend consistency, and volatility — normalized to 0–100. Values ≤ 20 trigger the UNSAFE flag.",
+  unsafe_flag: "UNSAFE: Durability pillar is at or below the safety threshold (default 20). Immediate review recommended regardless of overall HHS.",
+  hhs_status: "HHS status band: STRONG ≥ 85 · GOOD ≥ 70 · WATCH ≥ 50 · CONCERN < 50 · UNSAFE when Durability ≤ threshold.",
+  ies_score: "Income Entry Score (0–100): Valuation 60% + Technical 40%. Only calculated when HHS > 50 and no UNSAFE flag.",
+  ies_blocked: "IES could not be calculated. Reason: UNSAFE_FLAG means Durability is critical; HHS_BELOW_THRESHOLD means overall health is too low; INSUFFICIENT_DATA means gate lacked data.",
+  quality_gate: "Quality Gate status: PASS = all required criteria met; INSUFFICIENT_DATA = gate ran but lacked data (score is provisional).",
+  agg_hhs: "Aggregate HHS: position-weighted average HHS across all holdings. Gate-failed and stale (expired) holdings are excluded.",
+  naa_yield: "Net After-All Yield: (Gross Dividend − Fee Drag − Tax Drag) / Total Invested. Holdings without tax data shown pre-tax (marked *).",
+  hhi: "Herfindahl-Hirschman Index: sum of squared position weights. Higher = more concentrated. Flag at > 0.10 (moderate profile).",
+  chowder_number: "Chowder Number = TTM dividend yield + 5-year dividend growth CAGR. ≥ 12 STRONG · 8–12 MODERATE · < 8 WEAK. Informational only.",
+};

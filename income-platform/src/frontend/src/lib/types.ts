@@ -67,6 +67,22 @@ export interface Position {
   signal_penalty?: number;
   factor_details?: Record<string, { value: number; score: number; weight: number }> | null;
   nav_erosion_details?: { prob_erosion_gt_5pct?: number; median_annual_nav_change_pct?: number; risk_classification?: string; penalty_applied?: number } | null;
+  // HHS/IES v3.0
+  hhs_score?: number | null;
+  income_pillar_score?: number | null;
+  durability_pillar_score?: number | null;
+  income_weight?: number | null;
+  durability_weight?: number | null;
+  unsafe_flag?: boolean | null;
+  unsafe_threshold?: number;
+  hhs_status?: string | null;
+  ies_score?: number | null;
+  ies_calculated?: boolean;
+  ies_blocked_reason?: string | null;
+  quality_gate_status?: string;
+  quality_gate_reasons?: string[] | null;
+  hhs_commentary?: string | null;
+  valid_until?: string | null;
   // Classification
   sector?: string;
   industry?: string;
@@ -272,4 +288,34 @@ export interface SchedulerJob {
   name: string;
   next_run_time: string;
   trigger: string;
+}
+
+export interface PortfolioListItem {
+  id: string;
+  name: string;
+  tax_status?: string;
+  broker?: string;
+  last_refresh?: string | null;
+  holding_count: number;
+  total_value: number;
+  annual_income: number;
+  naa_yield?: number | null;
+  naa_yield_pre_tax?: boolean;
+  agg_hhs?: number | null;
+  hhi?: number;
+  unsafe_count: number;
+  gate_fail_count: number;
+  concentration_by_class: Array<{ class: string; value: number; pct: number }>;
+}
+
+export interface PortfolioSummary extends PortfolioListItem {
+  concentration_by_sector: Array<{ sector: string; value: number; pct: number }>;
+  top_income_holdings: Array<{
+    ticker: string;
+    asset_class?: string;
+    annual_income: number;
+    income_pct: number;
+    unsafe: boolean;
+  }>;
+  scores_unavailable?: boolean;
 }

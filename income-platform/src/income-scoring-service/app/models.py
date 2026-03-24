@@ -153,6 +153,24 @@ class IncomeScore(Base):
     signal_penalty = Column(Float, nullable=False, default=0.0)          # points deducted
     signal_penalty_details = Column(JSONB, nullable=True)                # signal context dict
 
+    # ── HHS / IES fields (v3.0) ───────────────────────────────────────────────
+    hhs_score = Column(Float, nullable=True)
+    income_pillar_score = Column(Float, nullable=True)
+    durability_pillar_score = Column(Float, nullable=True)
+    income_weight = Column(Float, nullable=True)
+    durability_weight = Column(Float, nullable=True)
+    unsafe_flag = Column(Boolean, nullable=True)           # None = not evaluated
+    unsafe_threshold = Column(Integer, nullable=True, default=20)
+    hhs_status = Column(String(20), nullable=True)         # STRONG|GOOD|WATCH|CONCERN|UNSAFE|INSUFFICIENT
+
+    ies_score = Column(Float, nullable=True)
+    ies_calculated = Column(Boolean, nullable=False, default=False)
+    ies_blocked_reason = Column(String(30), nullable=True) # UNSAFE_FLAG|HHS_BELOW_THRESHOLD|INSUFFICIENT_DATA
+
+    quality_gate_status = Column(String(20), nullable=True, default="PASS")
+    quality_gate_reasons = Column(JSONB, nullable=True)
+    hhs_commentary = Column(Text, nullable=True)           # persisted at score time
+
     __table_args__ = (
         Index("ix_income_scores_ticker_scored", "ticker", "scored_at"),
         Index("ix_income_scores_recommendation", "recommendation"),
