@@ -28,7 +28,7 @@ from app.scoring.classification_feedback import (
     SOURCE_MANUAL,
 )
 from app.scoring.data_client import MarketDataClient
-from app.scoring.income_scorer import IncomeScorer, ScoreResult, _compute_ceilings
+from app.scoring.income_scorer import IncomeScorer, ScoreResult
 from app.scoring.nav_erosion import NAVErosionAnalyzer
 from app.scoring.signal_penalty import SignalPenaltyEngine
 from app.scoring.weight_profile_loader import weight_profile_loader
