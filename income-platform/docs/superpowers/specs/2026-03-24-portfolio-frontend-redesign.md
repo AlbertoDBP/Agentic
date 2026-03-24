@@ -40,7 +40,7 @@ class ScoreResponse(BaseModel):
     # ── IES additions ──
     ies_score: Optional[float] = None
     ies_calculated: bool = False
-    ies_blocked_reason: Optional[str] = None      # UNSAFE_FLAG|HHS_BELOW_THRESHOLD
+    ies_blocked_reason: Optional[str] = None      # UNSAFE_FLAG|HHS_BELOW_THRESHOLD|GATE_FAIL
 
     # ── Quality Gate surface ──
     quality_gate_status: str = "PASS"             # PASS|FAIL|INSUFFICIENT_DATA
@@ -56,17 +56,19 @@ class ScoreResponse(BaseModel):
 
 Add `_compute_hhs()` helper in `scores.py`, called **after** signal penalty is applied and **before** DB persist (between steps 5b and 6 in `evaluate_score`).
 
-`_compute_ceilings()` is the existing standalone function in `income_scorer.py` — no new import needed (it is already in scope via `from app.scoring.income_scorer import IncomeScorer, ScoreResult`; add `_compute_ceilings` to that import).
+The income and durability pillar scores are derived directly from the already-computed sub-totals (`valuation_yield_score`, `financial_durability_score`), normalized to 0–100 using the pillar budget from the weight profile. `valuation_yield_score` is intentionally used pre-NAV-erosion — NAV erosion modifies `total_score` only, not pillar sub-totals, so no inconsistency. Scores are clamped to `[0, 100]` to handle edge values. `fcf_coverage` is part of `valuation_yield_score` and therefore included in the Income pillar (consistent with §1.3).
 
-The income and durability pillar scores are derived directly from the already-computed sub-totals (`valuation_yield_score`, `financial_durability_score`), normalized to 0–100 using the pillar budget from the weight profile. Scores are clamped to `[0, 100]` to handle edge cases where sub-component totals exceed the pillar ceiling (e.g., NAV erosion applied before this helper runs). `fcf_coverage` is part of `valuation_yield_score` and therefore included in the Income pillar (consistent with §1.3).
-
-**`quality_gate_status` derivation — call site in `evaluate_score`:** In the existing code, failed gates are vetoed before scoring via HTTP 422. The only non-PASS case that reaches the scorer is `GateStatus.INSUFFICIENT_DATA` (treated as provisional pass). Derive the status string at the call site:
+**`quality_gate_status` derivation — call site in `evaluate_score`:** In the existing code, failed gates are vetoed before scoring via HTTP 422. The only non-PASS case that reaches the scorer is `GateStatus.INSUFFICIENT_DATA` (treated as provisional pass). `gate_proxy` is either a `QualityGateResult` ORM row (no `.status` attribute, only `.passed`) or an inline `GateResult` dataclass (has `.status`). Derive the status at the call site with two explicit branches:
 
 ```python
 # After step 5b (signal penalty), before step 6 (DB persist):
+# gate_proxy is ORM QualityGateResult when loaded from DB (passed=True always at this point)
+# gate_proxy is inline GateResult dataclass when gate was run inline
+from app.scoring.quality_gate import GateStatus
+_inline_status = getattr(gate_proxy, "status", None)  # None for ORM rows
 _gate_status = (
     "INSUFFICIENT_DATA"
-    if getattr(gate_proxy, "status", None) == GateStatus.INSUFFICIENT_DATA
+    if _inline_status == GateStatus.INSUFFICIENT_DATA
     else "PASS"
 )
 hhs_fields  = _compute_hhs(result, weight_profile, _gate_status)
@@ -171,11 +173,11 @@ def _compute_ies_gate(result: ScoreResult, profile: dict, hhs_fields: dict) -> d
 
     # Determine why IES was blocked
     if hhs_score is None:
-        reason = "HHS_BELOW_THRESHOLD"   # gate-failed / INSUFFICIENT_DATA → no HHS
+        reason = "GATE_FAIL"             # gate-failed / INSUFFICIENT_DATA → no HHS
     elif unsafe_flag is True:
         reason = "UNSAFE_FLAG"
     else:
-        reason = "HHS_BELOW_THRESHOLD"
+        reason = "HHS_BELOW_THRESHOLD"   # hhs_score <= 50
 
     return {"ies_score": None, "ies_calculated": False, "ies_blocked_reason": reason}
 ```
@@ -184,11 +186,11 @@ def _compute_ies_gate(result: ScoreResult, profile: dict, hhs_fields: dict) -> d
 
 Add `_generate_hhs_commentary()` alongside existing `_generate_commentary()`. New function references only INC/DUR pillar components. Existing `score_commentary` is unchanged (still V6-based for backward compat). `hhs_commentary` is the field shown in the Health Tab detail pane.
 
-`hhs_commentary` is **persisted as a plain string column** in `income_scores` (same as `score_commentary`). It is generated at score time by `_generate_hhs_commentary()` and written to the DB alongside the other HHS fields. `_orm_to_response()` reads it back directly from the ORM row — it is never regenerated at read time. Legacy rows (no HHS data) have `NULL` for this column; the frontend falls back to `score_commentary` with a "V6 commentary" label.
+**Note:** `score_commentary` is **not** persisted in the DB — it is regenerated at read time inside `_orm_to_response()`. `hhs_commentary` works differently: it is **persisted as a new string column** in `income_scores` (requires adding `hhs_commentary = Column(Text, nullable=True)` to the `IncomeScore` ORM model and writing it in the `evaluate_score` DB persist block). `_orm_to_response()` reads it back from the ORM row directly — no regeneration. Legacy rows have `NULL`; the frontend falls back to `score_commentary` with a "V6 commentary" label.
 
 ### 1.6 New portfolio aggregate endpoints
 
-Two new endpoints added to the **`broker-service`** (the existing service that owns portfolio and position data). The broker-service fetches HHS/IES score data for each holding by calling `GET /scores/{ticker}` on Agent 03's API (same pattern used by Agent 07). Aggregation (weighted averages, HHI, concentration bars) is computed in the broker-service from the collected `ScoreResponse` objects. If Agent 03 is unavailable, the endpoint returns portfolio identity fields with all aggregate score fields as `null` and an `"scores_unavailable": true` flag — the frontend renders KPI cells as "—" in this case.
+Two new endpoints added to **`src/broker-service/`** (the existing service that owns portfolio and position data). The broker-service fetches HHS/IES score data for each holding by calling `GET /scores/{ticker}` on Agent 03's API (same pattern used by Agent 07). Aggregation (weighted averages, HHI, concentration bars) is computed in the broker-service from the collected `ScoreResponse` objects. If Agent 03 is unavailable, the endpoint returns portfolio identity fields with all aggregate score fields as `null` and an `"scores_unavailable": true` flag — the frontend renders KPI cells as "—" in this case.
 
 ```text
 GET /portfolios
@@ -255,7 +257,7 @@ These endpoints aggregate from existing position and score data in the DB. If NA
 | 1 | Total AUM | Sum of market value | "Combined market value across all portfolios." |
 | 2 | Ann. Income | Sum of projected annual dividends | "Projected annual income based on current dividends." |
 | 3 | Blended NAA Yield | Income-weighted average NAA Yield across all holdings. Holdings missing tax data use gross yield; strip shows `PRE_TAX*` indicator if any fallback applied. | "Net After-All Yield weighted by income contribution. * = some holdings shown pre-tax." |
-| 4 | Avg HHS | Value-weighted average `hhs_score` (gate-failed and stale >24h excluded) | "Position-weighted average HHS across all portfolios. Gate-failed and stale holdings excluded." |
+| 4 | Avg HHS | Value-weighted average `hhs_score` (gate-failed excluded; stale excluded where `valid_until < now()` on the `IncomeScore` row) | "Position-weighted average HHS across all portfolios. Gate-failed and stale holdings excluded." |
 | 5 | Portfolios | Count of active portfolios | — |
 | 6 | ⚠ UNSAFE | Count of `unsafe_flag = True` across all portfolios | "Holdings where Durability ≤ unsafe threshold. Immediate review recommended." |
 
@@ -332,8 +334,8 @@ Collapsible header bar between KPI strip and tab bar. **Default: expanded.**
 #### Panel C — Sector / Industry Concentration
 
 - Row list: sector · proportional bar · %
-- Amber warning when any single sector exceeds the active risk profile's **sector concentration threshold**: conservative 20% / moderate 25% / aggressive 35% (distinct from the single-holding HHI thresholds in the HHS spec §6.2)
-- Risk profile sourced from portfolio settings
+- Amber warning when any single sector exceeds the **sector concentration threshold**: conservative 20% / moderate 25% / aggressive 35% (distinct from the single-holding HHI thresholds in the HHS spec §6.2)
+- Risk profile level sourced from a `risk_profile` field on the portfolio entity (`"conservative"` | `"moderate"` | `"aggressive"`; default `"moderate"`). Thresholds are **frontend constants** keyed by that string — no new backend API needed.
 
 ### 4.4 Tab Bar
 
@@ -456,7 +458,7 @@ Existing `/income-simulation` content scoped to the current portfolio via `?port
 
 ### 5.6 Income Projection Tab
 
-Existing `/projection` content scoped via `?portfolio_id=[id]`. Standalone route remains.
+Existing `income-projection/page.tsx` content scoped via `defaultPortfolioId` prop. `income-projection/page.tsx` currently exports only a default `ProjectionPage` — add a named `ProjectionContent` export accepting `{ defaultPortfolioId?: string }` (mirrors the existing `SimulationContent` pattern in `income-simulation/page.tsx`). Standalone route remains.
 
 Same design-system alignment as §5.5. `hhs_score` used as reliability weighting: lower HHS → wider confidence band on projected income. UNSAFE holdings flagged in the projection timeline with ⚠ annotation.
 
@@ -524,7 +526,7 @@ Minimum label size is **0.625rem** (10px at 16px base) to meet WCAG AA for bold 
 
 Single global tooltip implemented as a **React Portal** (consistent with the existing `HelpTooltip` component pattern). A `<TooltipPortal>` renders into `document.body` at app init.
 
-**Bubble markup:** `<HelpBubble tip="..." />` — reuses the existing `HelpTooltip` component, styled as a 14×14px circle with `?`.
+**Bubble markup:** `<HelpTooltip text="..." />` — the existing `HelpTooltip` component (uses `text` prop, not `tip`), styled as a 14×14px circle with `?`.
 
 **Positioning:** `position: fixed`, JS-computed from element's `getBoundingClientRect()`. Clamped to viewport. Font 0.68rem, max-width 200px, line-height 1.5.
 
@@ -550,7 +552,7 @@ Card scroll row: `overflow-x: auto` flex row on all viewports.
 | Route | Page | Notes |
 | ----- | ---- | ----- |
 | `/dashboard` | Grand Dashboard | New root entry point for portfolio section |
-| `/portfolio` | Redirect → `/dashboard` | Backward compat |
+| `/portfolio` | Redirect → `/dashboard` | **Replaces existing `portfolio/page.tsx`.** Current page content moves to `/portfolios/[id]`. Add `redirect('/dashboard')` at the top of `portfolio/page.tsx`. |
 | `/portfolios/[id]` | Per-portfolio page, Portfolio tab | New route (plural) |
 | `/portfolios/[id]?tab=market` | Market tab | Deep-linkable |
 | `/portfolios/[id]?tab=health` | Health tab | Deep-linkable |
