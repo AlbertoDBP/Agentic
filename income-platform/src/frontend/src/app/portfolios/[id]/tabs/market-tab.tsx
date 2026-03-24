@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
 import { TickerBadge } from "@/components/ticker-badge";
@@ -15,24 +15,26 @@ interface MarketTabProps {
 
 export function MarketTab({ portfolioId }: MarketTabProps) {
   const [positions, setPositions] = useState<Position[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Position | null>(null);
 
   useEffect(() => {
     if (!portfolioId) return;
     const token = typeof window !== "undefined" ? localStorage.getItem("token") ?? "" : "";
+    setLoading(true);
+    setFetchError(null);
     fetch(`${API_BASE_URL}/api/portfolios/${portfolioId}/positions`, {
       headers: { Authorization: `Bearer ${token}` },
       credentials: "include",
     })
-      .then((r) => r.ok ? r.json() as Promise<Position[]> : Promise.resolve([]))
-      .then(setPositions)
-      .catch(() => setPositions([]));
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => { setPositions(data); setLoading(false); })
+      .catch(err => { setFetchError(err.message); setLoading(false); });
   }, [portfolioId]);
-
-  const filtered = useMemo(
-    () => positions.filter((p) => p.portfolio_id === portfolioId),
-    [positions, portfolioId]
-  );
 
   const columns: ColumnDef<Position>[] = [
     {
@@ -85,12 +87,19 @@ export function MarketTab({ portfolioId }: MarketTabProps) {
     },
   ];
 
+  if (loading) return <div className="p-4 text-muted-foreground text-sm animate-pulse">Loading…</div>;
+  if (fetchError) return (
+    <div className="bg-red-950/40 border border-red-900/50 rounded-lg p-3 text-sm text-red-400">
+      Failed to load positions: {fetchError}
+    </div>
+  );
+
   return (
     <div className="flex gap-3">
       <div className="flex-1 min-w-0">
         <DataTable
           columns={columns}
-          data={filtered}
+          data={positions}
           storageKey={`market-tab-${portfolioId}`}
           enableRowSelection
           onRowClick={(row) =>
@@ -116,8 +125,8 @@ export function MarketTab({ portfolioId }: MarketTabProps) {
             {(
               [
                 ["Price", formatCurrency(selected.market_price ?? 0)],
-                ["52w High", formatCurrency(selected.week52_high ?? 0)],
-                ["52w Low", formatCurrency(selected.week52_low ?? 0)],
+                ["52w High", selected.week52_high != null ? formatCurrency(selected.week52_high) : "—"],
+                ["52w Low", selected.week52_low != null ? formatCurrency(selected.week52_low) : "—"],
                 [
                   "Div Yield",
                   selected.current_yield != null
