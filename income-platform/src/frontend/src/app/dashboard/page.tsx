@@ -1,5 +1,5 @@
 "use client";
-import { useRef } from "react";
+import { useRef, useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { usePortfolios } from "@/lib/hooks/use-portfolios";
 import { PortfolioCard, AddPortfolioCard } from "@/components/portfolio/portfolio-card";
@@ -10,6 +10,17 @@ import { HHS_HELP } from "@/lib/help-content";
 export default function DashboardPage() {
   const { data: portfolios, isLoading, error, refetch } = usePortfolios();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScroll, setCanScroll] = useState(false);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const check = () => setCanScroll(el.scrollWidth > el.clientWidth);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [portfolios]);
 
   const scroll = (dir: "left" | "right") => {
     scrollRef.current?.scrollBy({ left: dir === "left" ? -316 : 316, behavior: "smooth" });
@@ -67,7 +78,7 @@ export default function DashboardPage() {
             {portfolios.map(p => <PortfolioCard key={p.id} portfolio={p} />)}
             <AddPortfolioCard />
           </div>
-          {portfolios.length > 2 && (
+          {canScroll && (
             <div className="flex gap-2 justify-end mt-2">
               <button onClick={() => scroll("left")} className="p-1 rounded border border-border text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" /></button>
               <button onClick={() => scroll("right")} className="p-1 rounded border border-border text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4" /></button>

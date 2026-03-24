@@ -1,6 +1,6 @@
 "use client";
-import { useRouter } from "next/navigation";
-import { cn, formatCurrency } from "@/lib/utils";
+import Link from "next/link";
+import { cn, formatCurrency, formatPercent } from "@/lib/utils";
 import type { PortfolioListItem } from "@/lib/types";
 import { HhsBadge } from "./hhs-badge";
 import { ConcentrationBar } from "./concentration-bar";
@@ -11,13 +11,9 @@ interface PortfolioCardProps {
 }
 
 export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
-  const router = useRouter();
-  const navigate = () => router.push(`/portfolios/${p.id}`);
-
   return (
     <div
       className="bg-card border border-border rounded-xl flex-shrink-0 w-[300px] overflow-hidden cursor-pointer hover:border-border/80 transition-colors"
-      onClick={navigate}
       style={{ scrollSnapAlign: "start" }}
     >
       {/* Header */}
@@ -41,16 +37,16 @@ export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
       {/* KPI grid 3×2 */}
       <div className="grid grid-cols-3 gap-px bg-border/30 border-b border-border/50">
         {[
-          { label: "Value",    value: formatCurrency(p.total_value) },
-          { label: "Income",   value: formatCurrency(p.annual_income) },
-          { label: "Yield",    value: p.naa_yield != null ? `${(p.naa_yield * 100).toFixed(2)}%${p.naa_yield_pre_tax ? "*" : ""}` : "—" },
-          { label: "HHI",      value: p.hhi?.toFixed(3) ?? "—" },
-          { label: "Holdings", value: p.holding_count },
-          { label: "⚠ UNSAFE", value: p.unsafe_count > 0 ? p.unsafe_count : "✓" },
+          { label: "Value",        value: formatCurrency(p.total_value) },
+          { label: "Ann. Income",  value: formatCurrency(p.annual_income) },
+          { label: "Yield",        value: p.naa_yield != null ? formatPercent(p.naa_yield) : "—" },
+          { label: "Total Return", value: "—" },
+          { label: "Positions",    value: p.holding_count },
+          { label: "HHI",         value: p.hhi != null ? p.hhi.toFixed(3) : "—" },
         ].map((kpi, i) => (
           <div key={i} className="bg-card px-2.5 py-1.5">
             <div className="text-[0.55rem] font-bold uppercase text-muted-foreground">{kpi.label}</div>
-            <div className={cn("text-xs font-bold mt-0.5", i === 5 && p.unsafe_count > 0 ? "text-red-400" : "text-foreground")}>
+            <div className={cn("text-xs font-bold mt-0.5 text-foreground")}>
               {kpi.value}
             </div>
           </div>
@@ -71,12 +67,13 @@ export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
             <span className="bg-red-950 text-red-400 rounded px-1.5 py-0.5 font-bold">⚠ {p.unsafe_count} UNSAFE</span>
           )}
         </div>
-        <button
+        <Link
+          href={`/portfolios/${p.id}`}
           className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 font-medium"
-          onClick={navigate}
+          onClick={(e) => e.stopPropagation()}
         >
           Open <ArrowRight className="h-3 w-3" />
-        </button>
+        </Link>
       </div>
     </div>
   );
