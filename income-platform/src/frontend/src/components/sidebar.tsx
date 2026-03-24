@@ -20,8 +20,8 @@ import { PortfolioSwitcher } from "./portfolio-switcher";
 import { usePortfolio } from "@/lib/portfolio-context";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/portfolio", label: "Portfolio", icon: Briefcase },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard", label: "Portfolios", icon: Briefcase },
   { href: "/income-projection",  label: "Income Projection",  icon: TrendingUp },
   { href: "/alerts",             label: "Alerts",             icon: Bell },
   { href: "/proposals",          label: "Proposals",          icon: FileCheck },
