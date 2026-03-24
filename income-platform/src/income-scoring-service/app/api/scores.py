@@ -397,6 +397,22 @@ def _orm_to_response(score: IncomeScore, tax_efficiency: Optional[dict] = None) 
             chowder_number=fd.get("chowder_number"),
             data_completeness_pct=dcp,
         ),
+        # HHS/IES fields (v3.0)
+        hhs_score=score.hhs_score,
+        income_pillar_score=score.income_pillar_score,
+        durability_pillar_score=score.durability_pillar_score,
+        income_weight=score.income_weight,
+        durability_weight=score.durability_weight,
+        unsafe_flag=score.unsafe_flag,
+        unsafe_threshold=score.unsafe_threshold or 20,
+        hhs_status=score.hhs_status,
+        ies_score=score.ies_score,
+        ies_calculated=score.ies_calculated or False,
+        ies_blocked_reason=score.ies_blocked_reason,
+        quality_gate_status=score.quality_gate_status or "PASS",
+        quality_gate_reasons=score.quality_gate_reasons,
+        hhs_commentary=score.hhs_commentary,
+        valid_until=score.valid_until,
     )
 
 
@@ -739,6 +755,24 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
     except Exception as exc:
         logger.warning("Signal penalty layer error for %s: %s", ticker, exc)
 
+    # 5c. HHS / IES computation
+    from app.scoring.quality_gate import GateStatus
+    _inline_status = getattr(gate_proxy, "status", None)
+    _gate_status = (
+        "INSUFFICIENT_DATA"
+        if _inline_status == GateStatus.INSUFFICIENT_DATA
+        else "PASS"
+    )
+    hhs_fields = _compute_hhs(result, weight_profile, _gate_status)
+    ies_fields = _compute_ies_gate(result, weight_profile, hhs_fields)
+    quality_gate_status_str = _gate_status
+    quality_gate_reasons_list = getattr(gate_proxy, "fail_reasons", None) or []
+    hhs_commentary_str = _generate_hhs_commentary(
+        hhs_fields=hhs_fields,
+        factor_details=result.factor_details or {},
+        asset_class=asset_class,
+    )
+
     # 6. Persist to DB
     now        = datetime.now(timezone.utc)
     valid_until = now + timedelta(seconds=settings.cache_ttl_score)
@@ -782,6 +816,20 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         weight_profile_id=weight_profile_id,
         signal_penalty=signal_penalty_amt,
         signal_penalty_details=signal_penalty_details,
+        hhs_score=hhs_fields["hhs_score"],
+        income_pillar_score=hhs_fields["income_pillar_score"],
+        durability_pillar_score=hhs_fields["durability_pillar_score"],
+        income_weight=hhs_fields["income_weight"],
+        durability_weight=hhs_fields["durability_weight"],
+        unsafe_flag=hhs_fields["unsafe_flag"],
+        unsafe_threshold=hhs_fields["unsafe_threshold"],
+        hhs_status=hhs_fields["hhs_status"],
+        ies_score=ies_fields["ies_score"],
+        ies_calculated=ies_fields["ies_calculated"],
+        ies_blocked_reason=ies_fields["ies_blocked_reason"],
+        quality_gate_status=quality_gate_status_str,
+        quality_gate_reasons=quality_gate_reasons_list or None,
+        hhs_commentary=hhs_commentary_str,
     )
     try:
         db.add(db_score)
