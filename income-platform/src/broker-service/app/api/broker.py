@@ -381,15 +381,15 @@ async def cancel_order(order_id: str, broker: str = "alpaca"):
 async def list_portfolios(db: Session = Depends(get_db)):
     """List all portfolios with aggregate KPIs."""
     rows = db.execute(text("""
-        SELECT p.id, p.name, p.account_type AS tax_status, a.broker,
+        SELECT p.id, p.portfolio_name AS name, a.account_type AS tax_status, a.broker,
                COUNT(pos.id) AS holding_count, p.last_refreshed_at,
                SUM(pos.current_value) AS total_value,
                SUM(pos.annual_income) AS annual_income
         FROM platform_shared.portfolios p
-        LEFT JOIN platform_shared.accounts a ON a.portfolio_id = p.id
+        LEFT JOIN platform_shared.accounts a ON a.id = p.account_id
         LEFT JOIN platform_shared.positions pos ON pos.portfolio_id = p.id
-        GROUP BY p.id, p.name, p.account_type, a.broker, p.last_refreshed_at
-        ORDER BY p.name
+        GROUP BY p.id, p.portfolio_name, a.account_type, a.broker, p.last_refreshed_at
+        ORDER BY p.portfolio_name
     """)).mappings().all()
 
     results = []
@@ -414,10 +414,10 @@ async def list_portfolios(db: Session = Depends(get_db)):
 async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
     """Full portfolio summary for the portfolio page."""
     row = db.execute(text("""
-        SELECT p.id, p.name, p.account_type AS tax_status, a.broker,
+        SELECT p.id, p.portfolio_name AS name, a.account_type AS tax_status, a.broker,
                p.last_refreshed_at
         FROM platform_shared.portfolios p
-        LEFT JOIN platform_shared.accounts a ON a.portfolio_id = p.id
+        LEFT JOIN platform_shared.accounts a ON a.id = p.account_id
         WHERE p.id = :id
         LIMIT 1
     """), {"id": portfolio_id}).mappings().first()
@@ -443,8 +443,9 @@ async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
 def _get_positions_for_portfolio(db: Session, portfolio_id: str) -> list[dict]:
     rows = db.execute(text("""
         SELECT pos.symbol, pos.current_value, pos.annual_income,
-               pos.asset_type, pos.sector, pos.industry
+               sec.asset_type, pos.sector, sec.industry
         FROM platform_shared.positions pos
+        LEFT JOIN platform_shared.securities sec ON sec.symbol = pos.symbol
         WHERE pos.portfolio_id = :pid
     """), {"pid": portfolio_id}).mappings().all()
     return [dict(r) for r in rows]
