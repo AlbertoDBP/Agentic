@@ -11,6 +11,31 @@ export const POLLING = {
   portfolio: 300_000,
 } as const;
 
+export const DESIGN_TOKENS = {
+  // HHS status colors (maps hhs_status → CSS class prefix)
+  HHS_STATUS_COLORS: {
+    STRONG:       "text-green-400",
+    GOOD:         "text-green-400",
+    WATCH:        "text-amber-400",
+    CONCERN:      "text-orange-400",
+    UNSAFE:       "text-red-400",
+    INSUFFICIENT: "text-slate-500",
+  } as Record<string, string>,
+
+  // Asset-class colors for concentration bars (matches spec §6.1)
+  ASSET_CLASS_COLORS: {
+    BDC:                "bg-purple-400",
+    EQUITY_REIT:        "bg-blue-500",
+    MORTGAGE_REIT:      "bg-blue-400",
+    COVERED_CALL_ETF:   "bg-amber-400",
+    MLP:                "bg-teal-400",
+    DIVIDEND_STOCK:     "bg-green-500",
+    BOND:               "bg-yellow-200",
+    PREFERRED_STOCK:    "bg-pink-400",
+    UNKNOWN:            "bg-slate-600",
+  } as Record<string, string>,
+} as const;
+
 export const ASSET_CLASS_COLORS: Record<string, string> = {
   // Human-readable labels (used in edit dropdowns / older DB entries)
   "Common Stock": "#3b82f6",
