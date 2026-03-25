@@ -44,7 +44,7 @@ export default function DashboardPage() {
     { label: "Total AUM",     value: formatCurrency(totalAum),            helpText: "Combined market value across all portfolios." },
     { label: "Ann. Income",   value: formatCurrency(totalIncome),          helpText: "Projected annual income based on current dividends." },
     { label: "Avg HHS",       value: avgHhs != null ? avgHhs.toFixed(1) : "—",
-      colorClass: avgHhs != null ? (avgHhs >= 70 ? "text-green-400" : avgHhs >= 50 ? "text-amber-400" : "text-red-400") : undefined,
+      colorClass: avgHhs != null ? (avgHhs >= 85 ? "text-green-400" : avgHhs >= 70 ? "text-lime-400" : avgHhs >= 50 ? "text-amber-400" : "text-red-400") : undefined,
       helpText: HHS_HELP.agg_hhs },
     { label: "Portfolios",    value: portfolios?.length ?? 0 },
     { label: "⚠ UNSAFE",      value: unsafeTotal, colorClass: unsafeTotal > 0 ? "text-red-400" : undefined,

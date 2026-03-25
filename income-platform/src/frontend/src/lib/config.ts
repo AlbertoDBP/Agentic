@@ -12,12 +12,12 @@ export const POLLING = {
 } as const;
 
 export const DESIGN_TOKENS = {
-  // HHS status colors (maps hhs_status → CSS class prefix)
+  // HHS status colors — traffic-light: STRONG=green, GOOD=lime, WATCH=amber, CONCERN/UNSAFE=red
   HHS_STATUS_COLORS: {
     STRONG:       "text-green-400",
-    GOOD:         "text-green-400",
+    GOOD:         "text-lime-400",
     WATCH:        "text-amber-400",
-    CONCERN:      "text-orange-400",
+    CONCERN:      "text-red-400",
     UNSAFE:       "text-red-400",
     INSUFFICIENT: "text-slate-500",
   } as Record<string, string>,

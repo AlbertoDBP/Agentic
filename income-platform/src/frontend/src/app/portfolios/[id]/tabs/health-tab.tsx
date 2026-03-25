@@ -6,7 +6,7 @@ import { TickerBadge } from "@/components/ticker-badge";
 import { HhsBadge } from "@/components/portfolio/hhs-badge";
 import { ColHeader } from "@/components/help-tooltip";
 import { HHS_HELP, HOLDINGS_HELP } from "@/lib/help-content";
-import { cn } from "@/lib/utils";
+import { cn, scoreTextColor, scoreBadgeColor } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
 
@@ -82,21 +82,33 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
       accessorKey: "income_pillar_score",
       header: () => <ColHeader label="Income" helpKey="income_pillar" helpMap={HHS_HELP} />,
       meta: { label: "Income Pillar" },
-      cell: ({ getValue }) => getValue() != null ? `${(getValue() as number).toFixed(0)}/100` : "—",
+      cell: ({ getValue }) => {
+        const v = getValue() as number | null;
+        if (v == null) return <span className="text-muted-foreground">—</span>;
+        return <span className={cn("font-medium tabular-nums", scoreTextColor(v))}>{v.toFixed(0)}</span>;
+      },
     },
     {
       accessorKey: "durability_pillar_score",
       header: () => <ColHeader label="Durability" helpKey="durability_pillar" helpMap={HHS_HELP} />,
       meta: { label: "Durability Pillar" },
-      cell: ({ getValue }) => getValue() != null ? `${(getValue() as number).toFixed(0)}/100` : "—",
+      cell: ({ getValue }) => {
+        const v = getValue() as number | null;
+        if (v == null) return <span className="text-muted-foreground">—</span>;
+        return <span className={cn("font-medium tabular-nums", scoreTextColor(v))}>{v.toFixed(0)}</span>;
+      },
     },
     {
       accessorKey: "ies_score",
       header: () => <ColHeader label="IES" helpKey="ies_score" helpMap={HHS_HELP} />,
       meta: { label: "IES Entry Score" },
-      cell: ({ row }) => row.original.ies_calculated
-        ? `${row.original.ies_score?.toFixed(0)}/100`
-        : <span className="text-muted-foreground text-xs">{row.original.ies_blocked_reason ?? "—"}</span>,
+      cell: ({ row }) => {
+        if (!row.original.ies_calculated)
+          return <span className="text-muted-foreground text-xs">{row.original.ies_blocked_reason ?? "—"}</span>;
+        const v = row.original.ies_score ?? null;
+        if (v == null) return <span className="text-muted-foreground">—</span>;
+        return <span className={cn("font-medium tabular-nums", scoreTextColor(v))}>{v.toFixed(0)}</span>;
+      },
     },
     {
       accessorKey: "quality_gate_status",
@@ -209,8 +221,16 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
                   HHS = (Income × {((selected.income_weight ?? 0.5) * 100).toFixed(0)}%) + (Durability × {((selected.durability_weight ?? 0.5) * 100).toFixed(0)}%)
                 </div>
                 <div className="mt-2.5 grid grid-cols-2 gap-y-2.5 gap-x-3">
-                  <DetailRow label="Income Pillar" value={selected.income_pillar_score != null ? `${selected.income_pillar_score.toFixed(0)}/100` : "—"} />
-                  <DetailRow label="Durability Pillar" value={selected.durability_pillar_score != null ? `${selected.durability_pillar_score.toFixed(0)}/100` : "—"} />
+                  <DetailRow
+                    label="Income Pillar"
+                    value={selected.income_pillar_score != null ? `${selected.income_pillar_score.toFixed(0)}/100` : "—"}
+                    className={scoreTextColor(selected.income_pillar_score)}
+                  />
+                  <DetailRow
+                    label="Durability Pillar"
+                    value={selected.durability_pillar_score != null ? `${selected.durability_pillar_score.toFixed(0)}/100` : "—"}
+                    className={scoreTextColor(selected.durability_pillar_score)}
+                  />
                 </div>
                 {selected.unsafe_flag && (
                   <div className="mt-2 bg-red-950/40 border border-red-900/50 rounded p-2 text-xs text-red-400">
@@ -246,7 +266,7 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
                           <td className="py-1 text-center">
                             <span className={cn("text-[0.6rem] font-bold px-1 rounded", PILLAR_COLOR[pillar])}>{pillar}</span>
                           </td>
-                          <td className="py-1 text-right text-muted-foreground">
+                          <td className={cn("py-1 text-right tabular-nums", val?.score != null ? scoreTextColor(val.score) : "text-muted-foreground")}>
                             {val?.score?.toFixed(1) ?? "—"}
                           </td>
                         </tr>
@@ -261,7 +281,9 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
           <section>
             <SectionTitle label="IES — Entry Score" />
             {selected.ies_calculated ? (
-              <div className="text-sm font-bold">{selected.ies_score?.toFixed(0)}/100</div>
+              <div className={cn("text-sm font-bold tabular-nums", scoreTextColor(selected.ies_score))}>
+                {selected.ies_score?.toFixed(0)}/100
+              </div>
             ) : (
               <div className="text-muted-foreground text-xs">
                 Blocked: {selected.ies_blocked_reason ?? "—"}

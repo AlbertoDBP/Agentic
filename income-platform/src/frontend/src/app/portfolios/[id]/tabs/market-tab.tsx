@@ -5,7 +5,7 @@ import { DataTable } from "@/components/data-table";
 import { TickerBadge } from "@/components/ticker-badge";
 import { ColHeader } from "@/components/help-tooltip";
 import { MARKET_HELP } from "@/lib/help-content";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, rangePositionColor, rangeBarColor } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
@@ -30,6 +30,34 @@ function DetailRow({ label, value, className }: { label: string; value: string; 
 
 function SectionTitle({ label }: { label: string }) {
   return <div className="text-xs font-semibold uppercase tracking-wide text-blue-400 mb-2">{label}</div>;
+}
+
+function Week52Bar({ price, low, high }: { price: number | null; low: number | null; high: number | null }) {
+  if (price == null || low == null || high == null || high <= low) return null;
+  const range = high - low;
+  const positionPct = Math.min(100, Math.max(0, ((price - low) / range) * 100));
+  const barFill = rangeBarColor(positionPct);
+  return (
+    <div className="col-span-2 mt-1">
+      <div className="flex justify-between text-[0.6rem] text-muted-foreground mb-1">
+        <span>{formatCurrency(low)}</span>
+        <span className={cn("font-semibold text-xs tabular-nums", rangePositionColor(positionPct))}>
+          {positionPct.toFixed(0)}% of range
+        </span>
+        <span>{formatCurrency(high)}</span>
+      </div>
+      <div className="relative h-1.5 w-full rounded-full bg-muted/50">
+        <div
+          className={cn("absolute top-0 left-0 h-full rounded-full", barFill)}
+          style={{ width: `${positionPct}%` }}
+        />
+        <div
+          className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-foreground border border-background shadow"
+          style={{ left: `calc(${positionPct}% - 4px)` }}
+        />
+      </div>
+    </div>
+  );
 }
 
 export function MarketTab({ portfolioId }: MarketTabProps) {
@@ -82,15 +110,44 @@ export function MarketTab({ portfolioId }: MarketTabProps) {
       },
     },
     {
+      id: "week52_range",
+      header: () => <ColHeader label="52w Position" helpKey="week52_range" helpMap={MARKET_HELP} />,
+      meta: { label: "52w Position" },
+      accessorFn: (row) => {
+        const p = row.market_price, lo = row.week52_low, hi = row.week52_high;
+        if (p == null || lo == null || hi == null || hi <= lo) return null;
+        return Math.min(100, Math.max(0, ((p - lo) / (hi - lo)) * 100));
+      },
+      cell: ({ row, getValue }) => {
+        const pct = getValue() as number | null;
+        if (pct == null) return <span className="text-muted-foreground">—</span>;
+        const lo = row.original.week52_low!, hi = row.original.week52_high!;
+        return (
+          <div className="min-w-20">
+            <div className={cn("text-xs font-medium tabular-nums mb-0.5", rangePositionColor(pct))}>
+              {pct.toFixed(0)}%
+            </div>
+            <div className="relative h-1 w-full rounded-full bg-muted/50">
+              <div className={cn("absolute top-0 left-0 h-full rounded-full", rangeBarColor(pct))} style={{ width: `${pct}%` }} />
+            </div>
+            <div className="flex justify-between text-[0.55rem] text-muted-foreground mt-0.5">
+              <span>{formatCurrency(lo)}</span>
+              <span>{formatCurrency(hi)}</span>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
       accessorKey: "week52_high",
       header: () => <ColHeader label="52w High" helpKey="week52_range" helpMap={MARKET_HELP} />,
-      meta: { label: "52w High" },
+      meta: { label: "52w High", defaultHidden: true },
       cell: ({ getValue }) => getValue() != null ? formatCurrency(getValue() as number) : "—",
     },
     {
       accessorKey: "week52_low",
       header: () => <ColHeader label="52w Low" helpKey="week52_range" helpMap={MARKET_HELP} />,
-      meta: { label: "52w Low" },
+      meta: { label: "52w Low", defaultHidden: true },
       cell: ({ getValue }) => getValue() != null ? formatCurrency(getValue() as number) : "—",
     },
     {
@@ -340,6 +397,7 @@ export function MarketTab({ portfolioId }: MarketTabProps) {
               />
               <DetailRow label="52w High" value={selected.week52_high != null ? formatCurrency(selected.week52_high) : "—"} />
               <DetailRow label="52w Low" value={selected.week52_low != null ? formatCurrency(selected.week52_low) : "—"} />
+              <Week52Bar price={selected.market_price ?? null} low={selected.week52_low ?? null} high={selected.week52_high ?? null} />
               {selected.analyst_price_target != null && (
                 <DetailRow label="Price Target" value={formatCurrency(selected.analyst_price_target)} />
               )}

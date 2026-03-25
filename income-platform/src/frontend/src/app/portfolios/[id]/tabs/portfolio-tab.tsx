@@ -6,7 +6,7 @@ import { TickerBadge } from "@/components/ticker-badge";
 import { HhsBadge } from "@/components/portfolio/hhs-badge";
 import { ColHeader } from "@/components/help-tooltip";
 import { HHS_HELP, HOLDINGS_HELP } from "@/lib/help-content";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, scoreTextColor } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
@@ -313,8 +313,16 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
               <div className="space-y-2">
                 <HhsBadge status={selected.hhs_status} score={selected.hhs_score} />
                 <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
-                  <DetailRow label="Income Pillar" value={selected.income_pillar_score != null ? `${selected.income_pillar_score.toFixed(0)}/100` : "—"} />
-                  <DetailRow label="Durability Pillar" value={selected.durability_pillar_score != null ? `${selected.durability_pillar_score.toFixed(0)}/100` : "—"} />
+                  <DetailRow
+                    label="Income Pillar"
+                    value={selected.income_pillar_score != null ? `${selected.income_pillar_score.toFixed(0)}/100` : "—"}
+                    className={scoreTextColor(selected.income_pillar_score)}
+                  />
+                  <DetailRow
+                    label="Durability Pillar"
+                    value={selected.durability_pillar_score != null ? `${selected.durability_pillar_score.toFixed(0)}/100` : "—"}
+                    className={scoreTextColor(selected.durability_pillar_score)}
+                  />
                 </div>
                 {selected.unsafe_flag && (
                   <div className="bg-red-950/40 border border-red-900/50 rounded p-2 text-xs text-red-400">
