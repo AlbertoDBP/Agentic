@@ -248,17 +248,7 @@ def _compute_hhs(result: ScoreResult, profile: dict, gate_status: str) -> dict:
     scoring proceeded but gate lacked data to fully evaluate).
     Hard-fail gates never reach this function (vetoed with HTTP 422 in evaluate_score).
     """
-    if gate_status == "INSUFFICIENT_DATA":
-        return {
-            "hhs_score": None,
-            "income_pillar_score": None,
-            "durability_pillar_score": None,
-            "unsafe_flag": None,
-            "hhs_status": "INSUFFICIENT",
-            "income_weight": None,
-            "durability_weight": None,
-            "unsafe_threshold": _HHS_UNSAFE_THRESHOLD,
-        }
+    provisional = gate_status == "INSUFFICIENT_DATA"
 
     wy = float(profile["weight_yield"])
     wd = float(profile["weight_durability"])
@@ -286,6 +276,10 @@ def _compute_hhs(result: ScoreResult, profile: dict, gate_status: str) -> dict:
         hhs_status = "WATCH"
     else:
         hhs_status = "CONCERN"
+
+    # Provisional: gate lacked data — score is computed but flagged
+    if provisional:
+        hhs_status = "~" + hhs_status
 
     return {
         "hhs_score": hhs,
@@ -653,17 +647,25 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         logger.error("Failed to fetch market data for %s: %s", ticker, e)
         market_data = {}
 
-    # 3. Gate resolution: DB hit → use it; no DB record → require gate_data or 422
+    # 3. Gate resolution: DB hit → use it; no record + no gate_data → provisional proxy
     gate_proxy = gate_db
     if gate_proxy is None:
         if req.gate_data is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"No passing quality gate record found for {ticker}. "
-                    "Run POST /quality-gate/evaluate first, or include gate data in this request."
-                ),
+            # No gate record and no inline data — synthesize a provisional INSUFFICIENT_DATA proxy
+            # so HHS can be computed for existing portfolio holdings without full gate history.
+            logger.info(
+                "No quality gate record for %s; using provisional INSUFFICIENT_DATA proxy", ticker
             )
+            gate_proxy = type("_ProvisionalGate", (), {
+                "status": GateStatus.INSUFFICIENT_DATA,
+                "passed": False,
+                "fail_reasons": ["No quality gate record — score is provisional"],
+                "id": None,
+            })()
+            gate_db = None  # no real gate_db to link quality_gate_id
+        else:
+            pass  # fall through to inline gate evaluation below
+    if gate_proxy is None and req.gate_data is not None:
         # Run gate inline from caller-supplied data
         try:
             inline_result = _run_gate_from_data(ticker, asset_class, req.gate_data)

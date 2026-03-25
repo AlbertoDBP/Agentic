@@ -43,6 +43,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - SERVICE_PORT=8001
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8001:8001"
@@ -74,6 +75,7 @@ services:
       - SERVICE_TOKEN=${SERVICE_TOKEN}
       - SERVICE_PORT=8002
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
       - PREFECT_SERVER_ALLOW_EPHEMERAL_MODE=true
       - PREFECT_HOME=/tmp/prefect
@@ -109,6 +111,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - SERVICE_PORT=8003
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8003:8003"
@@ -138,6 +141,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - SERVICE_PORT=8004
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8004:8004"
@@ -167,6 +171,7 @@ services:
       - ASSET_CLASSIFICATION_URL=http://agent-04-asset-classification:8004
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - DEBUG=${DEBUG:-false}
       - PYTHONUNBUFFERED=1
     depends_on:
@@ -190,6 +195,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - SERVICE_PORT=8006
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8006:8006"
@@ -217,6 +223,7 @@ services:
       - MARKET_DATA_API_KEY=${MARKET_DATA_API_KEY}
       - POLYGON_API_KEY=${POLYGON_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8007:8007"
@@ -245,6 +252,7 @@ services:
       - INCOME_SCORING_URL=http://agent-03-income-scoring:8003
       - TAX_OPTIMIZATION_URL=http://tax-optimization-service:8005
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8008:8008"
@@ -273,6 +281,7 @@ services:
       - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8009:8009"
@@ -299,6 +308,7 @@ services:
       - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8010:8010"
@@ -325,6 +335,7 @@ services:
       - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8011:8011"
@@ -355,6 +366,7 @@ services:
       - AGENT04_URL=http://agent-04-asset-classification:8004
       - AGENT05_URL=http://tax-optimization-service:8005
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8012:8012"
@@ -392,6 +404,7 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_BASE_URL=${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8013:8013"
@@ -417,6 +430,7 @@ services:
     environment:
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8099:8099"
@@ -453,6 +467,7 @@ services:
       - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8100:8100"
