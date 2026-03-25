@@ -756,7 +756,6 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
         logger.warning("Signal penalty layer error for %s: %s", ticker, exc)
 
     # 5c. HHS / IES computation
-    from app.scoring.quality_gate import GateStatus
     _inline_status = getattr(gate_proxy, "status", None)
     _gate_status = (
         "INSUFFICIENT_DATA"
