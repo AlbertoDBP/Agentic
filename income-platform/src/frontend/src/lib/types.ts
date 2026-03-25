@@ -302,6 +302,7 @@ export interface PortfolioListItem {
   naa_yield?: number | null;
   naa_yield_pre_tax?: boolean;
   agg_hhs?: number | null;
+  total_return?: number | null;
   hhi?: number;
   unsafe_count: number;
   gate_fail_count: number;

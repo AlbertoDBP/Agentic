@@ -395,9 +395,9 @@ async def list_portfolios(db: Session = Depends(get_db)):
     results = []
     for row in rows:
         # Fetch positions for this portfolio
-        positions = _get_positions_for_portfolio(db, row["id"])
-        # Fetch scores from Agent 03 (concurrent)
-        scores = await _fetch_scores_for_positions(positions)
+        positions = _get_positions_for_portfolio(db, str(row["id"]))
+        # Read scores directly from DB (bypasses HTTP + staleness issues)
+        scores = _get_scores_from_db(db, str(row["id"]))
         agg = aggregate_portfolio(positions, scores)
         results.append({
             "id": str(row["id"]),
@@ -426,7 +426,7 @@ async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
     positions = _get_positions_for_portfolio(db, portfolio_id)
-    scores = await _fetch_scores_for_positions(positions)
+    scores = _get_scores_from_db(db, portfolio_id)
     agg = aggregate_portfolio(positions, scores)
 
     return {
@@ -443,12 +443,54 @@ async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
 def _get_positions_for_portfolio(db: Session, portfolio_id: str) -> list[dict]:
     rows = db.execute(text("""
         SELECT pos.symbol, pos.current_value, pos.annual_income,
+               pos.total_cost_basis AS cost_basis,
+               pos.total_dividends_received,
                sec.asset_type, pos.sector, sec.industry
         FROM platform_shared.positions pos
         LEFT JOIN platform_shared.securities sec ON sec.symbol = pos.symbol
         WHERE pos.portfolio_id = :pid
+          AND pos.status = 'ACTIVE'
     """), {"pid": portfolio_id}).mappings().all()
     return [dict(r) for r in rows]
+
+
+def _get_scores_from_db(db: Session, portfolio_id: str) -> dict[str, dict]:
+    """Read latest HHS scores from income_scores table directly (no TTL/staleness)."""
+    rows = db.execute(text("""
+        SELECT DISTINCT ON (pos.symbol)
+            pos.symbol,
+            sc.hhs_score,
+            sc.hhs_status,
+            sc.unsafe_flag,
+            sc.quality_gate_status,
+            sc.income_pillar_score,
+            sc.durability_pillar_score,
+            sc.ies_score,
+            sc.ies_calculated,
+            sc.asset_class
+        FROM platform_shared.positions pos
+        LEFT JOIN platform_shared.income_scores sc ON sc.symbol = pos.symbol
+        WHERE pos.portfolio_id = :pid
+          AND pos.status = 'ACTIVE'
+        ORDER BY pos.symbol, sc.scored_at DESC NULLS LAST
+    """), {"pid": portfolio_id}).mappings().all()
+
+    result = {}
+    for row in rows:
+        if row["hhs_score"] is not None:
+            result[row["symbol"]] = {
+                "hhs_score": row["hhs_score"],
+                "hhs_status": row["hhs_status"],
+                "unsafe_flag": row["unsafe_flag"],
+                "quality_gate_status": row["quality_gate_status"],
+                "income_pillar_score": row["income_pillar_score"],
+                "durability_pillar_score": row["durability_pillar_score"],
+                "ies_score": row["ies_score"],
+                "ies_calculated": row["ies_calculated"],
+                "asset_class": row["asset_class"],
+                # No valid_until → _is_stale() returns False (treated as always fresh)
+            }
+    return result
 
 
 async def _fetch_scores_for_positions(positions: list[dict]) -> dict[str, dict]:

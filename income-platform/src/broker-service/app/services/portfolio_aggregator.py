@@ -49,14 +49,17 @@ def compute_hhi(weights: list[float]) -> float:
 def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
     """Compute portfolio-level aggregates from positions + score map.
 
-    positions: list of dicts with keys: symbol, current_value, annual_income
-    scores: ticker → ScoreResponse dict
+    positions: list of dicts with keys: symbol, current_value, annual_income,
+               cost_basis (optional), total_dividends_received (optional)
+    scores: ticker → ScoreResponse dict (no valid_until = always treated as fresh)
     """
     if not positions:
         return _empty_aggregate()
 
     total_value = sum(p.get("current_value") or 0 for p in positions)
     total_income = sum(p.get("annual_income") or 0 for p in positions)
+    total_cost = sum(p.get("cost_basis") or 0 for p in positions)
+    total_dividends = sum(p.get("total_dividends_received") or 0 for p in positions)
 
     hhs_values, hhs_weights = [], []
     unsafe_count = 0
@@ -95,6 +98,11 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
 
     # Weighted average HHS
     agg_hhs = round(sum(hhs_values), 2) if hhs_values else None
+
+    # Total Return: (current_value - cost_basis + dividends_received) / cost_basis
+    total_return = None
+    if total_cost > 0:
+        total_return = round(((total_value - total_cost + total_dividends) / total_cost) * 100, 2)
 
     # NAA Yield (use gross yield as proxy; full NAA requires tax service)
     naa_yield = round(total_income / total_value, 4) if total_value > 0 else None
@@ -136,6 +144,7 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
         "naa_yield_pre_tax": True,   # flag: using gross yield until tax service integrated
         "total_value": round(total_value, 2),
         "annual_income": round(total_income, 2),
+        "total_return": total_return,
         "hhi": hhi,
         "unsafe_count": unsafe_count,
         "gate_fail_count": gate_fail_count,
@@ -149,7 +158,7 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
 def _empty_aggregate() -> dict:
     return {
         "agg_hhs": None, "naa_yield": None, "naa_yield_pre_tax": True,
-        "total_value": 0.0, "annual_income": 0.0, "hhi": 0.0,
+        "total_value": 0.0, "annual_income": 0.0, "total_return": None, "hhi": 0.0,
         "unsafe_count": 0, "gate_fail_count": 0, "holding_count": 0,
         "concentration_by_class": [], "concentration_by_sector": [],
         "top_income_holdings": [],

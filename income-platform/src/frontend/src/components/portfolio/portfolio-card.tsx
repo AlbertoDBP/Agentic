@@ -37,16 +37,16 @@ export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
       {/* KPI grid 3×2 */}
       <div className="grid grid-cols-3 gap-px bg-border/30 border-b border-border/50">
         {[
-          { label: "Value",        value: formatCurrency(p.total_value) },
-          { label: "Ann. Income",  value: formatCurrency(p.annual_income) },
-          { label: "Yield",        value: p.naa_yield != null ? formatPercent(p.naa_yield) : "—" },
-          { label: "Total Return", value: "—" }, // total_return not yet in PortfolioListItem
-          { label: "Positions",    value: p.holding_count },
-          { label: "HHI",         value: p.hhi != null ? p.hhi.toFixed(3) : "—" },
+          { label: "Value",        value: formatCurrency(p.total_value), positive: null },
+          { label: "Ann. Income",  value: formatCurrency(p.annual_income), positive: null },
+          { label: "Yield",        value: p.naa_yield != null ? formatPercent(p.naa_yield) : "—", positive: null },
+          { label: "Total Return", value: p.total_return != null ? `${p.total_return >= 0 ? "+" : ""}${p.total_return.toFixed(1)}%` : "—", positive: p.total_return != null ? p.total_return >= 0 : null },
+          { label: "Positions",    value: p.holding_count, positive: null },
+          { label: "HHI",         value: p.hhi != null ? p.hhi.toFixed(3) : "—", positive: null },
         ].map((kpi, i) => (
           <div key={i} className="bg-card px-2.5 py-1.5">
             <div className="text-[0.55rem] font-bold uppercase text-muted-foreground">{kpi.label}</div>
-            <div className="text-xs font-bold mt-0.5 text-foreground">
+            <div className={cn("text-xs font-bold mt-0.5", kpi.positive === true ? "text-green-400" : kpi.positive === false ? "text-red-400" : "text-foreground")}>
               {kpi.value}
             </div>
           </div>
