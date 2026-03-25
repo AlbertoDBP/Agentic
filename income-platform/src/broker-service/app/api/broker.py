@@ -469,7 +469,7 @@ def _get_scores_from_db(db: Session, portfolio_id: str) -> dict[str, dict]:
             sc.ies_calculated,
             sc.asset_class
         FROM platform_shared.positions pos
-        LEFT JOIN platform_shared.income_scores sc ON sc.symbol = pos.symbol
+        LEFT JOIN platform_shared.income_scores sc ON sc.ticker = pos.symbol
         WHERE pos.portfolio_id = :pid
           AND pos.status = 'ACTIVE'
         ORDER BY pos.symbol, sc.scored_at DESC NULLS LAST
