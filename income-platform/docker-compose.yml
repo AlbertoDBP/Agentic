@@ -493,12 +493,15 @@ services:
       dockerfile: Dockerfile
       args:
         - ADMIN_PANEL_URL=http://admin-panel:8100
+        - BROKER_URL=http://broker-service:8013
     container_name: frontend
     environment:
       - JWT_SECRET=${JWT_SECRET}
       - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
       - HOSTNAME=0.0.0.0
       - ADMIN_PANEL_URL=http://admin-panel:8100
+      - BROKER_URL=http://broker-service:8013
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
     ports:
       - "8200:8200"
     depends_on:
