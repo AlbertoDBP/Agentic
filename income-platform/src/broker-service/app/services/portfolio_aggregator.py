@@ -93,7 +93,7 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
         gate_status = score.get("quality_gate_status", "PASS")
         if hhs is not None and gate_status in ("PASS", "INSUFFICIENT_DATA"):
             weight = float(val) / float(total_value) if total_value > 0 else 0
-            hhs_values.append(hhs * weight)
+            hhs_values.append(float(hhs) * weight)
             hhs_weights.append(weight)
 
     # Weighted average HHS
