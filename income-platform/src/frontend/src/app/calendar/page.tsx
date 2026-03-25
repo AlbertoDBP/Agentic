@@ -21,6 +21,8 @@ interface PositionMonth {
   annual_income: number;
   frequency: string;
   monthly: Record<number, number>;  // month_num → amount
+  ex_div_date?: string | null;
+  pay_date?: string | null;
 }
 
 interface IncomeByMonth {
@@ -95,18 +97,31 @@ export default function CalendarPage() {
       for (const pos of data.positions) {
         const amt = pos.monthly[calMonthNum];
         if (!amt) continue;
-        // Approximate payment day from frequency
-        const payDay = pos.frequency === "Monthly" ? 15
-          : pos.frequency === "Quarterly" ? 20
-          : pos.frequency === "Semi-Annual" ? 20
-          : 28;
-        const day = Math.min(payDay, daysInMonth);
+
+        // Use actual ex_div or pay date if available and matches this month/year
+        let day: number | null = null;
+        const dateStr = dateMode === "ex_date" ? pos.ex_div_date : pos.pay_date;
+        if (dateStr) {
+          const d = new Date(dateStr);
+          if (d.getFullYear() === year && d.getMonth() + 1 === calMonthNum) {
+            day = d.getDate();
+          }
+        }
+        // Fall back to frequency-based approximation
+        if (!day) {
+          const approx = pos.frequency === "Monthly" ? 15
+            : pos.frequency === "Quarterly" ? 20
+            : pos.frequency === "Semi-Annual" ? 20
+            : 28;
+          day = Math.min(approx, daysInMonth);
+        }
+
         if (!map[day]) map[day] = [];
         map[day].push({ symbol: pos.symbol, name: pos.name, amount: amt, frequency: pos.frequency, portfolio_id: p.id });
       }
     }
     return map;
-  }, [incomeData, filterPortfolioId, portfolios, calMonthNum, daysInMonth]);
+  }, [incomeData, filterPortfolioId, portfolios, calMonthNum, daysInMonth, dateMode, year]);
 
   const totalThisMonth = useMemo(() => {
     return Object.values(eventsByDay).flat().reduce((s, e) => s + e.amount, 0);
@@ -290,7 +305,7 @@ export default function CalendarPage() {
           </div>
 
           <p className="text-[11px] text-muted-foreground text-center">
-            Pay dates are estimated from dividend frequency · Actual ex-dates update after market data refresh
+            Uses actual ex-div / pay dates when available · Falls back to frequency-based estimate · Updates after market data refresh
           </p>
         </>
       )}

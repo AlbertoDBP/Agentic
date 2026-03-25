@@ -69,8 +69,8 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
         val = p.get("current_value") or 0
         score = scores.get(ticker)
 
-        # Asset class concentration
-        ac = (score or {}).get("asset_class") or p.get("asset_type") or "UNKNOWN"
+        # Asset class concentration — prefer asset_type from securities (canonical)
+        ac = p.get("asset_type") or (score or {}).get("asset_class") or "UNKNOWN"
         asset_class_totals[ac] = asset_class_totals.get(ac, 0) + val
 
         # Sector concentration (from position data)
@@ -122,7 +122,7 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
     top_income = [
         {
             "ticker": p.get("symbol"),
-            "asset_class": (scores.get(p.get("symbol") or "") or {}).get("asset_class") or p.get("asset_type"),
+            "asset_class": p.get("asset_type") or (scores.get(p.get("symbol") or "") or {}).get("asset_class"),
             "annual_income": round(p.get("annual_income", 0), 2),
             "income_pct": round(p.get("annual_income", 0) / total_income * 100, 1) if total_income > 0 else 0,
             "unsafe": (scores.get(p.get("symbol") or "") or {}).get("unsafe_flag") is True,

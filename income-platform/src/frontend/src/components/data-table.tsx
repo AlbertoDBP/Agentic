@@ -76,10 +76,19 @@ export function DataTable<TData, TValue>({
         const state = JSON.parse(saved);
         if (state.visibility) setColumnVisibility(state.visibility);
         if (state.order) {
-          // Always keep 'actions' column last
-          const order = (state.order as string[]).filter((id: string) => id !== "actions");
-          order.push("actions");
-          setColumnOrder(order);
+          // Filter to only known column IDs to avoid stale entries
+          const knownIds = new Set(columns.map((c) => {
+            if ("accessorKey" in c && c.accessorKey) return String(c.accessorKey);
+            if ("id" in c && c.id) return c.id as string;
+            return "";
+          }).filter(Boolean));
+          const filtered = (state.order as string[]).filter((id: string) => id !== "actions" && knownIds.has(id));
+          // Add any new columns not in saved order
+          for (const id of knownIds) {
+            if (!filtered.includes(id)) filtered.push(id);
+          }
+          filtered.push("actions");
+          setColumnOrder(filtered);
         }
         if (typeof state.frozen === "number") setFrozenCount(state.frozen);
       } else {
@@ -133,7 +142,6 @@ export function DataTable<TData, TValue>({
   }, [frozenCount]);
 
   useEffect(() => {
-    // Defer to next frame so the DOM is painted with correct widths
     const id = requestAnimationFrame(measureOffsets);
     return () => cancelAnimationFrame(id);
   }, [measureOffsets, columnVisibility, columnOrder, data]);
@@ -159,7 +167,6 @@ export function DataTable<TData, TValue>({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    // Defer so layout is complete before measuring overflow
     const id = requestAnimationFrame(updateScrollState);
     el.addEventListener("scroll", updateScrollState, { passive: true });
     const ro = new ResizeObserver(updateScrollState);
@@ -177,8 +184,9 @@ export function DataTable<TData, TValue>({
     });
   };
 
-  // ── Drag handlers ──
-  const handleDragStart = (e: React.DragEvent, colId: string) => {
+  // ── Drag handlers — frozen columns are not draggable ──
+  const handleDragStart = (e: React.DragEvent, colId: string, isFrozen: boolean) => {
+    if (isFrozen) { e.preventDefault(); return; }
     setDragColId(colId);
     e.dataTransfer.effectAllowed = "move";
   };
@@ -186,16 +194,18 @@ export function DataTable<TData, TValue>({
     e.preventDefault();
     if (colId !== dragColId) setDropTargetId(colId);
   };
+  const handleDragLeave = () => setDropTargetId(null);
   const handleDrop = (e: React.DragEvent, targetColId: string) => {
     e.preventDefault();
     if (!dragColId || dragColId === targetColId) { setDragColId(null); setDropTargetId(null); return; }
+    const allColIds = columns.map((c) => {
+      if ("accessorKey" in c && c.accessorKey) return String(c.accessorKey);
+      if ("id" in c && c.id) return c.id as string;
+      return "";
+    }).filter(Boolean);
     const currentOrder = columnOrder.length > 0
       ? [...columnOrder]
-      : columns.map((c) => {
-          if ("accessorKey" in c && c.accessorKey) return String(c.accessorKey);
-          if ("id" in c && c.id) return c.id as string;
-          return "";
-        }).filter(Boolean);
+      : allColIds;
     const dragIdx   = currentOrder.indexOf(dragColId);
     const targetIdx = currentOrder.indexOf(targetColId);
     if (dragIdx === -1 || targetIdx === -1) { setDragColId(null); setDropTargetId(null); return; }
@@ -209,8 +219,6 @@ export function DataTable<TData, TValue>({
 
   const visibleCols = table.getVisibleLeafColumns();
 
-  // bg-card in hex — must match exactly so frozen cells cover scrolled content
-  // We use a CSS var reference that works in both themes
   const FROZEN_BG = "var(--color-card)";
 
   return (
@@ -218,7 +226,7 @@ export function DataTable<TData, TValue>({
       {/* ── Main content ── */}
       <div className="flex-1 min-w-0 flex flex-col gap-1.5">
 
-        {/* ── Toolbar (never scrolls) ── */}
+        {/* ── Toolbar ── */}
         <div className="flex items-center justify-between gap-2 shrink-0">
           {/* Freeze selector */}
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -267,36 +275,37 @@ export function DataTable<TData, TValue>({
                 <Settings2 className="h-3.5 w-3.5" />
                 Columns
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48 max-h-72 overflow-y-auto">
+              <DropdownMenuContent align="end" className="w-52 max-h-80 overflow-y-auto">
                 {table
                   .getAllColumns()
                   .filter((col) => col.getCanHide())
-                  .map((col) => (
-                    <DropdownMenuCheckboxItem
-                      key={col.id}
-                      checked={col.getIsVisible()}
-                      onCheckedChange={(v) => col.toggleVisibility(!!v)}
-                      className="capitalize text-xs"
-                    >
-                      {typeof col.columnDef.header === "string" ? col.columnDef.header : col.id}
-                    </DropdownMenuCheckboxItem>
-                  ))}
+                  .map((col) => {
+                    const meta = col.columnDef.meta as { defaultHidden?: boolean; label?: string } | undefined;
+                    const label = typeof col.columnDef.header === "string"
+                      ? col.columnDef.header
+                      : meta?.label ?? col.id.replace(/_/g, " ");
+                    return (
+                      <DropdownMenuCheckboxItem
+                        key={col.id}
+                        checked={col.getIsVisible()}
+                        onCheckedChange={(v) => col.toggleVisibility(!!v)}
+                        className="text-xs"
+                      >
+                        {label}
+                      </DropdownMenuCheckboxItem>
+                    );
+                  })}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
 
-        {/* ── Scroll container: ONLY this scrolls ── */}
+        {/* ── Scroll container ── */}
         <div
           ref={scrollRef}
           className="rounded-lg border border-border overflow-auto"
           style={{ maxHeight, minWidth: 0 }}
         >
-          {/*
-            Native <table> — NO shadcn Table wrapper (which adds overflow-x-auto div).
-            border-collapse:separate + border-spacing:0 is REQUIRED for position:sticky
-            on <th>/<td> to work correctly.
-          */}
           <table
             style={{
               borderCollapse: "separate",
@@ -312,30 +321,31 @@ export function DataTable<TData, TValue>({
                     const colId = header.column.id;
                     const isSticky = visIdx < frozenCount;
                     const leftPx = stickyOffsets[visIdx] ?? 0;
+                    const isDragging = dragColId === colId;
+                    const isDropTarget = dropTargetId === colId && !isDragging;
                     return (
                       <th
                         key={header.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, colId)}
+                        draggable={!isSticky}
+                        onDragStart={(e) => handleDragStart(e, colId, isSticky)}
                         onDragOver={(e) => handleDragOver(e, colId)}
+                        onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(e, colId)}
                         onDragEnd={handleDragEnd}
                         className={cn(
-                          "h-9 px-2 text-left align-middle text-xs font-medium text-muted-foreground whitespace-nowrap border-b border-border",
-                          // Always sticky-top so header doesn't scroll vertically
-                          dragColId === colId && "opacity-40",
-                          dropTargetId === colId && dragColId !== colId && "border-l-2 border-l-primary",
-                          isSticky && "border-r border-border/60"
+                          "h-9 px-2 text-left align-middle text-xs font-semibold text-foreground/70 whitespace-nowrap border-b border-border",
+                          "select-none",
+                          isDragging && "opacity-40",
+                          isDropTarget && "border-l-2 border-l-primary",
+                          isSticky && "border-r border-border/60",
+                          !isSticky && "cursor-grab active:cursor-grabbing",
                         )}
                         style={{
                           position: "sticky",
                           top: 0,
-                          // frozen columns also stick horizontally
                           ...(isSticky ? { left: `${leftPx}px` } : {}),
-                          // frozen header cells need higher z-index than frozen body cells
                           zIndex: isSticky ? 30 : 20,
                           background: FROZEN_BG,
-                          // GPU layer to prevent flicker
                           willChange: "transform",
                           boxShadow: isSticky ? "2px 0 4px rgba(0,0,0,0.15)" : undefined,
                         }}
@@ -344,20 +354,20 @@ export function DataTable<TData, TValue>({
                           {isSticky ? (
                             <Lock className="h-2.5 w-2.5 opacity-30 shrink-0" />
                           ) : (
-                            <GripVertical className="h-3 w-3 opacity-20 hover:opacity-60 shrink-0 cursor-grab" />
+                            <GripVertical className="h-3 w-3 opacity-30 hover:opacity-70 shrink-0" />
                           )}
                           <span
                             onClick={header.column.getToggleSortingHandler()}
                             className={cn(
                               "flex items-center gap-1",
-                              header.column.getCanSort() && "cursor-pointer select-none"
+                              header.column.getCanSort() && "cursor-pointer"
                             )}
                           >
                             {header.isPlaceholder
                               ? null
                               : flexRender(header.column.columnDef.header, header.getContext())}
                             {header.column.getCanSort() && (
-                              <span className="ml-0.5">
+                              <span className="ml-0.5 text-muted-foreground">
                                 {header.column.getIsSorted() === "asc"  ? <ArrowUp className="h-3 w-3" />
                                : header.column.getIsSorted() === "desc" ? <ArrowDown className="h-3 w-3" />
                                : <ArrowUpDown className="h-3 w-3 opacity-30" />}
@@ -394,11 +404,10 @@ export function DataTable<TData, TValue>({
                         <td
                           key={cell.id}
                           className={cn(
-                            "px-2 py-2 text-sm whitespace-nowrap align-middle",
+                            "px-2 py-1.5 text-sm whitespace-nowrap align-middle text-foreground",
                             isSticky && "border-r border-border/60"
                           )}
                           style={{
-                            // frozen body cells stick left but NOT top
                             ...(isSticky ? {
                               position: "sticky",
                               left: `${leftPx}px`,
@@ -449,7 +458,7 @@ export function DataTable<TData, TValue>({
         )}
       </div>
 
-      {/* ── Vertical scroll elevator (right side) ── */}
+      {/* ── Vertical scroll elevator ── */}
       <div className="flex flex-col justify-center gap-1 pt-8 shrink-0">
         <button
           onClick={() => doScroll("up")}
@@ -460,10 +469,7 @@ export function DataTable<TData, TValue>({
           <ChevronUp className="h-3.5 w-3.5" />
         </button>
         <div className="flex-1 flex items-center justify-center">
-          <div
-            className="w-0.5 rounded-full bg-border"
-            style={{ minHeight: "2rem" }}
-          />
+          <div className="w-0.5 rounded-full bg-border" style={{ minHeight: "2rem" }} />
         </div>
         <button
           onClick={() => doScroll("down")}

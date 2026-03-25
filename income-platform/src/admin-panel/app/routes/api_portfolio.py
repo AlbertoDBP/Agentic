@@ -773,6 +773,24 @@ def _row_to_position(pos: dict) -> dict:
         pos[k] = float(pos[k]) if pos.get(k) is not None else 0.0
     pos.setdefault("recommendation", "")
     # factor_details and nav_erosion_details: keep as-is (already dict/None from JSON)
+    # HHS / IES fields from income_scores
+    for k in ("hhs_score", "income_pillar_score", "durability_pillar_score",
+              "income_weight", "durability_weight", "unsafe_threshold",
+              "ies_score"):
+        v = pos.get(k)
+        pos[k] = float(v) if v is not None else None
+    pos["hhs_status"] = pos.get("hhs_status")
+    pos["unsafe_flag"] = bool(pos["unsafe_flag"]) if pos.get("unsafe_flag") is not None else None
+    pos["ies_calculated"] = bool(pos.get("ies_calculated", False))
+    pos["ies_blocked_reason"] = pos.get("ies_blocked_reason")
+    pos["quality_gate_status"] = pos.get("quality_gate_status")
+    pos["quality_gate_reasons"] = pos.get("quality_gate_reasons") or []
+    pos["hhs_commentary"] = pos.get("hhs_commentary")
+    pos["chowder_signal"] = pos.get("chowder_signal")
+    # Use sc_chowder_number from income_scores if market_data_cache has none
+    if pos.get("chowder_number") is None and pos.get("sc_chowder_number") is not None:
+        pos["chowder_number"] = float(pos["sc_chowder_number"])
+    pos.pop("sc_chowder_number", None)
 
     # Infer asset_type from symbol if Unknown
     pos["asset_type"] = _infer_asset_type(pos.get("symbol", ""), pos.get("asset_type", "Unknown"))
@@ -881,6 +899,22 @@ def get_positions(portfolio_id: str):
                     sc.factor_details,
                     sc.nav_erosion_details,
                     COALESCE(sc.signal_penalty, 0)            AS signal_penalty,
+                    sc.hhs_score,
+                    sc.hhs_status,
+                    sc.income_pillar_score,
+                    sc.durability_pillar_score,
+                    sc.income_weight,
+                    sc.durability_weight,
+                    sc.unsafe_flag,
+                    sc.unsafe_threshold,
+                    sc.ies_score,
+                    sc.ies_calculated,
+                    sc.ies_blocked_reason,
+                    sc.quality_gate_status,
+                    sc.quality_gate_reasons,
+                    sc.hhs_commentary,
+                    sc.chowder_signal,
+                    sc.sc_chowder_number,
                     COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
                     p.price_updated_at,
                     p.updated_at,
@@ -943,7 +977,12 @@ def get_positions(portfolio_id: str):
                     SELECT total_score, grade, recommendation,
                            valuation_yield_score, financial_durability_score,
                            technical_entry_score, nav_erosion_penalty,
-                           factor_details, nav_erosion_details, signal_penalty
+                           factor_details, nav_erosion_details, signal_penalty,
+                           hhs_score, hhs_status, income_pillar_score, durability_pillar_score,
+                           income_weight, durability_weight, unsafe_flag, unsafe_threshold,
+                           ies_score, ies_calculated, ies_blocked_reason,
+                           quality_gate_status, quality_gate_reasons, hhs_commentary,
+                           chowder_number AS sc_chowder_number, chowder_signal
                     FROM platform_shared.income_scores
                     WHERE ticker = p.symbol
                     ORDER BY scored_at DESC
@@ -1151,6 +1190,22 @@ def get_position_by_symbol(symbol: str):
                     sc.factor_details,
                     sc.nav_erosion_details,
                     COALESCE(sc.signal_penalty, 0)            AS signal_penalty,
+                    sc.hhs_score,
+                    sc.hhs_status,
+                    sc.income_pillar_score,
+                    sc.durability_pillar_score,
+                    sc.income_weight,
+                    sc.durability_weight,
+                    sc.unsafe_flag,
+                    sc.unsafe_threshold,
+                    sc.ies_score,
+                    sc.ies_calculated,
+                    sc.ies_blocked_reason,
+                    sc.quality_gate_status,
+                    sc.quality_gate_reasons,
+                    sc.hhs_commentary,
+                    sc.chowder_signal,
+                    sc.sc_chowder_number,
                     COALESCE(p.dividend_frequency, s.dividend_frequency, '') AS dividend_frequency,
                     p.price_updated_at,
                     p.updated_at,
@@ -1210,7 +1265,12 @@ def get_position_by_symbol(symbol: str):
                     SELECT total_score, grade, recommendation,
                            valuation_yield_score, financial_durability_score,
                            technical_entry_score, nav_erosion_penalty,
-                           factor_details, nav_erosion_details, signal_penalty
+                           factor_details, nav_erosion_details, signal_penalty,
+                           hhs_score, hhs_status, income_pillar_score, durability_pillar_score,
+                           income_weight, durability_weight, unsafe_flag, unsafe_threshold,
+                           ies_score, ies_calculated, ies_blocked_reason,
+                           quality_gate_status, quality_gate_reasons, hhs_commentary,
+                           chowder_number AS sc_chowder_number, chowder_signal
                     FROM platform_shared.income_scores
                     WHERE ticker = p.symbol
                     ORDER BY scored_at DESC
@@ -1407,9 +1467,12 @@ def get_income_by_month(portfolio_id: str):
                     p.symbol,
                     COALESCE(s.name, p.symbol)          AS name,
                     COALESCE(p.annual_income, 0)         AS annual_income,
-                    COALESCE(p.dividend_frequency, s.dividend_frequency, 'Quarterly') AS frequency
+                    COALESCE(p.dividend_frequency, s.dividend_frequency, 'Quarterly') AS frequency,
+                    m.ex_div_date,
+                    m.pay_date
                 FROM platform_shared.positions p
                 LEFT JOIN platform_shared.securities s ON s.symbol = p.symbol
+                LEFT JOIN platform_shared.market_data_cache m ON m.symbol = p.symbol
                 WHERE p.portfolio_id = :pid AND p.status = 'ACTIVE'
                   AND COALESCE(p.annual_income, 0) > 0
                 ORDER BY p.annual_income DESC
@@ -1437,6 +1500,8 @@ def get_income_by_month(portfolio_id: str):
                     "annual_income": annual,
                     "frequency": freq_str,
                     "monthly": symbol_months,
+                    "ex_div_date": str(row["ex_div_date"]) if row.get("ex_div_date") else None,
+                    "pay_date": str(row["pay_date"]) if row.get("pay_date") else None,
                 })
 
             MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",

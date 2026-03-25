@@ -6,12 +6,31 @@ import { TickerBadge } from "@/components/ticker-badge";
 import { HhsBadge } from "@/components/portfolio/hhs-badge";
 import { ColHeader } from "@/components/help-tooltip";
 import { HHS_HELP, HOLDINGS_HELP } from "@/lib/help-content";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
 
 interface PortfolioTabProps {
   portfolioId: string;
+}
+
+function fmtDate(v: string | null | undefined) {
+  if (!v) return "—";
+  try { return formatDate(v); } catch { return v; }
+}
+
+function DetailRow({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
+      <div className={cn("text-sm font-medium", className)}>{value}</div>
+    </div>
+  );
+}
+
+function SectionTitle({ label }: { label: string }) {
+  return <div className="text-xs font-semibold uppercase tracking-wide text-blue-400 mb-2">{label}</div>;
 }
 
 export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
@@ -47,29 +66,147 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
     },
     { accessorKey: "asset_type", header: "Class" },
     { accessorKey: "name", header: "Name" },
-    { accessorKey: "shares", header: "Shares" },
+    {
+      accessorKey: "shares",
+      header: "Shares",
+      cell: ({ getValue }) => (getValue() as number | null)?.toLocaleString() ?? "—",
+    },
     {
       accessorKey: "current_value",
       header: () => <ColHeader label="Mkt Value" helpKey="current_value" helpMap={HOLDINGS_HELP} />,
+      meta: { label: "Mkt Value" },
       cell: ({ getValue }) => formatCurrency(getValue() as number),
     },
     {
       accessorKey: "annual_income",
       header: () => <ColHeader label="Ann. Income" helpKey="annual_income" helpMap={HOLDINGS_HELP} />,
+      meta: { label: "Ann. Income" },
       cell: ({ getValue }) => formatCurrency(getValue() as number),
     },
     {
       accessorKey: "current_yield",
       header: () => <ColHeader label="Yield" helpKey="current_yield" helpMap={HOLDINGS_HELP} />,
+      meta: { label: "Yield" },
       cell: ({ getValue }) =>
-        getValue() != null ? `${((getValue() as number) * 100).toFixed(2)}%` : "—",
+        getValue() != null ? `${(getValue() as number).toFixed(2)}%` : "—",
     },
     {
       accessorKey: "hhs_status",
       header: () => <ColHeader label="HHS" helpKey="hhs_score" helpMap={HHS_HELP} />,
+      meta: { label: "HHS" },
       cell: ({ row }) => (
         <HhsBadge status={row.original.hhs_status} score={row.original.hhs_score} />
       ),
+    },
+    // ── Hidden by default — available via Columns picker ──
+    {
+      accessorKey: "market_price",
+      header: "Price",
+      meta: { defaultHidden: true, label: "Price" },
+      cell: ({ getValue }) => getValue() != null ? formatCurrency(getValue() as number) : "—",
+    },
+    {
+      accessorKey: "avg_cost",
+      header: "Avg Cost",
+      meta: { defaultHidden: true, label: "Avg Cost" },
+      cell: ({ row }) => {
+        const v = row.original.avg_cost ?? (row.original.shares ? row.original.cost_basis / row.original.shares : null);
+        return v != null ? formatCurrency(v) : "—";
+      },
+    },
+    {
+      accessorKey: "cost_basis",
+      header: "Cost Basis",
+      meta: { defaultHidden: true, label: "Cost Basis" },
+      cell: ({ getValue }) => getValue() != null ? formatCurrency(getValue() as number) : "—",
+    },
+    {
+      id: "unrealized_gl",
+      header: "Unr. G/L",
+      meta: { defaultHidden: true, label: "Unrealized G/L" },
+      accessorFn: (row) => row.current_value - row.cost_basis,
+      cell: ({ getValue }) => {
+        const v = getValue() as number;
+        return <span className={v >= 0 ? "text-green-400" : "text-red-400"}>{v >= 0 ? "+" : ""}{formatCurrency(v)}</span>;
+      },
+    },
+    {
+      id: "total_return",
+      header: "Total Return",
+      meta: { defaultHidden: true, label: "Total Return %" },
+      accessorFn: (row) => {
+        if (!row.cost_basis) return null;
+        return ((row.current_value - row.cost_basis + (row.total_dividends_received ?? 0)) / row.cost_basis) * 100;
+      },
+      cell: ({ getValue }) => {
+        const v = getValue() as number | null;
+        if (v == null) return "—";
+        return <span className={v >= 0 ? "text-green-400" : "text-red-400"}>{v >= 0 ? "+" : ""}{v.toFixed(1)}%</span>;
+      },
+    },
+    {
+      accessorKey: "yield_on_cost",
+      header: "YoC",
+      meta: { defaultHidden: true, label: "Yield on Cost" },
+      cell: ({ getValue }) => getValue() != null ? `${(getValue() as number).toFixed(2)}%` : "—",
+    },
+    {
+      accessorKey: "total_dividends_received",
+      header: "Divs Recvd",
+      meta: { defaultHidden: true, label: "Total Dividends Received" },
+      cell: ({ getValue }) => getValue() != null ? formatCurrency(getValue() as number) : "—",
+    },
+    {
+      accessorKey: "daily_change_pct",
+      header: "Daily Chg",
+      meta: { defaultHidden: true, label: "Daily Change %" },
+      cell: ({ getValue }) => {
+        const v = getValue() as number | null;
+        if (v == null) return "—";
+        return <span className={v >= 0 ? "text-green-400" : "text-red-400"}>{v >= 0 ? "+" : ""}{v.toFixed(2)}%</span>;
+      },
+    },
+    {
+      accessorKey: "dividend_frequency",
+      header: "Frequency",
+      meta: { defaultHidden: true, label: "Dividend Frequency" },
+      cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+    },
+    {
+      accessorKey: "ex_div_date",
+      header: "Ex-Div",
+      meta: { defaultHidden: true, label: "Ex-Dividend Date" },
+      cell: ({ getValue }) => fmtDate(getValue() as string | null),
+    },
+    {
+      accessorKey: "pay_date",
+      header: "Pay Date",
+      meta: { defaultHidden: true, label: "Pay Date" },
+      cell: ({ getValue }) => fmtDate(getValue() as string | null),
+    },
+    {
+      accessorKey: "chowder_number",
+      header: "Chowder",
+      meta: { defaultHidden: true, label: "Chowder Number" },
+      cell: ({ getValue }) => getValue() != null ? `${(getValue() as number).toFixed(1)}` : "—",
+    },
+    {
+      accessorKey: "sector",
+      header: "Sector",
+      meta: { defaultHidden: true, label: "Sector" },
+      cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+    },
+    {
+      accessorKey: "industry",
+      header: "Industry",
+      meta: { defaultHidden: true, label: "Industry" },
+      cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+    },
+    {
+      accessorKey: "acquired_date",
+      header: "Acquired",
+      meta: { defaultHidden: true, label: "Date Acquired" },
+      cell: ({ getValue }) => fmtDate(getValue() as string | null),
     },
   ];
 
@@ -79,6 +216,11 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       Failed to load positions: {fetchError}
     </div>
   );
+
+  const unrealizedGL = selected ? selected.current_value - selected.cost_basis : 0;
+  const totalReturn = selected && selected.cost_basis
+    ? ((selected.current_value - selected.cost_basis + (selected.total_dividends_received ?? 0)) / selected.cost_basis) * 100
+    : null;
 
   return (
     <div className="flex gap-3">
@@ -96,93 +238,92 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       </div>
 
       {selected && (
-        <div className="w-[360px] flex-shrink-0 bg-card border border-border rounded-lg p-4 text-sm space-y-4 overflow-y-auto max-h-[calc(100vh-200px)]">
+        <div className="w-85 shrink-0 bg-card border border-border rounded-lg p-4 space-y-4 overflow-y-auto max-h-[calc(100vh-200px)]">
           <div className="flex items-center justify-between">
-            <span className="font-bold">{selected.symbol}</span>
+            <div>
+              <span className="font-bold text-base">{selected.symbol}</span>
+              {selected.name && <div className="text-xs text-muted-foreground mt-0.5">{selected.name}</div>}
+            </div>
             <button
               onClick={() => setSelected(null)}
-              className="text-muted-foreground hover:text-foreground text-xs"
-              aria-label="Close detail pane"
+              className="text-muted-foreground hover:text-foreground text-sm px-1"
+              aria-label="Close"
             >
-              &#x2715;
+              ✕
             </button>
           </div>
 
           <section>
-            <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">Position</div>
-            <div className="grid grid-cols-2 gap-y-1.5 text-xs">
-              {(
-                [
-                  ["Shares", String(selected.shares)],
-                  [
-                    "Avg Cost",
-                    formatCurrency(
-                      selected.avg_cost ??
-                        (selected.shares ? selected.cost_basis / selected.shares : 0)
-                    ),
-                  ],
-                  ["Mkt Price", formatCurrency(selected.market_price ?? 0)],
-                  ["Mkt Value", formatCurrency(selected.current_value)],
-                  ["Cost Basis", formatCurrency(selected.cost_basis)],
-                  [
-                    "Unrealized G/L",
-                    formatCurrency(selected.current_value - selected.cost_basis),
-                  ],
-                ] as [string, string][]
-              ).map(([k, v]) => (
-                <div key={k}>
-                  <div className="text-muted-foreground text-[0.6rem] uppercase">{k}</div>
-                  <div className="font-medium">{v}</div>
-                </div>
-              ))}
+            <SectionTitle label="Position" />
+            <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
+              <DetailRow label="Shares" value={selected.shares?.toLocaleString() ?? "—"} />
+              <DetailRow label="Avg Cost" value={formatCurrency(selected.avg_cost ?? (selected.shares ? selected.cost_basis / selected.shares : 0))} />
+              <DetailRow label="Mkt Price" value={formatCurrency(selected.market_price ?? 0)} />
+              <DetailRow label="Mkt Value" value={formatCurrency(selected.current_value)} />
+              <DetailRow label="Cost Basis" value={formatCurrency(selected.cost_basis)} />
+              <DetailRow
+                label="Unrealized G/L"
+                value={`${unrealizedGL >= 0 ? "+" : ""}${formatCurrency(unrealizedGL)}`}
+                className={unrealizedGL >= 0 ? "text-green-400" : "text-red-400"}
+              />
+              <DetailRow
+                label="Total Return"
+                value={totalReturn != null ? `${totalReturn >= 0 ? "+" : ""}${totalReturn.toFixed(1)}%` : "—"}
+                className={totalReturn != null ? (totalReturn >= 0 ? "text-green-400" : "text-red-400") : ""}
+              />
+              <DetailRow label="Divs Received" value={selected.total_dividends_received != null ? formatCurrency(selected.total_dividends_received) : "—"} />
             </div>
           </section>
 
           <section>
-            <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">Income</div>
-            <div className="grid grid-cols-2 gap-y-1.5 text-xs">
-              {(
-                [
-                  ["Annual Income", formatCurrency(selected.annual_income)],
-                  [
-                    "Gross Yield",
-                    selected.current_yield != null
-                      ? `${(selected.current_yield * 100).toFixed(2)}%`
-                      : "—",
-                  ],
-                  ["Frequency", selected.dividend_frequency ?? "—"],
-                  ["Ex-Date", selected.ex_div_date ?? "—"],
-                ] as [string, string][]
-              ).map(([k, v]) => (
-                <div key={k}>
-                  <div className="text-muted-foreground text-[0.6rem] uppercase">{k}</div>
-                  <div className="font-medium">{v}</div>
-                </div>
-              ))}
+            <SectionTitle label="Income" />
+            <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
+              <DetailRow label="Annual Income" value={formatCurrency(selected.annual_income)} />
+              <DetailRow
+                label="Gross Yield"
+                value={selected.current_yield != null ? `${selected.current_yield.toFixed(2)}%` : "—"}
+              />
+              <DetailRow
+                label="Yield on Cost"
+                value={selected.yield_on_cost != null ? `${selected.yield_on_cost.toFixed(2)}%` : "—"}
+              />
+              <DetailRow label="Frequency" value={selected.dividend_frequency ?? "—"} />
+              <DetailRow label="Ex-Div Date" value={fmtDate(selected.ex_div_date)} />
+              <DetailRow label="Pay Date" value={fmtDate(selected.pay_date)} />
+              {selected.chowder_number != null && (
+                <DetailRow label="Chowder #" value={selected.chowder_number.toFixed(1)} />
+              )}
             </div>
           </section>
 
+          {(selected.sector || selected.industry) && (
+            <section>
+              <SectionTitle label="Classification" />
+              <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
+                <DetailRow label="Asset Class" value={selected.asset_type ?? "—"} />
+                <DetailRow label="Sector" value={selected.sector ?? "—"} />
+                {selected.industry && <DetailRow label="Industry" value={selected.industry} />}
+              </div>
+            </section>
+          )}
+
           <section>
-            <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">
-              Health Summary
-            </div>
+            <SectionTitle label="Health Summary" />
             {selected.hhs_score != null ? (
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <HhsBadge status={selected.hhs_status} score={selected.hhs_score} />
-                <div className="flex gap-2 text-xs text-muted-foreground">
-                  <span>
-                    Income: {selected.income_pillar_score?.toFixed(0) ?? "—"}/100
-                  </span>
-                  <span>·</span>
-                  <span>
-                    Durability: {selected.durability_pillar_score?.toFixed(0) ?? "—"}/100
-                  </span>
+                <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
+                  <DetailRow label="Income Pillar" value={selected.income_pillar_score != null ? `${selected.income_pillar_score.toFixed(0)}/100` : "—"} />
+                  <DetailRow label="Durability Pillar" value={selected.durability_pillar_score != null ? `${selected.durability_pillar_score.toFixed(0)}/100` : "—"} />
                 </div>
+                {selected.unsafe_flag && (
+                  <div className="bg-red-950/40 border border-red-900/50 rounded p-2 text-xs text-red-400">
+                    UNSAFE — Durability ≤ safety floor ({selected.unsafe_threshold ?? 20})
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="text-muted-foreground text-xs italic">
-                Rescore to see HHS
-              </div>
+              <div className="text-muted-foreground text-xs italic">No score — rescore to populate</div>
             )}
           </section>
         </div>
