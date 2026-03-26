@@ -1,12 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Logs: {{ label }} — Income Platform{% endblock %}
 {% block content %}
-<h1>Logs: {{ label }}</h1>
-<p>
-  <a href="/services">Back to Services</a> &middot;
-  <a href="/services/{{ num }}/logs?lines=50">50</a> |
-  <a href="/services/{{ num }}/logs?lines=100">100</a> |
-  <a href="/services/{{ num }}/logs?lines=500">500</a> lines
-</p>
-<pre class="log-output">{{ log_text }}</pre>
+<div class="page-header">
+  <h1>&#128221; Logs: {{ label }}</h1>
+  <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+    <span style="font-size:0.82rem;color:var(--pico-muted-color)">Lines:</span>
+    <a href="/services/{{ num }}/logs?lines=50"
+       class="btn-sm {% if lines == 50 %}{% else %}outline{% endif %}">50</a>
+    <a href="/services/{{ num }}/logs?lines=100"
+       class="btn-sm {% if lines == 100 %}{% else %}outline{% endif %}">100</a>
+    <a href="/services/{{ num }}/logs?lines=500"
+       class="btn-sm {% if lines == 500 %}{% else %}outline{% endif %}">500</a>
+    <a href="/services" class="btn-sm outline">&larr; Services</a>
+  </div>
+</div>
+<pre class="log-output" id="logOutput">{{ log_text }}</pre>
+<script>
+  // Auto-scroll to bottom
+  var el = document.getElementById('logOutput');
+  if (el) el.scrollTop = el.scrollHeight;
+</script>
 {% endblock %}

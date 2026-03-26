@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from app.config import settings
 from app.jobs import (
@@ -29,6 +30,12 @@ logging.basicConfig(
 logger = logging.getLogger("scheduler")
 
 scheduler = BackgroundScheduler(timezone="America/New_York")
+
+# Tracks last successful execution time per job id
+_last_run: dict[str, str] = {}
+
+# Mutable copy of cron kwargs — updated by reschedule endpoint
+_schedule_config: dict[str, dict] = {}
 
 # ═══════════════════════════════════════════════════════════════════════
 # SCHEDULE DEFINITIONS  (all times US/Eastern)
@@ -77,11 +84,22 @@ JOBS = [
 ]
 
 
+def _tracked(job_id: str, func):
+    """Wrap a job function to record last_run timestamp after execution."""
+    def wrapper():
+        try:
+            func()
+        finally:
+            _last_run[job_id] = datetime.now(timezone.utc).isoformat()
+    return wrapper
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     for func, cron_kwargs, job_id, desc in JOBS:
+        _schedule_config[job_id] = dict(cron_kwargs)
         scheduler.add_job(
-            func,
+            _tracked(job_id, func),
             trigger=CronTrigger(**cron_kwargs),
             id=job_id,
             name=desc,
@@ -111,15 +129,18 @@ def health():
 
 @app.get("/jobs")
 def list_jobs():
-    """List all scheduled jobs and their next run times."""
+    """List all scheduled jobs with next/last run times and schedule config."""
     jobs = []
     for job in scheduler.get_jobs():
         next_run = job.next_run_time
+        job_id = job.id
         jobs.append({
-            "id": job.id,
+            "id": job_id,
             "name": job.name,
             "next_run": next_run.isoformat() if next_run else None,
+            "last_run": _last_run.get(job_id),
             "trigger": str(job.trigger),
+            "schedule": _schedule_config.get(job_id, {}),
         })
     return {"jobs": jobs, "count": len(jobs)}
 
@@ -129,11 +150,36 @@ def run_job_now(job_id: str):
     """Trigger a job immediately (on-demand)."""
     job = scheduler.get_job(job_id)
     if not job:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
     job.func()
+    _last_run[job_id] = datetime.now(timezone.utc).isoformat()
     return {
         "status": "executed",
         "job_id": job_id,
-        "executed_at": datetime.now(timezone.utc).isoformat(),
+        "executed_at": _last_run[job_id],
     }
+
+
+class RescheduleRequest(BaseModel):
+    hour: int
+    minute: int
+    day_of_week: str | None = None
+
+
+@app.post("/jobs/{job_id}/reschedule")
+def reschedule_job(job_id: str, req: RescheduleRequest):
+    """Change the schedule time for a job (in-memory; resets on restart)."""
+    job = scheduler.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+    current = _schedule_config.get(job_id, {})
+    new_config = {**current, "hour": req.hour, "minute": req.minute}
+    if req.day_of_week is not None:
+        new_config["day_of_week"] = req.day_of_week
+    _schedule_config[job_id] = new_config
+    scheduler.reschedule_job(
+        job_id,
+        trigger=CronTrigger(**new_config, timezone="America/New_York"),
+    )
+    logger.info("Rescheduled %s → %s", job_id, new_config)
+    return {"status": "rescheduled", "job_id": job_id, "schedule": new_config}

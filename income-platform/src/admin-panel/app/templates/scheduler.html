@@ -1,29 +1,67 @@
 {% extends "base.html" %}
 {% block title %}Scheduler — Income Platform{% endblock %}
 {% block content %}
-<h1>Scheduler Jobs</h1>
+<div class="page-header">
+  <h1>&#9203; Scheduler Jobs</h1>
+</div>
 
 {% if jobs %}
+<div class="table-scroll">
 <table>
   <thead>
-    <tr><th>Job ID</th><th>Name</th><th>Next Run</th><th>Action</th></tr>
+    <tr>
+      <th>Job</th>
+      <th>Schedule</th>
+      <th>Last Run</th>
+      <th>Next Run</th>
+      <th>Action</th>
+    </tr>
   </thead>
   <tbody>
     {% for job in jobs %}
     <tr>
-      <td><code>{{ job.id }}</code></td>
-      <td>{{ job.name or job.id }}</td>
-      <td>{{ job.next_run[:19] | replace("T", " ") if job.next_run else "N/A" }}</td>
+      <td>
+        <strong>{{ job.name.split("(")[0].strip() if job.name else job.id }}</strong><br>
+        <small style="color:var(--pico-muted-color)"><code>{{ job.id }}</code></small>
+      </td>
+      <td>
+        {% if job.schedule %}
+          {% if job.schedule.day_of_week is defined %}
+            <span class="badge badge-blue">{{ job.schedule.day_of_week }}</span>
+          {% endif %}
+          {{ "%02d:%02d" | format(job.schedule.hour | int, job.schedule.minute | int) }} ET
+        {% else %}
+          <span style="color:var(--pico-muted-color)">{{ job.trigger }}</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if job.last_run %}
+          <span title="{{ job.last_run }}">
+            {{ job.last_run[:10] }} {{ job.last_run[11:16] }} UTC
+          </span>
+        {% else %}
+          <span class="badge badge-gray">Never</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if job.next_run %}
+          {{ job.next_run[:10] }} {{ job.next_run[11:16] }} ET
+        {% else %}
+          <span style="color:var(--pico-muted-color)">—</span>
+        {% endif %}
+      </td>
       <td>
         <form method="post" action="/scheduler/trigger/{{ job.id }}" style="display:inline">
-          <button type="submit" class="btn-sm outline" onclick="return confirm('Trigger {{ job.id }}?')">Trigger</button>
+          <button type="submit" class="btn-sm outline"
+                  onclick="return confirm('Run {{ job.id }} now?')">&#9654; Run Now</button>
         </form>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<p>No scheduler jobs found. Is the scheduler service running?</p>
+<p style="color:var(--pico-muted-color)">No scheduler jobs found. Is the scheduler service running?</p>
 {% endif %}
 {% endblock %}

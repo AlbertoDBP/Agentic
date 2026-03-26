@@ -67,6 +67,7 @@ def get_service_url(num: str) -> str:
         "10": settings.agent10_url,
         "11": settings.agent11_url,
         "12": settings.agent12_url,
+        "13": settings.broker_url,
         "99": settings.scheduler_url,
     }
     return url_map.get(num, "")

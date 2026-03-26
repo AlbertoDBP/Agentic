@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Settings — Income Platform{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>&#9881; Settings</h1>
+</div>
+
+<!-- ── Schedule Management ── -->
+<h2>Schedule Management</h2>
+<p style="color:var(--pico-muted-color);font-size:0.85rem;margin-top:-0.5rem">
+  Time changes are in-memory and reset on scheduler restart.
+  To persist, edit <code>scheduler-service/app/main.py</code>.
+</p>
+
+{% if jobs %}
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr>
+      <th>Job</th>
+      <th>Days</th>
+      <th>Current Time (ET)</th>
+      <th>Last Run</th>
+      <th>Next Run</th>
+      <th>Change Time</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for job in jobs %}
+    {% set sched = job.schedule or {} %}
+    <tr>
+      <td>
+        <strong>{{ job.name.split("(")[0].strip() if job.name else job.id }}</strong><br>
+        <small style="color:var(--pico-muted-color)"><code>{{ job.id }}</code></small>
+      </td>
+      <td>
+        {% if sched.day_of_week is defined %}
+          <code style="font-size:0.78rem">{{ sched.day_of_week }}</code>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if sched.hour is defined %}
+          <strong>{{ "%02d:%02d" | format(sched.hour | int, sched.minute | int) }}</strong>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if job.last_run %}
+          <span title="{{ job.last_run }}" style="font-size:0.82rem">
+            {{ job.last_run[:10] }} {{ job.last_run[11:16] }} UTC
+          </span>
+        {% else %}
+          <span class="badge badge-gray">Never</span>
+        {% endif %}
+      </td>
+      <td style="font-size:0.82rem">
+        {% if job.next_run %}
+          {{ job.next_run[:10] }} {{ job.next_run[11:16] }} ET
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        <form method="post" action="/settings/reschedule/{{ job.id }}"
+              style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+          <input type="hidden" name="day_of_week"
+                 value="{{ sched.day_of_week if sched.day_of_week is defined else '' }}">
+          <label style="font-size:0.78rem;margin:0">H
+            <input type="number" name="hour" min="0" max="23" style="width:3.5rem"
+                   value="{{ sched.hour | int if sched.hour is defined else 0 }}">
+          </label>
+          <label style="font-size:0.78rem;margin:0">M
+            <input type="number" name="minute" min="0" max="59" style="width:3.5rem"
+                   value="{{ sched.minute | int if sched.minute is defined else 0 }}">
+          </label>
+          <button type="submit" class="btn-sm"
+                  onclick="return confirm('Update schedule for {{ job.id }}?')">Save</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p style="color:var(--pico-muted-color)">Scheduler not reachable.</p>
+{% endif %}
+
+<!-- ── Service Registry ── -->
+<h2>Service Registry</h2>
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>#</th><th>Service</th><th>Container</th><th>Port</th><th>Logs</th></tr>
+  </thead>
+  <tbody>
+    {% for svc in services %}
+    <tr>
+      <td>{{ svc.num }}</td>
+      <td>{{ svc.label }}</td>
+      <td><code style="font-size:0.78rem">{{ svc.container }}</code></td>
+      <td>{{ svc.port }}</td>
+      <td><a href="/services/{{ svc.num }}/logs" class="btn-sm outline">View Logs</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

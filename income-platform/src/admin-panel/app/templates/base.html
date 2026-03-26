@@ -8,45 +8,114 @@
   <style>
     :root {
       --pico-font-size: 14px;
+      --sidebar-w: 210px;
+      --sidebar-collapsed-w: 52px;
     }
-    body { margin: 0; }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; overflow-x: hidden; }
+
+    /* ── Sidebar ── */
     nav.sidebar {
-      position: fixed; top: 0; left: 0; bottom: 0; width: 220px;
+      position: fixed; top: 0; left: 0; bottom: 0;
+      width: var(--sidebar-w);
       background: var(--pico-card-background-color);
       border-right: 1px solid var(--pico-muted-border-color);
-      padding: 1rem 0; overflow-y: auto; z-index: 10;
+      z-index: 100;
+      transition: width 0.22s ease;
+      display: flex; flex-direction: column;
+      overflow: hidden;
     }
-    nav.sidebar .brand {
-      padding: 0.5rem 1.2rem 1.5rem;
-      font-weight: bold; font-size: 1.1rem;
+    nav.sidebar.collapsed { width: var(--sidebar-collapsed-w); }
+
+    .sidebar-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.85rem 0.85rem 0.85rem 1rem;
       border-bottom: 1px solid var(--pico-muted-border-color);
-      margin-bottom: 0.5rem;
+      flex-shrink: 0; gap: 0.5rem;
     }
-    nav.sidebar a {
-      display: block; padding: 0.55rem 1.2rem;
+    .sidebar-brand {
+      font-weight: 700; font-size: 0.95rem;
+      white-space: nowrap; overflow: hidden;
+      opacity: 1; transition: opacity 0.15s;
+      line-height: 1.2;
+    }
+    nav.sidebar.collapsed .sidebar-brand { opacity: 0; pointer-events: none; }
+
+    .sidebar-toggle {
+      background: none; border: none; cursor: pointer;
+      color: var(--pico-muted-color); padding: 0.25rem 0.3rem;
+      font-size: 1rem; line-height: 1; flex-shrink: 0;
+      border-radius: 4px; transition: color 0.15s, background 0.15s;
+    }
+    .sidebar-toggle:hover { color: var(--pico-primary); background: var(--pico-primary-focus); }
+
+    .sidebar-nav {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 0.4rem 0;
+    }
+    .sidebar-nav::-webkit-scrollbar { width: 4px; }
+    .sidebar-nav::-webkit-scrollbar-thumb { background: var(--pico-muted-border-color); border-radius: 2px; }
+
+    .nav-divider {
+      height: 1px; background: var(--pico-muted-border-color);
+      margin: 0.35rem 0.75rem;
+      transition: margin 0.22s;
+    }
+    nav.sidebar.collapsed .nav-divider { margin: 0.35rem 0.4rem; }
+
+    a.nav-item {
+      display: flex; align-items: center; gap: 0.65rem;
+      padding: 0.5rem 1rem;
       color: var(--pico-color); text-decoration: none;
       border-left: 3px solid transparent;
-      font-size: 0.9rem;
+      font-size: 0.875rem; white-space: nowrap;
+      transition: background 0.12s, color 0.12s;
     }
-    nav.sidebar a:hover { background: var(--pico-primary-focus); }
-    nav.sidebar a.active {
+    a.nav-item:hover { background: var(--pico-primary-focus); color: var(--pico-color); }
+    a.nav-item.active {
       border-left-color: var(--pico-primary);
       color: var(--pico-primary);
       font-weight: 600;
     }
-    main.content {
-      margin-left: 220px; padding: 1.5rem 2rem;
+    .nav-icon {
+      font-size: 1rem; flex-shrink: 0;
+      width: 20px; text-align: center; line-height: 1;
     }
+    .nav-label {
+      overflow: hidden; opacity: 1;
+      transition: opacity 0.15s;
+    }
+    nav.sidebar.collapsed .nav-label { opacity: 0; }
+    nav.sidebar.collapsed a.nav-item {
+      justify-content: center; padding: 0.5rem 0;
+      border-left-color: transparent !important;
+    }
+    nav.sidebar.collapsed a.nav-item.active {
+      background: var(--pico-primary-focus);
+    }
+
+    /* ── Main content ── */
+    main.content {
+      margin-left: var(--sidebar-w);
+      padding: 1.5rem 2rem;
+      transition: margin-left 0.22s ease;
+      min-width: 0;
+    }
+    main.content.sidebar-collapsed { margin-left: var(--sidebar-collapsed-w); }
+
+    /* ── Utilities ── */
     .badge {
       display: inline-block; padding: 0.15rem 0.5rem;
-      border-radius: 4px; font-size: 0.8rem; font-weight: 600;
+      border-radius: 4px; font-size: 0.78rem; font-weight: 600;
     }
-    .badge-green { background: #22c55e22; color: #22c55e; }
-    .badge-red   { background: #ef444422; color: #ef4444; }
+    .badge-green  { background: #22c55e22; color: #22c55e; }
+    .badge-red    { background: #ef444422; color: #ef4444; }
     .badge-yellow { background: #eab30822; color: #eab308; }
-    .badge-blue  { background: #3b82f622; color: #3b82f6; }
+    .badge-blue   { background: #3b82f622; color: #3b82f6; }
+    .badge-gray   { background: #6b728022; color: #9ca3af; }
+
     .metric-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       gap: 1rem; margin-bottom: 1.5rem;
     }
     .metric-card {
@@ -55,9 +124,10 @@
       border-radius: 8px; padding: 1rem 1.2rem;
     }
     .metric-card .value { font-size: 1.8rem; font-weight: 700; }
-    .metric-card .label { font-size: 0.85rem; color: var(--pico-muted-color); }
+    .metric-card .label { font-size: 0.82rem; color: var(--pico-muted-color); }
+
     .health-grid {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
       gap: 0.75rem;
     }
     .health-tile {
@@ -66,39 +136,107 @@
       border-radius: 8px; padding: 0.75rem 1rem;
       display: flex; align-items: center; gap: 0.75rem;
     }
-    .health-dot {
-      width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
-    }
-    .health-dot.up { background: #22c55e; }
+    .health-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .health-dot.up   { background: #22c55e; }
     .health-dot.down { background: #ef4444; }
-    table { font-size: 0.9rem; }
+
+    /* ── Tables ── */
+    .table-scroll { overflow-x: auto; }
+    table { font-size: 0.875rem; width: 100%; }
+    th { font-size: 0.78rem; text-transform: uppercase;
+         letter-spacing: 0.04em; color: var(--pico-muted-color); }
+
+    /* ── Logs ── */
     pre.log-output {
-      background: #111; color: #ccc; padding: 1rem;
+      background: #0d1117; color: #c9d1d9; padding: 1rem;
       border-radius: 8px; overflow-x: auto;
-      font-size: 0.8rem; max-height: 70vh;
+      font-size: 0.78rem; max-height: 72vh;
+      border: 1px solid var(--pico-muted-border-color);
+      white-space: pre-wrap; word-break: break-all;
     }
+
+    /* ── Buttons ── */
     .btn-sm {
-      padding: 0.3rem 0.7rem; font-size: 0.8rem;
+      padding: 0.28rem 0.65rem; font-size: 0.8rem;
       border-radius: 4px; cursor: pointer;
+      display: inline-block;
     }
-    h1 { font-size: 1.5rem; margin-bottom: 1.2rem; }
-    h2 { font-size: 1.2rem; margin-top: 1.5rem; margin-bottom: 0.8rem; }
+    .page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1.2rem; flex-wrap: wrap; gap: 0.5rem;
+    }
+    h1 { font-size: 1.4rem; margin: 0; }
+    h2 { font-size: 1.1rem; margin-top: 1.5rem; margin-bottom: 0.75rem; }
   </style>
 </head>
 <body>
-  <nav class="sidebar">
-    <div class="brand">Income Platform</div>
-    <a href="/" class="{% if page == 'dashboard' %}active{% endif %}">Dashboard</a>
-    <a href="/services" class="{% if page == 'services' %}active{% endif %}">Services</a>
-    <a href="/scheduler" class="{% if page == 'scheduler' %}active{% endif %}">Scheduler</a>
-    <a href="/portfolio" class="{% if page == 'portfolio' %}active{% endif %}">Portfolio</a>
-    <a href="/alerts" class="{% if page == 'alerts' %}active{% endif %}">Alerts</a>
-    <a href="/proposals" class="{% if page == 'proposals' %}active{% endif %}">Proposals</a>
-    <a href="/analysts" class="{% if page == 'analysts' %}active{% endif %}">Analysts</a>
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-brand">Income Platform</span>
+      <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">&#9776;</button>
+    </div>
+    <div class="sidebar-nav">
+      <a href="/"          class="nav-item {% if page == 'dashboard' %}active{% endif %}">
+        <span class="nav-icon">&#127968;</span><span class="nav-label">Dashboard</span>
+      </a>
+      <a href="/services"  class="nav-item {% if page == 'services' %}active{% endif %}">
+        <span class="nav-icon">&#128297;</span><span class="nav-label">Services</span>
+      </a>
+      <a href="/scheduler" class="nav-item {% if page == 'scheduler' %}active{% endif %}">
+        <span class="nav-icon">&#9203;</span><span class="nav-label">Scheduler</span>
+      </a>
+
+      <div class="nav-divider"></div>
+
+      <a href="/portfolio"  class="nav-item {% if page == 'portfolio' %}active{% endif %}">
+        <span class="nav-icon">&#128200;</span><span class="nav-label">Portfolio</span>
+      </a>
+      <a href="/alerts"     class="nav-item {% if page == 'alerts' %}active{% endif %}">
+        <span class="nav-icon">&#128276;</span><span class="nav-label">Alerts</span>
+      </a>
+      <a href="/proposals"  class="nav-item {% if page == 'proposals' %}active{% endif %}">
+        <span class="nav-icon">&#128196;</span><span class="nav-label">Proposals</span>
+      </a>
+      <a href="/analysts"   class="nav-item {% if page == 'analysts' %}active{% endif %}">
+        <span class="nav-icon">&#128101;</span><span class="nav-label">Analysts</span>
+      </a>
+
+      <div class="nav-divider"></div>
+
+      <a href="/settings"   class="nav-item {% if page == 'settings' %}active{% endif %}">
+        <span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span>
+      </a>
+    </div>
   </nav>
 
-  <main class="content">
+  <main class="content" id="mainContent">
     {% block content %}{% endblock %}
   </main>
+
+  <script>
+    (function () {
+      var sidebar = document.getElementById('sidebar');
+      var main    = document.getElementById('mainContent');
+      var btn     = document.getElementById('sidebarToggle');
+      var KEY     = 'sidebar_collapsed';
+
+      function setCollapsed(collapsed) {
+        sidebar.classList.toggle('collapsed', collapsed);
+        main.classList.toggle('sidebar-collapsed', collapsed);
+        btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch(e) {}
+      }
+
+      // Restore saved state
+      try {
+        var saved = localStorage.getItem(KEY);
+        if (saved === '1') setCollapsed(true);
+      } catch(e) {}
+
+      btn.addEventListener('click', function () {
+        setCollapsed(!sidebar.classList.contains('collapsed'));
+      });
+    })();
+  </script>
 </body>
 </html>
