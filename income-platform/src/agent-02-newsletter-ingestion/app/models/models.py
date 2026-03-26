@@ -274,7 +274,11 @@ class CreditOverride(Base):
 class ArticleFramework(Base):
     """Pass 2 (Sonnet) extraction output: analyst evaluation methodology per ticker."""
     __tablename__ = "article_frameworks"
-    __table_args__ = {"schema": "platform_shared"}
+    __table_args__ = (
+        Index("ix_article_frameworks_article_id", "article_id"),
+        Index("ix_article_frameworks_analyst_ticker", "analyst_id", "ticker"),
+        {"schema": "platform_shared"},
+    )
 
     id                       = Column(Integer, primary_key=True, autoincrement=True)
     article_id               = Column(Integer, ForeignKey("platform_shared.analyst_articles.id",
@@ -323,7 +327,10 @@ class AnalystFrameworkProfile(Base):
 class AnalystSuggestion(Base):
     """Investment idea queue: written by Agent 02 Harvester, read by Agent 07."""
     __tablename__ = "analyst_suggestions"
-    __table_args__ = {"schema": "platform_shared"}
+    __table_args__ = (
+        Index("ix_analyst_suggestions_active_expiry", "is_active", "expires_at", "staleness_weight"),
+        {"schema": "platform_shared"},
+    )
 
     id                   = Column(Integer, primary_key=True, autoincrement=True)
     analyst_id           = Column(Integer, ForeignKey("platform_shared.analysts.id",
