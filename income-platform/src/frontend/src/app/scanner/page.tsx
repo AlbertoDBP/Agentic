@@ -51,7 +51,7 @@ export default function ScannerPage() {
       min_score: filters.min_score,
       quality_gate_only: filters.quality_gate_only,
       asset_classes: filters.asset_classes.length ? filters.asset_classes : null,
-      min_yield: filters.min_yield,
+      min_yield: filters.min_yield || null,
       max_payout_ratio: filters.max_payout_ratio ? Number(filters.max_payout_ratio) : null,
       min_volume: filters.min_volume ? Number(filters.min_volume) : null,
       min_market_cap_m: filters.min_market_cap_m ? Number(filters.min_market_cap_m) : null,
@@ -86,6 +86,7 @@ export default function ScannerPage() {
     setError(null);
     setResult(null);
     setSelectedTickers(new Set());
+    setSuccessMsg(null);
 
     try {
       const resp = await fetch("/api/scanner/scan", {
