@@ -401,6 +401,8 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
                     merged["net_debt_ebitda"]      = _safe_float(
                         km.get("netDebtToEBITDA") or km.get("debtToEbitda")
                     )
+                    # tangible asset value (= stockholders equity) for NAV computation
+                    merged["tangible_asset_value"] = _safe_float(km.get("tangibleAssetValue"))
 
                 # /dividends: dates + CAGRs + consecutive growth
                 if div:
@@ -539,8 +541,17 @@ async def fetch_and_upsert(
                 week52_low = _safe_float(parts[0])
                 week52_high = _safe_float(parts[1])
 
-        # NAV and nav_discount_pct: nav comes from etf-info; discount = (price-nav)/nav*100
+        # NAV per share: prefer etf-info nav; fall back to tangibleAssetValue / shares
+        # tangibleAssetValue = totalAssets - totalLiabilities (= stockholders equity)
+        # shares_outstanding = marketCap / price (avoids extra API call)
         nav_value = s.get("nav_value")
+        if not nav_value:
+            tangible_asset_value = s.get("tangible_asset_value")
+            market_cap = _safe_float(p.get("marketCap"))
+            if tangible_asset_value and tangible_asset_value > 0 and price_val and market_cap and market_cap > 0:
+                shares_outstanding = market_cap / price_val
+                if shares_outstanding > 0:
+                    nav_value = round(tangible_asset_value / shares_outstanding, 4)
         nav_discount_pct = None
         if nav_value and price_val and nav_value > 0:
             nav_discount_pct = round((price_val - nav_value) / nav_value * 100, 4)
