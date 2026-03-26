@@ -156,3 +156,42 @@ class TestSuggestionStore:
         from app.processors.suggestion_store import should_write_suggestion
         assert should_write_suggestion("Hold") is False
         assert should_write_suggestion(None) is False
+
+
+class TestFrameworkSynthesizer:
+    def test_compute_metric_frequency_counts_correctly(self):
+        from app.processors.framework_synthesizer import compute_metric_frequency
+        frameworks = [
+            {"valuation_metrics_cited": ["FFO_coverage", "NAV_discount"]},
+            {"valuation_metrics_cited": ["FFO_coverage", "yield_spread"]},
+            {"valuation_metrics_cited": ["FFO_coverage"]},
+        ]
+        freq = compute_metric_frequency(frameworks)
+        assert freq["FFO_coverage"] == pytest.approx(1.0)
+        assert freq["NAV_discount"] == pytest.approx(1/3)
+        assert freq["yield_spread"] == pytest.approx(1/3)
+
+    def test_compute_metric_frequency_returns_empty_for_no_frameworks(self):
+        from app.processors.framework_synthesizer import compute_metric_frequency
+        assert compute_metric_frequency([]) == {}
+
+    def test_compute_consistency_score(self):
+        from app.processors.framework_synthesizer import compute_consistency_score
+        frameworks = [
+            {"reasoning_structure": "bottom_up", "valuation_metrics_cited": ["A", "B", "C"]},
+            {"reasoning_structure": "bottom_up", "valuation_metrics_cited": ["A", "B", "C"]},
+            {"reasoning_structure": "top_down", "valuation_metrics_cited": ["A", "B", "D"]},
+        ]
+        score = compute_consistency_score(frameworks)
+        assert 0.0 <= score <= 1.0
+
+    def test_compute_consistency_score_returns_zero_for_empty(self):
+        from app.processors.framework_synthesizer import compute_consistency_score
+        assert compute_consistency_score([]) == 0.0
+
+    def test_synthesize_analyst_frameworks_skips_analysts_with_no_frameworks(self):
+        from app.processors.framework_synthesizer import synthesize_analyst_frameworks
+        mock_db = MagicMock()
+        mock_db.execute.return_value.fetchall.return_value = []
+        result = synthesize_analyst_frameworks(mock_db, analyst_id=99)
+        assert result["profiles_updated"] == 0
