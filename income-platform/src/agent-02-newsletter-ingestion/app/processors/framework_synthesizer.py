@@ -17,6 +17,13 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+try:
+    from anthropic import Anthropic
+    from app.config import settings as _settings
+    _llm_client = Anthropic(api_key=_settings.anthropic_api_key)
+except Exception:
+    _llm_client = None
+
 
 def compute_metric_frequency(frameworks: list[dict]) -> dict:
     """
@@ -167,14 +174,11 @@ def synthesize_analyst_frameworks(db: Session, analyst_id: int) -> dict:
 
 def _synthesize_summary(analyst_id: int, asset_class: str, narratives: list[str]) -> Optional[str]:
     """Call Sonnet to produce a concise framework summary from evaluation narratives."""
-    if not narratives:
+    if not narratives or _llm_client is None:
         return None
     try:
-        from anthropic import Anthropic
-        from app.config import settings
-        client = Anthropic(api_key=settings.anthropic_api_key)
         combined = "\n\n---\n\n".join(narratives[:20])
-        response = client.messages.create(
+        response = _llm_client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=400,
             messages=[{

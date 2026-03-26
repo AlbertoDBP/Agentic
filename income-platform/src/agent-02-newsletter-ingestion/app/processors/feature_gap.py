@@ -65,9 +65,9 @@ def detect_feature_gaps(
         row = db.execute(text("""
             SELECT id FROM platform_shared.feature_registry
             WHERE feature_name = :name
-               OR aliases::text ILIKE :like_name
+               OR aliases @> jsonb_build_array(:name)
             LIMIT 1
-        """), {"name": metric, "like_name": f'%"{metric}"%'}).fetchone()
+        """), {"name": metric}).fetchone()
 
         if row:
             continue  # already known
@@ -182,6 +182,7 @@ def resolve_feature_gaps(db: Session) -> dict:
             resolved += 1
             logger.info(f"Gap '{metric_name}': {category} — registered in feature_registry (pending validation)")
         except Exception as e:
+            db.rollback()
             logger.warning(f"Failed to register gap '{metric_name}': {e}")
 
     return {"pending_processed": len(pending), "resolved": resolved}
