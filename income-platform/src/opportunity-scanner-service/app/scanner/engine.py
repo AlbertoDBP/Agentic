@@ -11,14 +11,11 @@ Algorithm:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from app.config import settings
 from app.scanner.entry_exit import compute_entry_exit
-from app.scanner.scoring_client import score_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -83,24 +80,18 @@ async def run_scan(
     hits = [t for t in tickers if t in cached]
     misses = [t for t in tickers if t not in cached]
 
-    logger.info("Score cache: %d hits, %d misses (HTTP fallback)", len(hits), len(misses))
+    if misses:
+        logger.warning(
+            "%d tickers have no score in DB and will be skipped: %s",
+            len(misses), misses[:10],
+        )
 
-    # Resolve hits from cache immediately
+    # Scores come from the DB batch-fetch — no HTTP calls to Agent 03.
+    # Agent 03 runs on schedule (daily + on position changes); the scanner
+    # is a pure reader of its output.
     raw_results: list[tuple[str, Optional[dict]]] = [
         (t, cached[t]) for t in hits
     ]
-
-    # Fall back to Agent 03 HTTP only for misses
-    if misses:
-        semaphore = asyncio.Semaphore(settings.scan_concurrency)
-
-        async def _score_bounded(ticker: str) -> tuple[str, Optional[dict]]:
-            async with semaphore:
-                result = await score_ticker(ticker)
-                return ticker, result
-
-        http_results = await asyncio.gather(*[_score_bounded(t) for t in misses])
-        raw_results.extend(http_results)
 
     threshold = settings.quality_gate_threshold
     all_items: list[ScanItem] = []
