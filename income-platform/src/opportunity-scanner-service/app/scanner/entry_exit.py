@@ -64,7 +64,13 @@ def compute_entry_exit(
 ) -> EntryExitResult:
     """Compute entry/exit limit prices and zone status for one ticker."""
 
-    price = _safe(price)
+    price           = _safe(price)
+    support_level   = _safe(support_level)
+    sma_200         = _safe(sma_200)
+    resistance_level = _safe(resistance_level)
+    week_52_high    = _safe(week_52_high)
+    dividend_yield  = _safe(dividend_yield)
+    nav_value       = _safe(nav_value)
     nav_eligible = asset_class in NAV_ELIGIBLE_CLASSES
 
     # ── Derived yield values ─────────────────────────────────────────────────
@@ -97,6 +103,8 @@ def compute_entry_exit(
 
     entry_signals = [s for s in [technical_entry, yield_entry, nav_entry] if s is not None]
     entry_limit = min(entry_signals) if entry_signals else None
+    # Round entry_limit before computing pct_from_entry for consistency
+    entry_limit = round(entry_limit, 2) if entry_limit is not None else None
 
     # ── Exit signals ─────────────────────────────────────────────────────────
     technical_exit: Optional[float] = None
@@ -118,6 +126,8 @@ def compute_entry_exit(
 
     exit_signals = [s for s in [technical_exit, yield_exit, nav_exit] if s is not None]
     exit_limit = min(exit_signals) if exit_signals else None
+    # Round exit_limit for consistency
+    exit_limit = round(exit_limit, 2) if exit_limit is not None else None
 
     # ── Zone status ──────────────────────────────────────────────────────────
     pct_from_entry: Optional[float] = None
@@ -137,8 +147,8 @@ def compute_entry_exit(
             zone_status = ZoneStatus.ABOVE_ENTRY
 
     return EntryExitResult(
-        entry_limit=round(entry_limit, 2) if entry_limit is not None else None,
-        exit_limit=round(exit_limit, 2) if exit_limit is not None else None,
+        entry_limit=entry_limit,
+        exit_limit=exit_limit,
         current_price=price,
         pct_from_entry=pct_from_entry,
         zone_status=zone_status,
