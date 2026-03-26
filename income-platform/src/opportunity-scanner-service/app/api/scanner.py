@@ -282,8 +282,8 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
         # Fetch positions for portfolio
         pos_rows = db.execute(
             text("""
-                SELECT p.symbol, p.shares, p.asset_type,
-                       s.sector, m.price,
+                SELECT p.symbol, p.quantity, s.asset_type,
+                       p.sector, m.price,
                        sc.valuation_yield_score, sc.financial_durability_score
                 FROM platform_shared.positions p
                 LEFT JOIN platform_shared.securities s ON s.symbol = p.symbol
