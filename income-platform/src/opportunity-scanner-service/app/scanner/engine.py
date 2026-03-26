@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from app.config import settings
 from app.scanner.entry_exit import compute_entry_exit
 
 logger = logging.getLogger(__name__)
