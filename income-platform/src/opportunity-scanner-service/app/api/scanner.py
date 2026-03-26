@@ -34,7 +34,7 @@ router = APIRouter()
 # ─── Request / Response models ───────────────────────────────────────────────
 
 class ScanRequest(BaseModel):
-    tickers: List[str] = Field(..., min_length=1, description="Ticker symbols to scan")
+    tickers: List[str] = Field(default=[], description="Ticker symbols to scan")
     min_score: float = Field(0.0, ge=0.0, le=100.0, description="Minimum total score (0–100)")
     asset_classes: Optional[List[str]] = Field(None, description="Restrict to these asset classes")
     quality_gate_only: bool = Field(False, description="If true, exclude tickers with score < 70")
@@ -112,6 +112,15 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
             )
         ).fetchall()
         tickers = [r[0] for r in rows]
+    elif request.portfolio_id and not tickers:
+        rows = db.execute(
+            text(
+                "SELECT DISTINCT symbol FROM platform_shared.positions "
+                "WHERE portfolio_id = :pid"
+            ),
+            {"pid": request.portfolio_id},
+        ).fetchall()
+        tickers = [r[0].upper() for r in rows]
 
     if not tickers:
         raise HTTPException(status_code=422, detail="No tickers to scan.")
