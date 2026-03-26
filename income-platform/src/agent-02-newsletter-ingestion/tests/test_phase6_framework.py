@@ -241,3 +241,33 @@ class TestFeatureGap:
             mock_client.messages.create.side_effect = Exception("timeout")
             result = classify_gap_category("unknown_metric", "BDC")
         assert result["category"] == "external"
+
+
+class TestKBEndpoints:
+    def setup_method(self):
+        import os
+        os.environ.setdefault("JWT_SECRET", "test-secret-for-tests")
+        import jwt
+        token = jwt.encode({"sub": "test"}, "test-secret-for-tests", algorithm="HS256")
+        self.headers = {"Authorization": f"Bearer {token}"}
+
+    def test_get_analyst_context_returns_404_when_not_found(self):
+        from app.main import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+        with patch("app.api.kb.get_db"):
+            with patch("app.api.kb._get_framework_profile", return_value=None):
+                resp = client.get(
+                    "/kb/analyst-context?analyst_id=999&ticker=ARCC",
+                    headers=self.headers,
+                )
+        assert resp.status_code == 404
+
+    def test_get_analyst_framework_returns_404_for_unknown_analyst(self):
+        from app.main import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+        with patch("app.api.kb.get_db"):
+            with patch("app.api.kb._get_analyst_profiles", return_value=None):
+                resp = client.get("/analysts/999/framework", headers=self.headers)
+        assert resp.status_code == 404
