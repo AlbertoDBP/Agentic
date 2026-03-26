@@ -40,11 +40,11 @@ Next.js /scanner page
         └── GenerateProposalButton   — enabled when ≥1 selected (Slice 4)
 
 Agent 07 (port 8007) — extended endpoints
-  POST /scan              ← adds portfolio_id, portfolio_lens; returns entry_exit block
-  GET  /universe
-  GET  /quote/{symbol}
-  GET  /scan/{scan_id}
-  POST /scan/{scan_id}/propose   ← Slice 4 handoff stub
+  POST /scan                     ← adds portfolio_id, portfolio_lens; returns entry_exit block
+  GET  /scan/{scan_id}           ← existing endpoint, unchanged
+  GET  /universe                 ← existing endpoint, unchanged
+  GET  /quote/{symbol}           ← existing endpoint, unchanged
+  POST /scan/{scan_id}/propose   ← Slice 4 handoff stub (new)
 ```
 
 Frontend communicates with Agent 07 via the existing broker route handler (service auth injected server-side).
@@ -141,10 +141,16 @@ When `portfolio_id` is provided, Agent 07 reads `platform_shared.positions` for 
 ```
 
 **Overweight thresholds** (configurable via env vars, defaults):
+
 - `CLASS_OVERWEIGHT_PCT` = 20 — asset class weight above this triggers `class_overweight: true`
 - `SECTOR_OVERWEIGHT_PCT` = 30 — sector weight above this triggers `sector_overweight: true`
 
+**Weight computation** — `asset_class_weight_pct` and `sector_weight_pct` are computed as:
+`(held_shares × current_price) / sum(held_shares × current_price across all positions in portfolio)`.
+`current_price` comes from `market_data_cache.price` for each held ticker. If a position's price is missing from cache, that position is excluded from the denominator.
+
 **Underperformer definition** — a held position is flagged when either:
+
 - `valuation_yield_score < 28` (income pillar below 70% of max 40), OR
 - `financial_durability_score < 28` (durability pillar below 70% of max 40)
 
@@ -155,7 +161,7 @@ Sub-scores come from the most recent Agent 03 score for that ticker (fetched dur
 | Lens | Filter applied | Rank modifier |
 |---|---|---|
 | `gap` | Exclude `already_held: true` | Score descending |
-| `replacement` | Include only tickers in same asset class as underperformers; sets `replacing_ticker` to the underperforming held ticker | Score delta vs. held ticker descending |
+| `replacement` | Include only tickers in same asset class as ≥1 underperformer; `replacing_ticker` set to the lowest-scoring underperformer in that class. If multiple candidates map to the same underperformer, each gets its own row with the same `replacing_ticker`. | Score delta vs. `replacing_ticker` score, descending |
 | `concentration` | All results included | Score × (1 - class_weight_pct/100) — rewards diversifying picks |
 | `null` | No filter — annotate only | Score descending |
 
@@ -190,34 +196,44 @@ All inputs read from `platform_shared.market_data_cache` — no new FMP calls du
 | `rsi_14d` | Momentum confirmation |
 | `support_level` | Technical entry floor |
 | `resistance_level` | Technical exit ceiling |
-| `dividend_yield` | Yield-based entry/exit |
+| `dividend_yield` | Yield-based entry/exit (percent, e.g. 6.5 = 6.5%) |
 | `nav_value` | NAV-based entry/exit for CEF/BDC |
+
+**Derived values** (computed at runtime, not stored):
+
+- `annual_dividend = price × (dividend_yield / 100)` — derived from cache; if `price` or `dividend_yield` is null, signal is skipped
+- `yield_entry_target = dividend_yield × 1.15` — proxy for historical high yield (15% above current yield); signal skipped if `dividend_yield` is null
+- `yield_exit_target = dividend_yield × 0.85` — proxy for historical low yield (15% below current yield); signal skipped if `dividend_yield` is null
+
+These proxies are used because historical yield percentile data is not yet available in the platform. When a `yield_history` table is introduced in a future version, these derivations can be replaced with actual percentile values.
 
 ### 5.2 Entry Price Calculation
 
 Three signals computed per ticker (where data available). Entry limit = minimum of applicable signals:
 
-| Signal | Formula |
-|---|---|
-| Technical | `max(support_level, sma_200 × 1.01)` — at long-term support with 1% buffer |
-| Yield-based | `(annual_dividend / historical_high_yield) × 0.95` — yield at near-peak attractiveness |
-| NAV-based *(CEF/BDC only)* | `nav_value × 0.95` — 5% discount to NAV |
+| Signal | Formula | Skipped when |
+| --- | --- | --- |
+| Technical | `max(support_level, sma_200 × 1.01)` | `support_level` and `sma_200` both null |
+| Yield-based | `annual_dividend / (yield_entry_target / 100)` | `price` or `dividend_yield` null |
+| NAV-based *(CEF/BDC only)* | `nav_value × 0.95` | `nav_value` null or asset_class not CEF/BDC |
 
 `entry_limit = min(applicable signals)`
 
-If no signals available (missing data), `entry_limit = null` and zone status = `UNKNOWN`.
+If all signals are skipped (missing data), `entry_limit = null` and zone status = `UNKNOWN`.
 
 ### 5.3 Exit Price Calculation
 
 Three signals computed per ticker. Exit limit = minimum of applicable signals (conservative):
 
-| Signal | Formula |
-|---|---|
-| Technical | `min(resistance_level, week_52_high × 0.95)` — below resistance |
-| Yield compression | `annual_dividend / (historical_low_yield × 1.05)` — yield near floor |
-| NAV premium *(CEF/BDC only)* | `nav_value × 1.05` — 5% premium to NAV |
+| Signal | Formula | Skipped when |
+|---|---|---|
+| Technical | `min(resistance_level, week_52_high × 0.95)` | `resistance_level` and `week_52_high` both null |
+| Yield compression | `annual_dividend / (yield_exit_target / 100)` | `price` or `dividend_yield` null |
+| NAV premium *(CEF/BDC only)* | `nav_value × 1.05` | `nav_value` null or asset_class not CEF/BDC |
 
 `exit_limit = min(applicable signals)`
+
+If all signals are skipped, `exit_limit = null`.
 
 ### 5.4 Zone Status
 
@@ -265,7 +281,7 @@ New columns added to results table:
 | Current $ | `current_price` (e.g. `$47.10`) |
 | Exit $ | `exit_limit` (e.g. `$52.80`) |
 
-Zone status badge in the `Entry $` column header row using colours from §5.4.
+Zone status badge is per-row, displayed inside the `Entry $` cell alongside the dollar price (e.g. `$44.80 🟢`). It uses the colours from §5.4. There is no column-level badge.
 
 Expanded inline row (click to expand) shows:
 - Technical: 52w range progress bar, SMA-200 delta, RSI-14d
@@ -313,11 +329,12 @@ New `portfolio_context` and `entry_exit` fields stored within existing `items` J
 
 ```sql
 CREATE TABLE platform_shared.proposal_drafts (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    scan_id     UUID REFERENCES platform_shared.scan_results(id),
-    tickers     JSONB NOT NULL,       -- [{"ticker": "MAIN", "entry_limit": 44.80, ...}]
-    status      TEXT NOT NULL DEFAULT 'DRAFT',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    scan_id      UUID REFERENCES platform_shared.scan_results(id),
+    tickers      JSONB NOT NULL,        -- [{"ticker": "MAIN", "entry_limit": 44.80, "exit_limit": 52.80, ...}]
+    entry_limits JSONB NOT NULL,        -- {"MAIN": 44.80, "ARCC": 18.90} — keyed by ticker for fast lookup
+    status       TEXT NOT NULL DEFAULT 'DRAFT',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
@@ -331,6 +348,7 @@ CREATE TABLE platform_shared.proposal_drafts (
 | market_data_cache miss for a ticker | entry_exit block returned with nulls; zone_status = UNKNOWN |
 | portfolio_id not found | 404 returned; scan does not proceed |
 | portfolio has no positions | Scan proceeds on empty set; lens returns empty results |
+| scan_id not found on POST /scan/{scan_id}/propose | 404 returned with `detail: "Scan {scan_id} not found"` |
 | Agent 12 unavailable (Slice 4) | proposal_drafts row written locally; user notified of pending status |
 
 ---
