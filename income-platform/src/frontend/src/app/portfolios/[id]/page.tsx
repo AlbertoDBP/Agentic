@@ -2,17 +2,75 @@
 import { useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { ChevronDown, ChevronUp, ArrowLeft, RefreshCw } from "lucide-react";
+import { PieChart, Pie, Cell, Tooltip as ReTip, ResponsiveContainer } from "recharts";
 import { usePortfolioSummary } from "@/lib/hooks/use-portfolios";
 import { KpiStrip } from "@/components/portfolio/kpi-strip";
-import { ConcentrationBar } from "@/components/portfolio/concentration-bar";
 import { HhsBadge } from "@/components/portfolio/hhs-badge";
 import { HHS_HELP } from "@/lib/help-content";
 import { cn, formatCurrency } from "@/lib/utils";
+import { ASSET_CLASS_COLORS } from "@/lib/config";
 import { PortfolioTab }   from "./tabs/portfolio-tab";
 import { MarketTab }      from "./tabs/market-tab";
 import { HealthTab }      from "./tabs/health-tab";
 import { SimulationContent } from "@/app/income-simulation/page";
 import { ProjectionContent } from "@/app/income-projection/page";
+
+const SECTOR_COLORS: Record<string, string> = {
+  "Financial Services":     "#3b82f6",
+  "Real Estate":            "#22c55e",
+  "Energy":                 "#f97316",
+  "Utilities":              "#eab308",
+  "Healthcare":             "#ef4444",
+  "Technology":             "#a855f7",
+  "Consumer Defensive":     "#14b8a6",
+  "Consumer Cyclical":      "#ec4899",
+  "Industrials":            "#94a3b8",
+  "Communication Services": "#06b6d4",
+  "Fixed Income":           "#f59e0b",
+  "Other":                  "#475569",
+};
+
+const CHART_FALLBACK = "#64748b";
+
+function MiniPie({ data, colorMap }: { data: { name: string; value: number }[]; colorMap: Record<string, string> }) {
+  if (!data.length) return null;
+  return (
+    <div>
+      <ResponsiveContainer width="100%" height={130}>
+        <PieChart>
+          <Pie
+            data={data}
+            cx="40%"
+            cy="50%"
+            innerRadius={32}
+            outerRadius={55}
+            dataKey="value"
+            strokeWidth={1}
+            stroke="#1e293b"
+          >
+            {data.map((entry, i) => (
+              <Cell key={i} fill={colorMap[entry.name] ?? CHART_FALLBACK} />
+            ))}
+          </Pie>
+          <ReTip
+            contentStyle={{ background: "#1a2035", border: "1px solid #334155", borderRadius: 6, fontSize: 11 }}
+            labelStyle={{ color: "#e2e4ea" }}
+            itemStyle={{ color: "#a0aabb" }}
+            formatter={(v: number) => [`${v.toFixed(1)}%`, ""]}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="flex flex-wrap gap-x-2 gap-y-1 mt-1">
+        {data.map((entry, i) => (
+          <div key={i} className="flex items-center gap-1 text-[0.6rem] text-muted-foreground">
+            <div className="w-2 h-2 rounded-sm shrink-0" style={{ background: colorMap[entry.name] ?? CHART_FALLBACK }} />
+            {entry.name} {entry.value.toFixed(0)}%
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 type Tab = "portfolio" | "market" | "health" | "simulation" | "projection";
 const TABS: { key: Tab; label: string }[] = [
@@ -121,8 +179,9 @@ export default function PortfolioPage() {
             {/* Asset Class box */}
             <div className="rounded-lg border border-border/50 bg-background/40 p-3">
               <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">Asset Class</div>
-              <ConcentrationBar
-                items={(summary.concentration_by_class ?? []).map(c => ({ label: c.class, pct: c.pct }))}
+              <MiniPie
+                data={(summary.concentration_by_class ?? []).map(c => ({ name: c.class, value: c.pct }))}
+                colorMap={ASSET_CLASS_COLORS}
               />
             </div>
 
@@ -150,8 +209,9 @@ export default function PortfolioPage() {
             {/* Sector box */}
             <div className="rounded-lg border border-border/50 bg-background/40 p-3">
               <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">Sector</div>
-              <ConcentrationBar
-                items={(summary.concentration_by_sector ?? []).map(s => ({ label: s.sector, pct: s.pct }))}
+              <MiniPie
+                data={(summary.concentration_by_sector ?? []).map(s => ({ name: s.sector, value: s.pct }))}
+                colorMap={SECTOR_COLORS}
               />
             </div>
           </div>

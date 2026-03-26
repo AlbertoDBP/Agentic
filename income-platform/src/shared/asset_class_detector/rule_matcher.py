@@ -96,6 +96,17 @@ class RuleMatcher:
     def _ticker_pattern(self, ticker: str, data: dict, config: dict, weight: float) -> Optional[RuleMatch]:
         t = ticker.upper()
 
+        # CUSIP pattern: 9-char alphanumeric, first 2+ chars are digits
+        if config.get("cusip_pattern"):
+            if len(t) == 9 and t[:2].isdigit() and t.isalnum():
+                return RuleMatch(
+                    asset_class=AssetClass.UNKNOWN,
+                    rule_type="ticker_pattern",
+                    confidence=weight,
+                    matched_on=f"CUSIP format: '{ticker}'",
+                )
+            return None
+
         # Exact ticker list
         if t in [x.upper() for x in config.get("tickers", [])]:
             return RuleMatch(

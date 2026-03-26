@@ -54,8 +54,11 @@ def _to_fmp_symbol(ticker: str) -> str:
 
 
 def _is_cusip(ticker: str) -> bool:
-    """Return True if ticker looks like a CUSIP (9-char alphanumeric with leading digits)."""
-    return len(ticker) == 9 and ticker[:6].isdigit()
+    """Return True if ticker looks like a CUSIP.
+    CUSIP format: 9 alphanumeric chars, first 2+ chars are digits.
+    Real CUSIPs have letters in the issuer/issue portions (e.g. 55342UAH7).
+    """
+    return len(ticker) == 9 and ticker[:2].isdigit() and ticker.isalnum()
 
 
 async def _resolve_cusips(cusips: list[str]) -> dict[str, str]:
@@ -490,9 +493,32 @@ async def fetch_and_upsert(
     if not tickers:
         return 0
 
+    # Ensure fmp_sector column exists (idempotent – runs quickly if column already present)
+    try:
+        db.execute(text(
+            "ALTER TABLE platform_shared.market_data_cache "
+            "ADD COLUMN IF NOT EXISTS fmp_sector TEXT"
+        ))
+        db.commit()
+    except Exception as _col_err:
+        db.rollback()
+        logger.debug("fmp_sector column ensure: %s", _col_err)
+
     # Separate CUSIPs from regular tickers
     cusip_tickers = [t for t in tickers if _is_cusip(t)]
     regular_tickers = [t for t in tickers if not _is_cusip(t)]
+
+    # Mark CUSIP-format symbols as BOND in securities table
+    for cusip in cusip_tickers:
+        try:
+            db.execute(text(
+                "UPDATE platform_shared.securities SET asset_type = 'BOND' "
+                "WHERE symbol = :sym AND (asset_type IS NULL OR asset_type = 'DIVIDEND_STOCK')"
+            ), {"sym": cusip.upper()})
+        except Exception as _bond_err:
+            logger.debug("BOND asset_type update for %s: %s", cusip, _bond_err)
+    if cusip_tickers:
+        db.commit()
 
     # Resolve CUSIPs to FMP symbols (concurrent API calls)
     cusip_map: dict[str, str] = {}
@@ -618,6 +644,7 @@ async def fetch_and_upsert(
                         buyback_yield, coverage_metric_type,
                         interest_coverage_ratio, net_debt_ebitda,
                         free_cash_flow_yield, return_on_equity,
+                        fmp_sector,
                         is_tracked, track_reason,
                         snapshot_date, fetched_at
                     ) VALUES (
@@ -633,6 +660,7 @@ async def fetch_and_upsert(
                         :buyback_yield, :coverage_metric_type,
                         :interest_coverage_ratio, :net_debt_ebitda,
                         :free_cash_flow_yield, :return_on_equity,
+                        :fmp_sector,
                         TRUE, :track_reason,
                         :snapshot_date, :fetched_at
                     )
@@ -668,6 +696,7 @@ async def fetch_and_upsert(
                         net_debt_ebitda          = COALESCE(EXCLUDED.net_debt_ebitda,   platform_shared.market_data_cache.net_debt_ebitda),
                         free_cash_flow_yield     = COALESCE(EXCLUDED.free_cash_flow_yield, platform_shared.market_data_cache.free_cash_flow_yield),
                         return_on_equity         = COALESCE(EXCLUDED.return_on_equity,  platform_shared.market_data_cache.return_on_equity),
+                        fmp_sector               = COALESCE(EXCLUDED.fmp_sector,        platform_shared.market_data_cache.fmp_sector),
                         is_tracked               = TRUE,
                         track_reason             = EXCLUDED.track_reason,
                         snapshot_date            = EXCLUDED.snapshot_date,
@@ -709,6 +738,7 @@ async def fetch_and_upsert(
                     "net_debt_ebitda": s.get("net_debt_ebitda"),
                     "free_cash_flow_yield": s.get("free_cash_flow_yield"),
                     "return_on_equity": s.get("return_on_equity"),
+                    "fmp_sector": "Fixed Income" if _is_cusip(sym) else p.get("sector") or None,
                     "track_reason": track_reason,
                     "snapshot_date": today,
                     "fetched_at": now,

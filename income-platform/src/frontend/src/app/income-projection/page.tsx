@@ -11,6 +11,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
 import { usePortfolio } from "@/lib/portfolio-context";
@@ -173,8 +174,9 @@ export default function ProjectionPage() {
                     <XAxis dataKey="month" tick={{ fill: "#8891a8", fontSize: 11 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: "#8891a8", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(1)}K`} />
                     <Tooltip
-                      contentStyle={{ background: "#111520", border: "1px solid #252d3d", borderRadius: 8, fontSize: 12 }}
-                      labelStyle={{ color: "#e8eaf0" }}
+                      contentStyle={{ background: "#1a2035", border: "1px solid #334155", borderRadius: 8, fontSize: 12 }}
+                      labelStyle={{ color: "#e2e4ea", fontWeight: 600 }}
+                      itemStyle={{ color: "#c8d0e0" }}
                       formatter={(value) => [formatCurrency(Number(value)), ""]}
                     />
                     <Area type="monotone" dataKey="high" stroke="transparent" fill="#3b82f6" fillOpacity={0.08} />
@@ -196,6 +198,13 @@ export default function ProjectionPage() {
                       contentStyle={{ background: "#111520", border: "1px solid #252d3d", borderRadius: 8, fontSize: 12 }}
                       labelStyle={{ color: "#e8eaf0" }}
                       formatter={(value) => [formatCurrency(Number(value)), "Projected"]}
+                    />
+                    <ReferenceLine
+                      y={monthlyAvg}
+                      stroke="#10b981"
+                      strokeDasharray="4 2"
+                      strokeWidth={1.5}
+                      label={{ value: `Avg ${formatCurrency(monthlyAvg)}`, position: "insideTopRight", fill: "#10b981", fontSize: 10 }}
                     />
                     <Bar dataKey="projected" radius={[4, 4, 0, 0]}>
                       {data.map((entry, index) => (

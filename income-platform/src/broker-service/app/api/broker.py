@@ -445,9 +445,16 @@ def _get_positions_for_portfolio(db: Session, portfolio_id: str) -> list[dict]:
         SELECT pos.symbol, pos.current_value, pos.annual_income,
                pos.total_cost_basis AS cost_basis,
                pos.total_dividends_received,
-               sec.asset_type, pos.sector, sec.industry
+               sec.asset_type,
+               COALESCE(
+                   pos.sector,
+                   mdc.fmp_sector,
+                   CASE WHEN sec.asset_type = 'BOND' THEN 'Fixed Income' END
+               ) AS sector,
+               sec.industry
         FROM platform_shared.positions pos
         LEFT JOIN platform_shared.securities sec ON sec.symbol = pos.symbol
+        LEFT JOIN platform_shared.market_data_cache mdc ON mdc.symbol = pos.symbol
         WHERE pos.portfolio_id = :pid
           AND pos.status = 'ACTIVE'
     """), {"pid": portfolio_id}).mappings().all()

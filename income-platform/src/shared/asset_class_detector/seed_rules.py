@@ -10,6 +10,18 @@ Priority = lower number fires first (more specific beats general).
 SEED_RULES = [
 
     # ─────────────────────────────────────────
+    # BOND — CUSIP-format tickers (highest priority: 9-char alphanumeric starting with 2+ digits)
+    # Corporate bond CUSIPs follow this format: 6-char issuer + 2-char issue + 1-char check digit
+    # ─────────────────────────────────────────
+    {
+        "asset_class": "BOND",
+        "rule_type": "ticker_pattern",
+        "rule_config": {"cusip_pattern": True},
+        "priority": 1,
+        "confidence_weight": 0.96,
+    },
+
+    # ─────────────────────────────────────────
     # CEF — Closed-End Funds (must beat COVERED_CALL_ETF and BOND)
     # PIMCO, BlackRock, Eaton Vance, Gabelli, Calamos, Cohen & Steers, etc.
     # ─────────────────────────────────────────
