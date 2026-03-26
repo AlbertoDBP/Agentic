@@ -267,3 +267,111 @@ class CreditOverride(Base):
 
     def __repr__(self):
         return f"<CreditOverride ticker='{self.ticker}' grade='{self.override_grade}'>"
+
+
+# ── Article Frameworks ──────────────────────────────────────────────────────
+
+class ArticleFramework(Base):
+    """Pass 2 (Sonnet) extraction output: analyst evaluation methodology per ticker."""
+    __tablename__ = "article_frameworks"
+    __table_args__ = {"schema": "platform_shared"}
+
+    id                       = Column(Integer, primary_key=True, autoincrement=True)
+    article_id               = Column(Integer, ForeignKey("platform_shared.analyst_articles.id",
+                                       ondelete="CASCADE"), nullable=False)
+    analyst_id               = Column(Integer, ForeignKey("platform_shared.analysts.id",
+                                       ondelete="CASCADE"), nullable=False)
+    ticker                   = Column(String(20), nullable=False)
+    valuation_metrics_cited  = Column(JSONB, nullable=True)
+    thresholds_identified    = Column(JSONB, nullable=True)
+    reasoning_structure      = Column(String(30), nullable=True)
+    conviction_level         = Column(String(10), nullable=True)
+    catalysts                = Column(JSONB, nullable=True)
+    price_guidance_type      = Column(String(20), nullable=True)
+    price_guidance_value     = Column(JSONB, nullable=True)
+    risk_factors_cited       = Column(JSONB, nullable=True)
+    macro_factors            = Column(JSONB, nullable=True)
+    evaluation_narrative     = Column(Text, nullable=True)
+    framework_embedding      = Column(Vector(1536), nullable=True)
+    extracted_at             = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class AnalystFrameworkProfile(Base):
+    """Synthesized per-analyst, per-asset-class mental model. Updated by Intelligence Flow."""
+    __tablename__ = "analyst_framework_profiles"
+    __table_args__ = (
+        {"schema": "platform_shared"},
+    )
+
+    id                        = Column(Integer, primary_key=True, autoincrement=True)
+    analyst_id                = Column(Integer, ForeignKey("platform_shared.analysts.id",
+                                        ondelete="CASCADE"), nullable=False)
+    asset_class               = Column(String(30), nullable=False)
+    metric_frequency          = Column(JSONB, nullable=True)
+    typical_thresholds        = Column(JSONB, nullable=True)
+    preferred_reasoning_style = Column(String(30), nullable=True)
+    conviction_patterns       = Column(JSONB, nullable=True)
+    catalyst_sensitivity      = Column(JSONB, nullable=True)
+    framework_summary         = Column(Text, nullable=True)
+    consistency_score         = Column(Numeric(5, 4), nullable=True)
+    article_count             = Column(Integer, default=0)
+    synthesized_at            = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    profile_embedding         = Column(Vector(1536), nullable=True)
+
+
+class AnalystSuggestion(Base):
+    """Investment idea queue: written by Agent 02 Harvester, read by Agent 07."""
+    __tablename__ = "analyst_suggestions"
+    __table_args__ = {"schema": "platform_shared"}
+
+    id                   = Column(Integer, primary_key=True, autoincrement=True)
+    analyst_id           = Column(Integer, ForeignKey("platform_shared.analysts.id",
+                                   ondelete="CASCADE"), nullable=False)
+    article_framework_id = Column(Integer, ForeignKey("platform_shared.article_frameworks.id",
+                                   ondelete="CASCADE"), nullable=False)
+    ticker               = Column(String(20), nullable=False)
+    asset_class          = Column(String(30), nullable=True)
+    recommendation       = Column(String(20), nullable=False)
+    sentiment_score      = Column(Numeric(5, 4), nullable=True)
+    price_guidance_type  = Column(String(20), nullable=True)
+    price_guidance_value = Column(JSONB, nullable=True)
+    staleness_weight     = Column(Numeric(5, 4), default=1.0)
+    is_active            = Column(Boolean, default=True, nullable=False)
+    sourced_at           = Column(TIMESTAMP(timezone=True), nullable=False)
+    expires_at           = Column(TIMESTAMP(timezone=True), nullable=False)
+
+
+class FeatureGapLog(Base):
+    """Metrics cited by analysts that are not tracked in feature_registry."""
+    __tablename__ = "feature_gap_log"
+    __table_args__ = {"schema": "platform_shared"}
+
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    metric_name_raw     = Column(String(200), nullable=False)
+    canonical_candidate = Column(String(200), nullable=True)
+    asset_class         = Column(String(30), nullable=True)
+    article_id          = Column(Integer, ForeignKey("platform_shared.analyst_articles.id",
+                                  ondelete="SET NULL"), nullable=True)
+    analyst_id          = Column(Integer, ForeignKey("platform_shared.analysts.id",
+                                  ondelete="SET NULL"), nullable=True)
+    occurrence_count    = Column(Integer, default=1)
+    resolution_status   = Column(String(30), default="pending")
+    resolved_at         = Column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class FeatureRegistry(Base):
+    """Canonical feature catalog — drives Agent 01 dynamic feature fetch."""
+    __tablename__ = "feature_registry"
+    __table_args__ = {"schema": "platform_shared"}
+
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    feature_name      = Column(String(200), unique=True, nullable=False)
+    aliases           = Column(JSONB, nullable=True)
+    category          = Column(String(20), nullable=False)       # fetchable|derived|external
+    source            = Column(String(30), nullable=True)        # fmp|polygon|yfinance|derived|manual
+    asset_classes     = Column(JSONB, nullable=True)
+    fetch_config      = Column(JSONB, nullable=True)
+    computation_rule  = Column(Text, nullable=True)
+    is_active         = Column(Boolean, default=False, nullable=False)
+    validation_status = Column(String(20), default="pending")
+    added_at          = Column(TIMESTAMP(timezone=True), server_default=func.now())
