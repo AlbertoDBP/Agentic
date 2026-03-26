@@ -195,7 +195,7 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
         cache_rows = db.execute(
             text("""
                 SELECT symbol, price, support_level, sma_200,
-                       resistance_level, week_52_high, dividend_yield, nav_value
+                       resistance_level, week52_high, dividend_yield, nav_value
                 FROM platform_shared.market_data_cache
                 WHERE symbol = ANY(:syms)
             """),
