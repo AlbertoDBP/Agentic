@@ -292,7 +292,7 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
                     SELECT valuation_yield_score, financial_durability_score
                     FROM platform_shared.income_scores
                     WHERE ticker = p.symbol
-                    ORDER BY created_at DESC LIMIT 1
+                    ORDER BY scored_at DESC LIMIT 1
                 ) sc ON true
                 WHERE p.portfolio_id = :pid
             """),
