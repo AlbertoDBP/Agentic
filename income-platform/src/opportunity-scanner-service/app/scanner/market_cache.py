@@ -213,24 +213,35 @@ async def _fmp_technical_indicators(symbol: str, client: httpx.AsyncClient) -> d
 
 async def _fmp_key_metrics_ttm(symbol: str, client: httpx.AsyncClient) -> dict:
     """
-    Fetch buybackYieldTTM and other TTM metrics from FMP /stable/key-metrics-ttm.
-    Returns {buyback_yield, insider_ownership_pct} or {}.
+    Fetch buybackYieldTTM and tangibleAssetValue from FMP.
+    - /stable/key-metrics-ttm → buyback_yield
+    - /stable/key-metrics     → tangible_asset_value (for NAV per share computation)
+    Returns {} on any error.
     """
     try:
-        resp = await client.get(
-            f"{settings.fmp_base_url}/key-metrics-ttm",
-            params={"symbol": symbol, "apikey": settings.fmp_api_key},
-            timeout=settings.fmp_request_timeout,
+        ttm_resp, km_resp = await asyncio.gather(
+            client.get(
+                f"{settings.fmp_base_url}/key-metrics-ttm",
+                params={"symbol": symbol, "apikey": settings.fmp_api_key},
+                timeout=settings.fmp_request_timeout,
+            ),
+            client.get(
+                f"{settings.fmp_base_url}/key-metrics",
+                params={"symbol": symbol, "apikey": settings.fmp_api_key, "limit": 1},
+                timeout=settings.fmp_request_timeout,
+            ),
+            return_exceptions=True,
         )
-        if resp.status_code != 200:
-            return {}
-        data = resp.json()
-        if not isinstance(data, list) or not data:
-            return {}
-        d = data[0]
-        return {
-            "buyback_yield": _safe_float(d.get("buybackYieldTTM")),
-        }
+        result: dict = {}
+        if not isinstance(ttm_resp, Exception) and ttm_resp.status_code == 200:
+            ttm_data = ttm_resp.json()
+            if isinstance(ttm_data, list) and ttm_data:
+                result["buyback_yield"] = _safe_float(ttm_data[0].get("buybackYieldTTM"))
+        if not isinstance(km_resp, Exception) and km_resp.status_code == 200:
+            km_data = km_resp.json()
+            if isinstance(km_data, list) and km_data:
+                result["tangible_asset_value"] = _safe_float(km_data[0].get("tangibleAssetValue"))
+        return result
     except Exception as exc:
         logger.debug("FMP key-metrics-ttm %s failed: %s", symbol, exc)
         return {}
@@ -401,8 +412,7 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
                     merged["net_debt_ebitda"]      = _safe_float(
                         km.get("netDebtToEBITDA") or km.get("debtToEbitda")
                     )
-                    # tangible asset value (= stockholders equity) for NAV computation
-                    merged["tangible_asset_value"] = _safe_float(km.get("tangibleAssetValue"))
+                    pass  # tangible_asset_value comes from ttm block below
 
                 # /dividends: dates + CAGRs + consecutive growth
                 if div:
@@ -423,9 +433,11 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
                 if tech:
                     merged.update({k: v for k, v in tech.items() if v is not None})
 
-                # key-metrics-ttm: buyback yield
+                # key-metrics-ttm: buyback yield + tangible asset value for NAV
                 if ttm:
                     merged["buyback_yield"] = ttm.get("buyback_yield")
+                    if ttm.get("tangible_asset_value") is not None:
+                        merged["tangible_asset_value"] = ttm["tangible_asset_value"]
 
                 if merged:
                     result[sym.upper()] = merged
