@@ -62,3 +62,31 @@ class TestFrameworkExtractor:
         }
         result = validate_framework(fw)
         assert result["price_guidance_type"] == "none"
+
+    def test_extract_frameworks_returns_empty_list_when_client_is_none(self):
+        from app.processors.framework_extractor import extract_frameworks
+        with patch("app.processors.framework_extractor._client", None):
+            result = extract_frameworks("article markdown", {}, "art_004")
+        assert result == []
+
+    def test_extract_frameworks_returns_empty_list_when_response_is_dict_not_list(self):
+        from app.processors.framework_extractor import extract_frameworks
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"ticker": "ARCC"}')]
+        with patch("app.processors.framework_extractor._client") as mock_client:
+            mock_client.messages.create.return_value = mock_response
+            result = extract_frameworks("article markdown", {}, "art_005")
+        assert result == []
+
+    def test_validate_framework_uppercases_ticker(self):
+        from app.processors.framework_extractor import validate_framework
+        fw = {
+            "ticker": "arcc", "valuation_metrics_cited": [],
+            "thresholds_identified": {}, "reasoning_structure": "bottom_up",
+            "conviction_level": "high", "catalysts": [],
+            "price_guidance_type": "none", "price_guidance_value": None,
+            "risk_factors_cited": [], "macro_factors": [],
+            "evaluation_narrative": "x"
+        }
+        result = validate_framework(fw)
+        assert result["ticker"] == "ARCC"
