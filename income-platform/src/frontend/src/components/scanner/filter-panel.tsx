@@ -21,7 +21,7 @@ export interface ScanFilters {
   quality_gate_only: boolean;
   asset_classes: string[];
   // Group 2
-  min_yield: number;
+  min_yield: string;
   max_payout_ratio: string;
   min_volume: string;
   min_market_cap_m: string;
@@ -36,7 +36,7 @@ export const DEFAULT_FILTERS: ScanFilters = {
   min_score: 0,
   quality_gate_only: false,
   asset_classes: [],
-  min_yield: 0,
+  min_yield: "",
   max_payout_ratio: "",
   min_volume: "",
   min_market_cap_m: "",
