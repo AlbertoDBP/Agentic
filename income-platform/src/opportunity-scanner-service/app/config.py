@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # Scanner config
     scan_concurrency: int = 10       # max concurrent Agent 03 calls
     quality_gate_threshold: float = 70.0   # VETO gate score floor
+    class_overweight_pct: float = 20.0    # % weight above which class is flagged overweight
+    sector_overweight_pct: float = 30.0   # % weight above which sector is flagged overweight
     max_tickers_per_scan: int = 200
     score_cache_ttl: int = 3600      # seconds — reuse Agent 03 cached score without re-evaluating
 
