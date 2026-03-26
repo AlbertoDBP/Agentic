@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid as uuid_mod
 from typing import Any, List, Optional
 from uuid import UUID
 
@@ -16,9 +17,14 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal, get_db
-from app.models import ScanResult
+from app.models import ProposalDraft, ScanResult
 from app.scanner.engine import run_scan
 from app.scanner.market_cache import apply_market_filters, fetch_and_upsert, get_stale_tickers
+from app.scanner.portfolio_context import (
+    PortfolioPosition,
+    annotate_with_portfolio,
+    apply_lens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,8 @@ class ScanRequest(BaseModel):
     max_pe: Optional[float] = Field(None, ge=0.0, description="Max P/E ratio")
     min_nav_discount_pct: Optional[float] = Field(None, description="Min NAV discount (negative = discount, e.g. -5 means ≥5% discount)")
     use_universe: bool = Field(False, description="If true, scan full active universe instead of supplied tickers")
+    portfolio_id: Optional[str] = Field(None, description="Portfolio UUID to scan against")
+    portfolio_lens: Optional[str] = Field(None, description="gap | replacement | concentration | null")
 
     model_config = {"json_schema_extra": {
         "example": {
@@ -67,6 +75,8 @@ class ScanItemResponse(BaseModel):
     passed_quality_gate: bool
     veto_flag: bool
     score_details: dict[str, Any]
+    entry_exit: Optional[dict] = None
+    portfolio_context: Optional[dict] = None
 
 
 class ScanResponse(BaseModel):
@@ -209,9 +219,52 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
             "passed_quality_gate": it.passed_quality_gate,
             "veto_flag": it.veto_flag,
             "score_details": it.score_details,
+            "entry_exit": it.entry_exit,
+            "portfolio_context": it.portfolio_context,
         }
         for it in result.items
     ]
+
+    if request.portfolio_id:
+        # Fetch positions for portfolio
+        pos_rows = db.execute(
+            text("""
+                SELECT p.symbol, p.shares, p.asset_type,
+                       s.sector, m.price,
+                       sc.valuation_yield_score, sc.financial_durability_score
+                FROM platform_shared.positions p
+                LEFT JOIN platform_shared.securities s ON s.symbol = p.symbol
+                LEFT JOIN platform_shared.market_data_cache m ON m.symbol = p.symbol
+                LEFT JOIN LATERAL (
+                    SELECT valuation_yield_score, financial_durability_score
+                    FROM platform_shared.income_scores
+                    WHERE ticker = p.symbol
+                    ORDER BY created_at DESC LIMIT 1
+                ) sc ON true
+                WHERE p.portfolio_id = :pid
+            """),
+            {"pid": request.portfolio_id},
+        ).fetchall()
+
+        positions = [
+            PortfolioPosition(
+                symbol=r[0], shares=float(r[1] or 0), asset_class=r[2] or "",
+                sector=r[3] or "", price=float(r[4]) if r[4] else None,
+                valuation_yield_score=float(r[5]) if r[5] else None,
+                financial_durability_score=float(r[6]) if r[6] else None,
+            )
+            for r in pos_rows
+        ]
+
+        items_json = annotate_with_portfolio(
+            items_json, positions,
+            class_overweight_pct=settings.class_overweight_pct,
+            sector_overweight_pct=settings.sector_overweight_pct,
+        )
+        if request.portfolio_lens:
+            items_json = apply_lens(items_json, lens=request.portfolio_lens)
+            for rank, item in enumerate(items_json, start=1):
+                item["rank"] = rank
 
     orm_row = ScanResult(
         total_scanned=result.total_scanned,
@@ -282,6 +335,77 @@ def get_quote(symbol: str, db: Session = Depends(get_db)):
         "price": row[1],
         "dividend_yield": row[2],
     }
+
+
+class ProposeRequest(BaseModel):
+    selected_tickers: list[str] = Field(..., min_length=1)
+    target_portfolio_id: str = Field(..., description="UUID of target portfolio")
+
+
+class ProposeDraftResponse(BaseModel):
+    proposal_id: str
+    status: str
+    tickers: list[dict]
+    entry_limits: dict
+    target_portfolio_id: str
+    created_at: str
+
+
+@router.post("/scan/{scan_id}/propose", response_model=ProposeDraftResponse)
+def post_propose(scan_id: UUID, request: ProposeRequest, db: Session = Depends(get_db)):
+    """
+    Create a proposal draft from selected scan results.
+    Writes to proposal_drafts; Agent 12 will pick it up when available.
+    """
+    scan_row = db.get(ScanResult, scan_id)
+    if scan_row is None:
+        raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found.")
+
+    # Validate portfolio exists
+    port_check = db.execute(
+        text("SELECT id FROM platform_shared.portfolios WHERE id = :pid"),
+        {"pid": request.target_portfolio_id},
+    ).fetchone()
+    if port_check is None:
+        raise HTTPException(status_code=422, detail=f"Portfolio {request.target_portfolio_id} not found.")
+
+    # Build tickers payload from scan items
+    selected = {t.upper() for t in request.selected_tickers}
+    tickers_payload = []
+    entry_limits = {}
+    for item in scan_row.items:
+        if item["ticker"].upper() not in selected:
+            continue
+        ee = item.get("entry_exit") or {}
+        tickers_payload.append({
+            "ticker": item["ticker"],
+            "entry_limit": ee.get("entry_limit"),
+            "exit_limit": ee.get("exit_limit"),
+            "zone_status": ee.get("zone_status"),
+            "score": item.get("score"),
+            "asset_class": item.get("asset_class"),
+        })
+        entry_limits[item["ticker"]] = ee.get("entry_limit")
+
+    draft = ProposalDraft(
+        scan_id=scan_id,
+        target_portfolio_id=uuid_mod.UUID(request.target_portfolio_id),
+        tickers=tickers_payload,
+        entry_limits=entry_limits,
+        status="DRAFT",
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+
+    return ProposeDraftResponse(
+        proposal_id=str(draft.id),
+        status=draft.status,
+        tickers=draft.tickers,
+        entry_limits=draft.entry_limits,
+        target_portfolio_id=str(draft.target_portfolio_id),
+        created_at=str(draft.created_at),
+    )
 
 
 @router.get("/universe")

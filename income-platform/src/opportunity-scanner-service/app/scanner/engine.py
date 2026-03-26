@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from app.config import settings
+from app.scanner.entry_exit import compute_entry_exit
 from app.scanner.scoring_client import score_ticker
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,8 @@ class ScanItem:
     veto_flag: bool              # True when score < quality_gate_threshold
     passed_filters: bool         # True when all caller filters satisfied
     score_details: dict[str, Any] = field(default_factory=dict)
+    entry_exit: Optional[dict] = None
+    portfolio_context: Optional[dict] = None
 
 
 @dataclass
@@ -54,6 +57,7 @@ async def run_scan(
     min_yield: float = 0.0,
     asset_classes: Optional[list[str]] = None,
     quality_gate_only: bool = False,
+    market_cache: dict = None,
 ) -> ScanEngineResult:
     """
     Score all tickers concurrently (max scan_concurrency at a time),
@@ -117,6 +121,19 @@ async def run_scan(
                 "nav_erosion_penalty": data.get("nav_erosion_penalty"),
             },
         )
+        cache_row = (market_cache or {}).get(ticker, {})
+        ee = compute_entry_exit(
+            asset_class=item.asset_class,
+            price=cache_row.get("price"),
+            support_level=cache_row.get("support_level"),
+            sma_200=cache_row.get("sma_200"),
+            resistance_level=cache_row.get("resistance_level"),
+            week_52_high=cache_row.get("week_52_high"),
+            dividend_yield=cache_row.get("dividend_yield"),
+            nav_value=cache_row.get("nav_value"),
+        )
+        item.entry_exit = ee.to_dict()
+
         all_items.append(item)
 
     # Apply filters

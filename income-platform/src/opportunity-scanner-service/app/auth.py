@@ -8,6 +8,12 @@ _bearer = HTTPBearer(auto_error=True)
 _ALGORITHM = "HS256"
 
 
+def create_access_token(data: dict) -> str:
+    """Encode a JWT token for the given payload. Uses JWT_SECRET from environment."""
+    secret = os.environ.get("JWT_SECRET", "test-secret")
+    return jwt.encode(data, secret, algorithm=_ALGORITHM)
+
+
 def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> dict:
