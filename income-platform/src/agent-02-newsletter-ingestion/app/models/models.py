@@ -16,7 +16,7 @@ with a custom type for compatibility.
 """
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, Numeric,
-    TIMESTAMP, ARRAY, ForeignKey, Index, JSON
+    TIMESTAMP, ARRAY, ForeignKey, Index, JSON, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -300,6 +300,7 @@ class AnalystFrameworkProfile(Base):
     """Synthesized per-analyst, per-asset-class mental model. Updated by Intelligence Flow."""
     __tablename__ = "analyst_framework_profiles"
     __table_args__ = (
+        UniqueConstraint("analyst_id", "asset_class", name="uq_analyst_framework_profiles"),
         {"schema": "platform_shared"},
     )
 
@@ -344,7 +345,10 @@ class AnalystSuggestion(Base):
 class FeatureGapLog(Base):
     """Metrics cited by analysts that are not tracked in feature_registry."""
     __tablename__ = "feature_gap_log"
-    __table_args__ = {"schema": "platform_shared"}
+    __table_args__ = (
+        UniqueConstraint("metric_name_raw", "asset_class", name="uq_feature_gap_log"),
+        {"schema": "platform_shared"},
+    )
 
     id                  = Column(Integer, primary_key=True, autoincrement=True)
     metric_name_raw     = Column(String(200), nullable=False)
