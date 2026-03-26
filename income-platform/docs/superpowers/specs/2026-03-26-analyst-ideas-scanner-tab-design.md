@@ -6,51 +6,70 @@ Add a 4th "Analyst Ideas" tab to the Scanner page that surfaces active analyst s
 
 ## Architecture
 
-The tab is a **reader**, not a scan trigger. On open it calls the existing `POST /scan` endpoint with `source: "analyst_ideas"` plus analyst/asset-class/conviction filters. Agent 07 reads `platform_shared.analyst_suggestions` directly from the DB, enriches each ticker with its score and entry/exit data from cache tables, and returns a ranked `ScanResult`. No LLM calls — this is fast (DB-only).
+The tab is a **reader**, not a scan trigger. On open it calls the existing `POST /scan` endpoint with `source: "analyst_ideas"` plus analyst/asset-class/staleness filters. Agent 07 reads `platform_shared.analyst_suggestions` directly from the DB, enriches each ticker with its score and entry/exit data from cache tables, and returns a ranked `ScanResult`. No LLM calls — this is fast (DB-only).
 
 The proposal flow reuses the existing `POST /scan/{scan_id}/propose` endpoint, extended to accept optional per-position amounts and target prices.
 
 A new Agent 02 endpoint provides the analyst list for the filter dropdown (distinct analysts with ≥1 active, non-expired suggestion).
 
+Filter changes debounce 400 ms before firing the scan request — the conviction slider in particular can fire many events while dragging.
+
 ## Components
 
 ### 1. Agent 02 — New Endpoint
 
-**`GET /suggestions/analysts`**
+**`GET /suggestions/analysts`** (in new file `app/api/suggestions.py`)
 
-Returns distinct analysts who have at least one active, non-expired suggestion. Used to populate the analyst filter dropdown.
+Returns distinct analysts who have at least one active, non-expired suggestion. Used to populate the analyst filter dropdown. Queries `platform_shared.analyst_suggestions JOIN platform_shared.analysts WHERE is_active = TRUE AND expires_at > NOW()`.
 
-```
+```text
 Response: [{ id: int, display_name: str, overall_accuracy: float }]
 ```
 
-No auth change required — same `verify_token` pattern as other Agent 02 read endpoints.
+Same `verify_token` auth as other Agent 02 read endpoints.
 
 ### 2. Admin Panel — New Proxy Route
 
-**`GET /api/agent02/suggestions/analysts`** → forwards to `http://agent-02-newsletter-ingestion:8002/suggestions/analysts`.
+Two changes to `src/admin-panel/app/routes/proxy.py`:
 
-Follows the existing proxy pattern used for scanner and other agent routes in the admin panel.
+1. Add `"agent02": settings.agent02_url` to the `_base()` service map (alongside `"scanner"`, `"tax"`, etc.). `settings.agent02_url` already exists at line 12 of `app/config.py`.
+
+2. Add a new route:
+
+```python
+@router.get("/agent02/suggestions/analysts")
+async def proxy_suggestions_analysts(request: Request):
+    return await _proxy("GET", "agent02", "/suggestions/analysts", request)
+```
 
 ### 3. Frontend — New Next.js API Route
 
-**`GET /api/analyst-ideas/analysts`** — proxies to `ADMIN_PANEL_URL/api/agent02/suggestions/analysts`. Returns analyst list for the dropdown.
+**`GET /api/analyst-ideas/analysts`** — proxies to `ADMIN_PANEL_URL/api/agent02/suggestions/analysts`. Follows the same pattern as `src/frontend/src/app/api/scanner/scan/route.ts`.
 
 ### 4. Frontend — Scanner Page Changes
 
 #### Tab bar
 
-Add "Analyst Ideas" as the 4th tab. On tab activation, auto-fetch suggestions (no manual "Run" button needed — load on tab open and on filter change).
+Add "Analyst Ideas" as the 4th tab. On tab activation, fetch the analyst dropdown list once, then auto-fetch suggestions. On any filter change, re-fetch suggestions (debounced 400 ms).
+
+#### Empty and error states
+
+- **Loading**: spinner in place of table, "Loading analyst ideas…"
+- **Empty** (0 active suggestions returned): "No active analyst ideas match your filters. Agent 02 ingests newsletters bi-weekly." — with a "Clear filters" link.
+- **Dropdown fetch failure**: analyst combobox shows "All analysts" and logs a console warning — the scan still works, just without analyst filtering.
+- **Scan error**: same error banner pattern used by other scanner tabs.
 
 #### Filter panel (Analyst Ideas tab only)
 
 Three controls replace the normal filter panel when this tab is active:
 
 | Control | Implementation | Default |
-|---|---|---|
-| **Analysts** multi-select | Combobox populated from `/api/analyst-ideas/analysts`. Displays `display_name`. Empty = all analysts. | All |
+| --- | --- | --- |
+| **Analysts** multi-select combobox | Populated from `/api/analyst-ideas/analysts`. Displays `display_name`. Empty = all analysts. | All |
 | **Asset Classes** badge toggles | Same asset class badges as existing scanner. Empty = all classes. | All |
-| **Min Conviction** slider | Range 0.0–1.0, step 0.05. Label: "Min Conviction". Tooltip: "Freshness × analyst accuracy". | 0.3 |
+| **Min Staleness** slider | Range 0.0–1.0, step 0.05. Label: "Min Staleness". Tooltip: "How fresh and reliable the suggestion is (0 = any, 1 = only very recent high-accuracy ideas). Maps to `staleness_weight` in the DB." | 0.3 |
+
+Note: the slider is labelled **Min Staleness** (not "Conviction") to match the `staleness_weight` field name and avoid misleading the user about what the value represents.
 
 #### Scan payload for Analyst Ideas tab
 
@@ -59,41 +78,62 @@ Three controls replace the normal filter panel when this tab is active:
   tickers: [],
   use_universe: false,
   source: "analyst_ideas",
-  analyst_ids: number[],        // new field — empty array = all
+  analyst_ids: number[],          // new field — empty array = all
   asset_classes: string[] | null,
-  min_staleness_weight: number, // maps to conviction slider
+  min_staleness_weight: number,   // from slider
   // existing scoring filters still applied:
   min_score: number,
   quality_gate_only: boolean,
 }
 ```
 
-`analyst_ids` and `min_staleness_weight` are new fields added to `ScanRequest` on Agent 07, forwarded to `fetch_active_suggestions()` in `analyst_ideas.py`.
+`analyst_ids` and `min_staleness_weight` are new optional fields on `ScanRequest` (Agent 07), forwarded to `fetch_active_suggestions()` in `analyst_ideas.py`.
 
 #### Stats bar
 
-Below filters, show: `{N} analyst ideas · {P} passed quality gate · {V} below gate — selectable at your risk · Last ingestion: {date}`
+Below filters: `{N} analyst ideas · {P} passed quality gate · {V} below gate — selectable at your risk · Last ingestion: {date}`
 
-The last ingestion date comes from `filters_applied.sourced_at` on the scan result (Agent 07 adds this when `source = "analyst_ideas"`).
+`{date}` comes from `filters_applied.sourced_at` on the scan result (Agent 07 sets this to the most recent `sourced_at` in the result set when `source == "analyst_ideas"`).
 
 #### Results table columns
 
 | Col | Content |
-|---|---|
+| --- | --- |
 | Checkbox | Selection |
 | Rank | Integer or `—` for below-gate |
 | Ticker | Bold ticker; asset class in muted text below |
 | Score | Grade badge (A/B/C/D/F · numeric) |
 | Rec | BUY (green) / SELL (red) |
-| Analyst | `display_name` in normal weight; `conviction {value}` in purple below |
-| Entry zone | `$low–$high` from entry_exit; `—` for SELL ideas |
-| Exit | Exit price from entry_exit; exit target for SELL ideas |
+| Analyst | `display_name`; `staleness {value}` in muted purple below |
+| Entry zone | `$low–$high` from `entry_exit`; `—` for SELL ideas |
+| Exit | Exit price from `entry_exit`; exit target for SELL ideas |
 
 Below-gate rows: amber left border (`border-l-2 border-amber-600/40`), amber "⚠ below gate" tag under asset class. Still checkable.
 
+#### `analyst_context` TypeScript type
+
+Add to `ScanItem` in `src/frontend/src/lib/types.ts`:
+
+```typescript
+analyst_context?: {
+  analyst_id:          number | null;
+  analyst_name:        string | null;
+  analyst_accuracy:    number | null;
+  analyst_sector_alpha: Record<string, number> | null;
+  price_guidance_type: string | null;
+  price_guidance_value: Record<string, unknown> | null;
+  staleness_weight:    number | null;
+  sourced_at:          string | null;   // ISO datetime
+  recommendation:      string | null;   // "BUY" | "SELL" etc.
+} | null;
+```
+
+This matches the shape returned by `build_analyst_context()` in `analyst_ideas.py`.
+
 #### Action bar (bottom of results)
 
-Always visible when ≥1 idea is loaded. Shows:
+Always visible when ≥1 idea is loaded:
+
 - `{N} selected`
 - **Create Proposal →** button (disabled if 0 selected)
 - Amber warning if any selected item is below gate: `⚠ {N} below quality gate — included at your risk`
@@ -104,32 +144,45 @@ A right-sliding `Sheet` (shadcn/ui) that opens when "Create Proposal →" is cli
 
 #### Drawer sections (top to bottom)
 
-**Header**: "Create Proposal" title · `{N} ideas selected` · close ×
+**Header**: "Create Proposal" · `{N} ideas selected` · close ×
 
-**Target Portfolio** (required): `<select>` populated from existing portfolios API. On change, fetches and updates the cash balance display.
+**Target Portfolio** (required): `<select>` populated from existing portfolios in page state. On change, updates cash balance pill.
 
-**Available cash**: Pill showing `cash_balance` from the selected portfolio (green text, dark green background). Fetched from existing `/api/portfolios` data already in page state.
+**Available cash**: Pill showing `cash_balance` from selected portfolio (green text). Read from portfolio data already loaded in page state — no extra API call.
 
-**Allocation mode toggle**: `Agent 12 auto-allocates` | `Specify amounts` — defaults to Agent 12. Switching to "Specify amounts" reveals per-position inputs.
+**Allocation mode toggle**: `Agent 12 auto-allocates` | `Specify amounts` — defaults to Agent 12 mode. Toggle reveals/hides per-position inputs.
 
-**Selected ideas list**: One card per selected ticker showing ticker, BUY/SELL, analyst name, grade/score, entry zone. Below-gate items have amber left border and AT RISK badge.
+**Selected ideas list**: One card per selected ticker — ticker, BUY/SELL, analyst name, grade/score, entry zone. Below-gate items have amber left border and AT RISK badge.
 
-**When "Specify amounts" is active**: Each idea card gains two inputs:
+**When "Specify amounts" is active**: Each card gains two inputs:
+
 - `$ Amount` — dollar amount to invest (or liquidate for SELL)
-- `Target Price` — limit order price (pre-filled with `entry_exit.entry_limit` from scan result)
+- `Target Price` — pre-filled from `item.entry_exit.entry_limit`
 
-**Running total** (Specify amounts mode only): `Total committed: $X,XXX · $Y,YYY remaining` — updates live as amounts change. Text turns amber if committed > available cash.
+**Running total** (Specify amounts mode only): `Total committed: $X,XXX · $Y,YYY remaining` — updates live. Turns amber if committed > `cash_balance`.
 
-**Risk warning**: Shown if any below-gate item is selected. Static amber box.
+**Risk warning**: Static amber box when any below-gate item is selected.
 
-**Footer**: `Submit Proposal` (primary) · `Cancel` (secondary)
+**Footer**: `Submit Proposal` (primary) · `Cancel`
 
 #### Submit behavior
 
-- **Agent 12 mode**: sends `POST /scan/{scan_id}/propose` with `{ selected_tickers, target_portfolio_id }` — no amounts. Agent 12 handles sizing.
-- **Specify amounts mode**: sends the same endpoint with additional `position_overrides: { [ticker]: { amount_usd: number, target_price: number } }`. Agent 12 respects these values instead of computing its own.
+- **Agent 12 mode**: `POST /api/scanner/propose` with `{ scan_id, selected_tickers, target_portfolio_id }`.
+- **Specify amounts mode**: same endpoint plus `position_overrides: { [ticker]: { amount_usd: number, target_price: number } }`.
 
-### 6. Agent 07 — Scan Endpoint Changes
+### 6. Frontend — Propose Route Update
+
+**`src/frontend/src/app/api/scanner/propose/route.ts`** currently destructures only `{ scan_id, selected_tickers, target_portfolio_id }` and forwards only those to the admin panel. It must also forward `position_overrides`:
+
+```typescript
+const { scan_id, selected_tickers, target_portfolio_id, position_overrides } = await req.json();
+// ...
+body: JSON.stringify({ selected_tickers, target_portfolio_id, position_overrides }),
+```
+
+`position_overrides` may be `undefined` — Agent 07 already handles `Optional` on the backend.
+
+### 7. Agent 07 — Scan Endpoint Changes
 
 **`ScanRequest`** gains two new optional fields:
 
@@ -138,11 +191,11 @@ analyst_ids: Optional[list[int]] = Field(None)
 min_staleness_weight: Optional[float] = Field(0.3)
 ```
 
-**`post_scan` route**: when `source == "analyst_ideas"`, call `fetch_active_suggestions(conn, min_staleness_weight, asset_classes, analyst_ids)` to get the ticker list and context map, then populate `item.analyst_context` on each `ScanItem`.
+**`post_scan` route**: when `source == "analyst_ideas"`, call `fetch_active_suggestions(conn, min_staleness_weight, asset_classes, analyst_ids)` to get suggestions, build `context_map` via `tickers_from_analyst_suggestions()`, then for each resulting `ScanItem` set `item.analyst_context = context_map.get(item.ticker)`.
 
-**`filters_applied`** dict gains `sourced_at: str` (ISO timestamp of most recent suggestion in the result set) when `source == "analyst_ideas"`, so the frontend can display "Last ingestion: {date}".
+**`filters_applied`** dict gains `sourced_at: str` (ISO timestamp of the most recent `sourced_at` among returned suggestions) when `source == "analyst_ideas"`.
 
-### 7. Agent 07 — Propose Endpoint Changes
+### 8. Agent 07 — Propose Endpoint Changes
 
 **`ProposeRequest`** gains one new optional field:
 
@@ -151,48 +204,64 @@ position_overrides: Optional[dict[str, dict]] = None
 # { "ARCC": { "amount_usd": 3000, "target_price": 19.50 } }
 ```
 
-These are stored as-is in `ProposalDraft.tickers` alongside `entry_limit`, so Agent 12 can read them during proposal execution.
+**Storage**: overrides are merged into each ticker dict in the `tickers` list — no schema migration required. Each ticker dict already contains `ticker`, `entry_limit`, `exit_limit`, `zone_status`, `score`, `asset_class`. Add `amount_usd` and `target_price` to the dict if a matching override exists:
+
+```python
+for item in ...:
+    ticker_dict = { "ticker": ..., "entry_limit": ..., ... }
+    override = (request.position_overrides or {}).get(item.ticker, {})
+    if override:
+        ticker_dict["amount_usd"] = override.get("amount_usd")
+        ticker_dict["target_price"] = override.get("target_price")
+    tickers_payload.append(ticker_dict)
+```
+
+Agent 12 reads these fields when present; ignores them otherwise.
 
 ## Data Flow
 
-```
+```text
 User opens Analyst Ideas tab
-  → GET /api/analyst-ideas/analysts          (populate dropdown)
+  → GET /api/analyst-ideas/analysts          (populate analyst combobox, once)
   → POST /api/scanner/scan                   (source=analyst_ideas, auto on tab open)
-      → Admin panel → Agent 07 POST /scan
-          → analyst_ideas.fetch_active_suggestions (DB read)
-          → run_scan() enriches with scores + entry/exit
-          → returns ScanResult
+      → Admin panel proxy.py → Agent 07 POST /scan
+          → fetch_active_suggestions() (DB read from platform_shared)
+          → run_scan() enriches with scores + entry/exit from cache
+          → returns ScanResult with analyst_context on each item
+
+User changes filters → debounced 400ms → re-fires POST /api/scanner/scan
 
 User selects rows + clicks Create Proposal →
-  → Sheet slides in
-  → Portfolio cash_balance read from page state
+  → Sheet slides open
+  → cash_balance read from portfolio already in page state
 
 User submits →
   → POST /api/scanner/propose
-      → Admin panel → Agent 07 POST /scan/{id}/propose
-          → writes ProposalDraft (with optional position_overrides)
+      → Admin panel proxy.py → Agent 07 POST /scan/{id}/propose
+          → writes ProposalDraft with position_overrides merged into tickers
           → Agent 12 picks up draft on next cycle
 ```
 
 ## Files Changed
 
 **Create:**
+
 - `src/agent-02-newsletter-ingestion/app/api/suggestions.py` — `GET /suggestions/analysts` endpoint
-- `src/frontend/src/app/api/analyst-ideas/analysts/route.ts` — Next.js proxy route
-- `src/frontend/src/components/analyst-ideas-drawer.tsx` — sliding proposal sheet component
+- `src/frontend/src/app/api/analyst-ideas/analysts/route.ts` — Next.js proxy to admin panel
+- `src/frontend/src/components/analyst-ideas-drawer.tsx` — sliding proposal Sheet component
 
 **Modify:**
-- `src/agent-02-newsletter-ingestion/app/main.py` — register suggestions router
-- `src/opportunity-scanner-service/app/api/scanner.py` — add `analyst_ids`, `min_staleness_weight` to `ScanRequest`; add `position_overrides` to `ProposeRequest`; wire analyst ideas fetch when `source == "analyst_ideas"`
-- `src/frontend/src/app/scanner/page.tsx` — add 4th tab, Analyst Ideas filter panel, stats bar, analyst context column, action bar, drawer trigger
-- `src/frontend/src/lib/types.ts` — add `analyst_context` to `ScanItem` type; add `position_overrides` to propose payload type
 
-**Proxy (Admin Panel):**
-- `src/admin-panel/` — add `GET /api/agent02/suggestions/analysts` proxy route (follows existing pattern)
+- `src/agent-02-newsletter-ingestion/app/main.py` — register suggestions router under `/suggestions`
+- `src/admin-panel/app/routes/proxy.py` — add `"agent02": settings.agent02_url` to `_base()`; add `GET /api/agent02/suggestions/analysts` route
+- `src/opportunity-scanner-service/app/api/scanner.py` — add `analyst_ids` + `min_staleness_weight` to `ScanRequest`; add `position_overrides` to `ProposeRequest`; wire analyst ideas path in `post_scan`; merge overrides into tickers in `post_propose`
+- `src/frontend/src/app/scanner/page.tsx` — add 4th tab, Analyst Ideas filter panel, debounced fetch, stats bar, analyst context column, action bar, drawer trigger
+- `src/frontend/src/app/api/scanner/propose/route.ts` — forward `position_overrides` in request body
+- `src/frontend/src/lib/types.ts` — add `analyst_context` typed interface to `ScanItem`; add `position_overrides` to propose payload type
 
 ## Out of Scope
 
-- Scheduling or triggering newsletter ingestion from this page (Agent 02 handles that independently)
-- Editing analyst suggestions directly from the UI
+- Scheduling or triggering newsletter ingestion from this page
+
+- Editing analyst suggestions from the UI
 - Historical view of past analyst ideas
