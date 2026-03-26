@@ -55,6 +55,9 @@ class FMPClient(BaseDataProvider):
     # Class-level rate-limit timestamp, shared across all instances
     _last_request_time: Optional[datetime] = None
 
+    # Config-driven feature map: populated by ProviderRouter.reload_feature_registry()
+    _feature_map: dict = {}
+
     def __init__(
         self,
         api_key: str,
@@ -494,6 +497,16 @@ class FMPClient(BaseDataProvider):
         }
         await self._cache_set(cache_key, out, _TTL_FUNDAMENTALS)
         return out
+
+    async def get_feature(self, symbol: str, feature_name: str) -> float | None:
+        """
+        Config-driven feature fetch. Feature map loaded from feature_registry.
+        Subclasses populate _feature_map on hot-reload.
+        """
+        fetch_config = self._feature_map.get(feature_name)
+        if not fetch_config:
+            raise DataUnavailableError(f"{self.__class__.__name__} does not support feature '{feature_name}'")
+        raise DataUnavailableError(f"Feature '{feature_name}' not yet implemented in {self.__class__.__name__}")
 
     async def get_company_screener(self, symbols: list[str]) -> list[dict]:
         """Return sector, industry, isEtf, isFund, and type for a batch of symbols

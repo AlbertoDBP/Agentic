@@ -564,6 +564,13 @@ async def get_cache_stats():
     return await cache_manager.get_stats()
 
 
+@app.post("/admin/reload-feature-registry", tags=["admin"])
+async def reload_feature_registry():
+    """Hot-reload feature registry from DB. Called by Intelligence Flow after new features activate."""
+    count = await market_data_service._router.reload_feature_registry()
+    return {"reloaded": True, "features_loaded": count}
+
+
 # ---------------------------------------------------------------------------
 # Direct execution
 # ---------------------------------------------------------------------------

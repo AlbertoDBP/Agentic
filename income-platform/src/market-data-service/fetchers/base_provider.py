@@ -126,3 +126,11 @@ class BaseDataProvider(ABC):
                 "covered_call":  bool,               # True if this is a covered-call ETF
             }
         """
+
+    @abstractmethod
+    async def get_feature(self, symbol: str, feature_name: str) -> float | None:
+        """
+        Fetch a named feature for symbol using config from feature_registry.
+        Returns None if this provider does not support the feature.
+        Raises DataUnavailableError if the feature is known but data unavailable for this symbol.
+        """

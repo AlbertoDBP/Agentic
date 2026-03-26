@@ -164,6 +164,45 @@ class ProviderRouter:
         )
         return await self._try_chain(f"get_etf_holdings({symbol})", chain)
 
+    async def get_feature(self, symbol: str, feature_name: str) -> float | None:
+        """Fetch a named feature using config-driven provider routing."""
+        symbol = symbol.upper()
+        chain = self._build_chain(
+            symbol, "get_feature",
+            [self.fmp, self.yfinance, self.polygon],
+            ["fmp",    "yfinance",   "polygon"],
+            feature_name=feature_name,
+        )
+        return await self._try_chain(f"get_feature({symbol}/{feature_name})", chain)
+
+    async def reload_feature_registry(self) -> int:
+        """Hot-reload feature_registry from DB into each provider's feature map."""
+        try:
+            from database import get_db_url
+            from sqlalchemy import create_engine, text
+            engine = create_engine(get_db_url())
+            with engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT feature_name, source, fetch_config
+                    FROM platform_shared.feature_registry
+                    WHERE is_active = TRUE AND category = 'fetchable'
+                """)).fetchall()
+
+            for name, source, config in rows:
+                provider_map = {
+                    "fmp": self.fmp,
+                    "polygon": self.polygon,
+                    "yfinance": self.yfinance,
+                }
+                provider = provider_map.get(source)
+                if provider and hasattr(provider, "_feature_map"):
+                    provider._feature_map[name] = config or {}
+
+            return len(rows)
+        except Exception as e:
+            logger.warning(f"Feature registry reload failed: {e}")
+            return 0
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
