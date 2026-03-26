@@ -138,6 +138,9 @@ class TestSuggestionStore:
         assert params["ticker"] == "ARCC"
         assert params["recommendation"] == "BUY"
         assert params["analyst_id"] == 1
+        from datetime import timedelta, datetime, timezone
+        expected_expires = datetime(2026, 3, 26, tzinfo=timezone.utc) + timedelta(days=45)
+        assert params["expires_at"] == expected_expires
 
     def test_should_write_suggestion_true_for_buy(self):
         from app.processors.suggestion_store import should_write_suggestion

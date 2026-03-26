@@ -251,11 +251,8 @@ def extract_and_store_frameworks(
     with get_db_context() as db:
         for fw in frameworks:
             try:
-                from sqlalchemy import text as sql_text
-                import json
-
                 # Persist article_framework row
-                result = db.execute(sql_text("""
+                result = db.execute(text("""
                     INSERT INTO platform_shared.article_frameworks
                         (article_id, analyst_id, ticker, valuation_metrics_cited,
                          thresholds_identified, reasoning_structure, conviction_level,
@@ -295,7 +292,7 @@ def extract_and_store_frameworks(
                 asset_cls = None
                 if pass1_extracted:
                     for t in (pass1_extracted.get("tickers") or []):
-                        if t.get("ticker", "").upper() == fw["ticker"]:
+                        if t.get("ticker", "").upper() == fw["ticker"].upper():
                             rec_label = t.get("recommendation")
                             sentiment = t.get("sentiment_score")
                             asset_cls = t.get("asset_class")
@@ -318,6 +315,7 @@ def extract_and_store_frameworks(
                     log.debug(f"Suggestion written: {fw['ticker']} {rec_label}")
 
             except Exception as e:
+                db.rollback()
                 log.warning(f"Article {article_id}: framework persist failed for {fw.get('ticker')}: {e}")
                 continue
 
