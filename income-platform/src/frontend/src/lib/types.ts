@@ -320,3 +320,82 @@ export interface PortfolioSummary extends PortfolioListItem {
   }>;
   scores_unavailable?: boolean;
 }
+
+// ── Scanner v2 types ──────────────────────────────────────────────────────────
+
+export interface EntryExit {
+  entry_limit: number | null;
+  exit_limit: number | null;
+  current_price: number | null;
+  pct_from_entry: number | null;
+  zone_status: "BELOW_ENTRY" | "IN_ZONE" | "NEAR_ENTRY" | "ABOVE_ENTRY" | "UNKNOWN";
+  signals: {
+    technical_entry: number | null;
+    yield_entry: number | null;
+    nav_entry: number | null;
+    technical_exit: number | null;
+    yield_exit: number | null;
+    nav_exit: number | null;
+  };
+}
+
+export interface PortfolioContext {
+  already_held: boolean;
+  held_shares: number | null;
+  held_weight_pct: number | null;
+  asset_class_weight_pct: number;
+  sector_weight_pct: number;
+  class_overweight: boolean;
+  sector_overweight: boolean;
+  is_underperformer: boolean;
+  underperformer_reason: "income_pillar" | "durability_pillar" | null;
+  replacing_ticker: string | null;
+}
+
+export interface ScanItem {
+  rank: number;
+  ticker: string;
+  asset_class: string;
+  score: number;
+  grade: string;
+  recommendation: string;
+  chowder_number: number | null;
+  chowder_signal: string | null;
+  signal_penalty: number;
+  passed_quality_gate: boolean;
+  veto_flag: boolean;
+  score_details: {
+    valuation_yield_score?: number;
+    financial_durability_score?: number;
+    technical_entry_score?: number;
+    nav_erosion_penalty?: number;
+  };
+  entry_exit?: EntryExit | null;
+  portfolio_context?: PortfolioContext | null;
+}
+
+export interface ScanResult {
+  scan_id: string;
+  total_scanned: number;
+  total_passed: number;
+  total_vetoed: number;
+  items: ScanItem[];
+  filters_applied: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ProposalDraft {
+  proposal_id: string;
+  status: string;
+  tickers: Array<{
+    ticker: string;
+    entry_limit: number | null;
+    exit_limit: number | null;
+    zone_status: string;
+    score: number;
+    asset_class: string;
+  }>;
+  entry_limits: Record<string, number | null>;
+  target_portfolio_id: string;
+  created_at: string;
+}
