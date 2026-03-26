@@ -1,7 +1,6 @@
 # src/opportunity-scanner-service/tests/test_analyst_ideas.py
 """Agent 07 — Analyst ideas scan mode tests"""
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 from datetime import datetime, timezone
 
 

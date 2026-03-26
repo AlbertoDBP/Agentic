@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from app.config import settings
+from app.scanner.analyst_ideas import build_analyst_context
 from app.scanner.entry_exit import compute_entry_exit
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,6 @@ def tickers_from_analyst_suggestions(suggestions: list[dict]) -> tuple[list[str]
     Extract ticker list and analyst context map from suggestion rows.
     Returns (tickers, {ticker: analyst_context}).
     """
-    from app.scanner.analyst_ideas import build_analyst_context
     tickers = [s["ticker"] for s in suggestions]
     context_map = {s["ticker"]: build_analyst_context(s) for s in suggestions}
     return tickers, context_map

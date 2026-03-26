@@ -77,6 +77,7 @@ class ScanItemResponse(BaseModel):
     score_details: dict[str, Any]
     entry_exit: Optional[dict] = None
     portfolio_context: Optional[dict] = None
+    analyst_context: Optional[dict] = None
 
 
 class ScanResponse(BaseModel):
@@ -277,6 +278,7 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
             "score_details": it.score_details,
             "entry_exit": it.entry_exit,
             "portfolio_context": it.portfolio_context,
+            "analyst_context": it.analyst_context,
         }
         for it in result.items
     ]
