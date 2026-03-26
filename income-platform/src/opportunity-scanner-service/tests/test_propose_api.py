@@ -27,14 +27,6 @@ def _override_db(db_mock):
 
 
 class TestProposeEndpoint:
-    def _make_scan_id(self, db_mock):
-        """Return a UUID that the mock DB will recognise as a valid scan."""
-        scan_id = str(uuid.uuid4())
-        mock_row = MagicMock()
-        mock_row.id = uuid.UUID(scan_id)
-        db_mock.get.return_value = mock_row
-        return scan_id
-
     def test_missing_scan_id_returns_404(self):
         db = MagicMock()
         db.get.return_value = None

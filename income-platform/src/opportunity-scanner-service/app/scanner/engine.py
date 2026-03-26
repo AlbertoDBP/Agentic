@@ -57,7 +57,7 @@ async def run_scan(
     min_yield: float = 0.0,
     asset_classes: Optional[list[str]] = None,
     quality_gate_only: bool = False,
-    market_cache: dict = None,
+    market_cache: Optional[dict] = None,
 ) -> ScanEngineResult:
     """
     Score all tickers concurrently (max scan_concurrency at a time),

@@ -378,6 +378,7 @@ class ProposeDraftResponse(BaseModel):
 @router.post("/scan/{scan_id}/propose", response_model=ProposeDraftResponse)
 def post_propose(scan_id: UUID, request: ProposeRequest, db: Session = Depends(get_db)):
     """
+    Synchronous endpoint — DB write only, no async scan needed.
     Create a proposal draft from selected scan results.
     Writes to proposal_drafts; Agent 12 will pick it up when available.
     """
