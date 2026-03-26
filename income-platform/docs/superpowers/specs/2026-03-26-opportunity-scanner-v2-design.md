@@ -11,7 +11,7 @@
 Scanner v2 replaces the existing standalone scanner page and extends Agent 07 (port 8007) with three new capability layers delivered as four vertical feature slices:
 
 | Slice | Capability | Touches |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Scanner UI — input modes, filter panel, results table | Frontend only |
 | 2 | Portfolio-aware scan — gap/replacement/concentration lenses | Agent 07 backend + Frontend |
 | 3 | Entry/exit price engine — limit order prices, zone status | Agent 07 backend + Frontend |
@@ -23,7 +23,7 @@ No new agent is introduced. No Agent 01 changes are required — all technical i
 
 ## 2. Architecture
 
-```
+```text
 Next.js /scanner page
   └── ScannerPage
         ├── InputPanel       — mode: manual | portfolio | universe
@@ -58,7 +58,7 @@ Frontend communicates with Agent 07 via the existing broker route handler (servi
 Three mutually exclusive modes selected by a tab control:
 
 | Mode | Behaviour |
-|---|---|
+| --- | --- |
 | **Manual** | Textarea: comma- or newline-separated ticker symbols. Supports up to 200 tickers (hard limit enforced by Agent 07). |
 | **Portfolio** | Dropdown listing the user's portfolios (read from `platform_shared.portfolios`). Selecting a portfolio scans all its current positions. |
 | **Universe** | Toggle. Sets `use_universe: true` in the scan request. Scans all active securities in `platform_shared.securities`. |
@@ -68,11 +68,13 @@ Three mutually exclusive modes selected by a tab control:
 Collapsible. Two filter groups matching existing Agent 07 API:
 
 **Group 1 — Scoring filters:**
+
 - Min Score (0–100 slider, default 0)
 - Quality Gate Only toggle (default off)
 - Asset Class multi-select (DIVIDEND_STOCK, COVERED_CALL_ETF, BOND, EQUITY_REIT, MORTGAGE_REIT, BDC, PREFERRED_STOCK)
 
 **Group 2 — Market data filters (applied via SQL against market_data_cache):**
+
 - Min Yield %
 - Max Payout Ratio %
 - Min / Max Price $
@@ -86,7 +88,7 @@ Collapsible. Two filter groups matching existing Agent 07 API:
 Columns (Slice 1):
 
 | Column | Content |
-|---|---|
+| --- | --- |
 | ☐ | Selection checkbox |
 | Rank | Integer, ascending from 1 |
 | Ticker | Symbol |
@@ -159,7 +161,7 @@ Sub-scores come from the most recent Agent 03 score for that ticker (fetched dur
 ### 4.2 Lens Logic
 
 | Lens | Filter applied | Rank modifier |
-|---|---|---|
+| --- | --- | --- |
 | `gap` | Exclude `already_held: true` | Score descending |
 | `replacement` | Include only tickers in same asset class as ≥1 underperformer; `replacing_ticker` set to the lowest-scoring underperformer in that class. If multiple candidates map to the same underperformer, each gets its own row with the same `replacing_ticker`. | Score delta vs. `replacing_ticker` score, descending |
 | `concentration` | All results included | Score × (1 - class_weight_pct/100) — rewards diversifying picks |
@@ -187,7 +189,7 @@ Sub-scores come from the most recent Agent 03 score for that ticker (fetched dur
 All inputs read from `platform_shared.market_data_cache` — no new FMP calls during scan:
 
 | Field | Used for |
-|---|---|
+| --- | --- |
 | `price` | Current price, zone status calculation |
 | `week_52_high` | Technical exit signal |
 | `week_52_low` | Technical entry signal |
@@ -201,7 +203,7 @@ All inputs read from `platform_shared.market_data_cache` — no new FMP calls du
 
 **Derived values** (computed at runtime, not stored):
 
-- `annual_dividend = price × (dividend_yield / 100)` — derived from cache; if `price` or `dividend_yield` is null, signal is skipped
+- `annual_dividend = price × (dividend_yield / 100)` — derived from cache; if `price` or `dividend_yield` is null, yield signals are skipped
 - `yield_entry_target = dividend_yield × 1.15` — proxy for historical high yield (15% above current yield); signal skipped if `dividend_yield` is null
 - `yield_exit_target = dividend_yield × 0.85` — proxy for historical low yield (15% below current yield); signal skipped if `dividend_yield` is null
 
@@ -226,7 +228,7 @@ If all signals are skipped (missing data), `entry_limit = null` and zone status 
 Three signals computed per ticker. Exit limit = minimum of applicable signals (conservative):
 
 | Signal | Formula | Skipped when |
-|---|---|---|
+| --- | --- | --- |
 | Technical | `min(resistance_level, week_52_high × 0.95)` | `resistance_level` and `week_52_high` both null |
 | Yield compression | `annual_dividend / (yield_exit_target / 100)` | `price` or `dividend_yield` null |
 | NAV premium *(CEF/BDC only)* | `nav_value × 1.05` | `nav_value` null or asset_class not CEF/BDC |
@@ -240,7 +242,7 @@ If all signals are skipped, `exit_limit = null`.
 Based on current price vs. entry limit:
 
 | Status | Condition | Colour |
-|---|---|---|
+| --- | --- | --- |
 | `BELOW_ENTRY` | `price < entry_limit` | Green (strong signal) |
 | `IN_ZONE` | `entry_limit ≤ price ≤ entry_limit × 1.03` | Green |
 | `NEAR_ENTRY` | `price ≤ entry_limit × 1.05` | Amber |
@@ -276,7 +278,7 @@ Based on current price vs. entry limit:
 New columns added to results table:
 
 | Column | Content |
-|---|---|
+| --- | --- |
 | Entry $ | `entry_limit` as dollar price (e.g. `$44.80`) |
 | Current $ | `current_price` (e.g. `$47.10`) |
 | Exit $ | `exit_limit` (e.g. `$52.80`) |
@@ -284,6 +286,7 @@ New columns added to results table:
 Zone status badge is per-row, displayed inside the `Entry $` cell alongside the dollar price (e.g. `$44.80 🟢`). It uses the colours from §5.4. There is no column-level badge.
 
 Expanded inline row (click to expand) shows:
+
 - Technical: 52w range progress bar, SMA-200 delta, RSI-14d
 - Yield: current yield vs. entry/exit yield targets
 - NAV: discount/premium to NAV (CEF/BDC only)
@@ -297,44 +300,72 @@ Expanded inline row (click to expand) shows:
 
 Checkbox column in results table. "Generate Proposal →" button enabled when ≥1 ticker selected.
 
-### 6.2 Handoff Endpoint
+### 6.2 Target Portfolio Selection
+
+Before submission, the user must select a **target portfolio** — the portfolio the proposed positions will be added to. This is a required field.
+
+- Presented as a dropdown in the confirmation modal, populated from `platform_shared.portfolios`
+- If the scanner was run in Portfolio input mode, the scanned portfolio is pre-selected as the default but remains changeable
+- Submission is blocked until a target portfolio is chosen
+
+### 6.3 Handoff Endpoint
 
 Agent 07 exposes a stub endpoint:
 
-```
+```text
 POST /scan/{scan_id}/propose
-Body: { "selected_tickers": ["MAIN", "ARCC"] }
-Response: { "proposal_id": "uuid", "status": "DRAFT", "tickers": [...], "entry_limits": {...} }
+Body: {
+  "selected_tickers": ["MAIN", "ARCC"],
+  "target_portfolio_id": "uuid"
+}
+Response: {
+  "proposal_id": "uuid",
+  "status": "DRAFT",
+  "tickers": [...],
+  "entry_limits": {...},
+  "target_portfolio_id": "uuid"
+}
 ```
 
-Payload forwarded to Agent 12 when available. In the interim, Agent 07 writes the proposal draft to a `platform_shared.proposal_drafts` table (new, minimal schema: id, scan_id, tickers JSONB, entry_limits JSONB, status, created_at).
+`target_portfolio_id` is required. Returns 422 if omitted or if the portfolio does not exist.
+
+Payload forwarded to Agent 12 when available. In the interim, Agent 07 writes the proposal draft to `platform_shared.proposal_drafts`.
 
 Capital allocation per position is Agent 12's responsibility — not computed here.
 
-### 6.3 Frontend
+### 6.4 Frontend
 
-Confirmation modal before submission listing selected tickers and their entry limit prices. On success, toast notification with proposal ID. Redirect to Proposals page when it exists; otherwise stays on Scanner with success state.
+Confirmation modal shows:
+
+- Selected tickers with their entry limit prices
+- Target portfolio dropdown (required, pre-filled when applicable)
+- Submit button disabled until portfolio selected
+
+On success: toast notification with proposal ID. Redirect to Proposals page when it exists; otherwise stays on Scanner with success state.
 
 ---
 
 ## 7. Data Model Changes
 
 ### 7.1 market_data_cache — no changes
+
 All required columns already exist.
 
 ### 7.2 scan_results — no schema changes
+
 New `portfolio_context` and `entry_exit` fields stored within existing `items` JSONB column.
 
 ### 7.3 proposal_drafts — new table (Slice 4)
 
 ```sql
 CREATE TABLE platform_shared.proposal_drafts (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    scan_id      UUID REFERENCES platform_shared.scan_results(id),
-    tickers      JSONB NOT NULL,        -- [{"ticker": "MAIN", "entry_limit": 44.80, "exit_limit": 52.80, ...}]
-    entry_limits JSONB NOT NULL,        -- {"MAIN": 44.80, "ARCC": 18.90} — keyed by ticker for fast lookup
-    status       TEXT NOT NULL DEFAULT 'DRAFT',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    scan_id             UUID REFERENCES platform_shared.scan_results(id),
+    target_portfolio_id UUID NOT NULL REFERENCES platform_shared.portfolios(id),
+    tickers             JSONB NOT NULL,   -- [{"ticker": "MAIN", "entry_limit": 44.80, "exit_limit": 52.80, ...}]
+    entry_limits        JSONB NOT NULL,   -- {"MAIN": 44.80, "ARCC": 18.90} — keyed by ticker for fast lookup
+    status              TEXT NOT NULL DEFAULT 'DRAFT',
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
@@ -343,12 +374,13 @@ CREATE TABLE platform_shared.proposal_drafts (
 ## 8. Error Handling
 
 | Scenario | Behaviour |
-|---|---|
+| --- | --- |
 | Agent 03 failure for a ticker | Ticker skipped (existing behaviour); no entry_exit block |
 | market_data_cache miss for a ticker | entry_exit block returned with nulls; zone_status = UNKNOWN |
 | portfolio_id not found | 404 returned; scan does not proceed |
 | portfolio has no positions | Scan proceeds on empty set; lens returns empty results |
 | scan_id not found on POST /scan/{scan_id}/propose | 404 returned with `detail: "Scan {scan_id} not found"` |
+| target_portfolio_id missing or invalid | 422 returned; proposal draft not written |
 | Agent 12 unavailable (Slice 4) | proposal_drafts row written locally; user notified of pending status |
 
 ---
@@ -356,11 +388,11 @@ CREATE TABLE platform_shared.proposal_drafts (
 ## 9. Testing
 
 | Slice | New tests | Target |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Frontend component tests (InputPanel, FilterPanel, ResultsTable) | Vitest |
 | 2 | Engine: portfolio annotation, lens filtering, underperformer detection | pytest (≥40 tests) |
 | 3 | EntryExitEngine: all signal formulas, zone status thresholds, null-safety | pytest (≥40 tests) |
-| 4 | Handoff endpoint: happy path, missing scan_id, Agent 12 unavailable | pytest (≥15 tests) |
+| 4 | Handoff endpoint: happy path, missing scan_id, missing portfolio, Agent 12 unavailable | pytest (≥15 tests) |
 
 Existing 100 Agent 07 tests must continue to pass after each slice.
 
