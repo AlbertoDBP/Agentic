@@ -447,8 +447,8 @@ def _get_positions_for_portfolio(db: Session, portfolio_id: str) -> list[dict]:
                pos.total_dividends_received,
                sec.asset_type,
                COALESCE(
-                   pos.sector,
-                   mdc.fmp_sector,
+                   NULLIF(pos.sector, ''),
+                   NULLIF(mdc.fmp_sector, ''),
                    CASE WHEN sec.asset_type = 'BOND' THEN 'Fixed Income' END
                ) AS sector,
                sec.industry
