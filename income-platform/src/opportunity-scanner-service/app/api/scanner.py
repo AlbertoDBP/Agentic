@@ -180,12 +180,36 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
             created_at=str(__import__("datetime").datetime.utcnow()),
         )
 
+    # Fetch market data cache for entry/exit computation
+    market_cache: dict[str, dict] = {}
+    if tickers:
+        cache_rows = db.execute(
+            text("""
+                SELECT symbol, price, support_level, sma_200,
+                       resistance_level, week_52_high, dividend_yield, nav_value
+                FROM platform_shared.market_data_cache
+                WHERE symbol = ANY(:syms)
+            """),
+            {"syms": tickers},
+        ).fetchall()
+        for row in cache_rows:
+            market_cache[row[0]] = {
+                "price": row[1],
+                "support_level": row[2],
+                "sma_200": row[3],
+                "resistance_level": row[4],
+                "week_52_high": row[5],
+                "dividend_yield": row[6],
+                "nav_value": row[7],
+            }
+
     result = await run_scan(
         tickers=tickers,
         min_score=request.min_score,
         min_yield=request.min_yield,
         asset_classes=request.asset_classes,
         quality_gate_only=request.quality_gate_only,
+        market_cache=market_cache,
     )
 
     filters_applied = {
