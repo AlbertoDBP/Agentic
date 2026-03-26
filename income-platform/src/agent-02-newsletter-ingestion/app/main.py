@@ -104,10 +104,12 @@ from app.api.analysts import router as analysts_router
 from app.api.recommendations import router as recommendations_router
 from app.api.consensus import router as consensus_router
 from app.api.signal import router as signal_router
+from app.api import kb as kb_router
 app.include_router(analysts_router, prefix="/analysts", tags=["Analysts"], dependencies=[Depends(verify_token)])
 app.include_router(recommendations_router, prefix="/recommendations", tags=["Recommendations"], dependencies=[Depends(verify_token)])
 app.include_router(consensus_router, prefix="/consensus", tags=["Consensus"], dependencies=[Depends(verify_token)])
 app.include_router(signal_router, prefix="/signal", tags=["Signal"], dependencies=[Depends(verify_token)])
+app.include_router(kb_router.router, tags=["knowledge-base"])
 # from app.api.intelligence import router as intelligence_router
 # app.include_router(intelligence_router, prefix="/intelligence", tags=["Intelligence"])
 

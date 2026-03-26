@@ -51,6 +51,7 @@ class ScanRequest(BaseModel):
     use_universe: bool = Field(False, description="If true, scan full active universe instead of supplied tickers")
     portfolio_id: Optional[str] = Field(None, description="Portfolio UUID to scan against")
     portfolio_lens: Optional[str] = Field(None, description="gap | replacement | concentration | null")
+    source: Optional[str] = Field(None, description="Scan origin: 'analyst_ideas' | None")
 
     model_config = {"json_schema_extra": {
         "example": {
@@ -76,6 +77,7 @@ class ScanItemResponse(BaseModel):
     score_details: dict[str, Any]
     entry_exit: Optional[dict] = None
     portfolio_context: Optional[dict] = None
+    analyst_context: Optional[dict] = None
 
 
 class ScanResponse(BaseModel):
@@ -257,6 +259,8 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
         "min_nav_discount_pct": request.min_nav_discount_pct,
         "use_universe": request.use_universe,
     }
+    if request.source:
+        filters_applied["source"] = request.source
 
     items_json = [
         {
@@ -274,6 +278,7 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
             "score_details": it.score_details,
             "entry_exit": it.entry_exit,
             "portfolio_context": it.portfolio_context,
+            "analyst_context": it.analyst_context,
         }
         for it in result.items
     ]

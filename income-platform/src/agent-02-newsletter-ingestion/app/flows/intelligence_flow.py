@@ -36,6 +36,8 @@ from prefect import flow, task, get_run_logger
 from app.database import get_db_context
 from app.models.models import Analyst
 from app.processors import staleness, backtest, philosophy, consensus
+from app.processors import framework_synthesizer
+from app.processors import feature_gap as feature_gap_processor
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -157,6 +159,29 @@ def task_churn_rate_update(analyst_id: int) -> dict:
     return {"total_recs": total, "superseded_recs": superseded, "churn_rate": churn_rate}
 
 
+@task(
+    name="framework-synthesis",
+    tags=["intelligence", "llm", "db"],
+)
+def task_framework_synthesis(analyst_id: int) -> dict:
+    """Aggregate article_frameworks into analyst_framework_profiles."""
+    log = get_run_logger()
+    with get_db_context() as db:
+        result = framework_synthesizer.synthesize_analyst_frameworks(db=db, analyst_id=analyst_id)
+    log.info(f"Analyst {analyst_id}: {result['profiles_updated']} framework profiles updated")
+    return result
+
+
+@task(name="feature-gap-resolution", tags=["intelligence", "llm", "db"])
+def task_feature_gap_resolution() -> dict:
+    """Classify and register pending feature gaps."""
+    log = get_run_logger()
+    with get_db_context() as db:
+        result = feature_gap_processor.resolve_feature_gaps(db=db)
+    log.info(f"Feature gap resolution: {result['resolved']}/{result['pending_processed']} resolved")
+    return result
+
+
 # ── Main Flow ──────────────────────────────────────────────────────────────────
 
 @flow(
@@ -224,6 +249,12 @@ def intelligence_flow(analyst_ids: Optional[list[int]] = None):
             # Step 3: Philosophy update
             philosophy_result = task_philosophy_update(analyst_id=analyst_id)
 
+            # Framework synthesis (NEW)
+            try:
+                task_framework_synthesis(analyst_id)
+            except Exception as e:
+                log.warning(f"Framework synthesis failed for analyst {analyst_id}: {e}")
+
             # Step 4: Consensus rebuild
             consensus_result = task_consensus_rebuild(analyst_id=analyst_id)
             total_tickers_rebuilt += consensus_result.get("tickers_rebuilt", 0)
@@ -251,6 +282,12 @@ def intelligence_flow(analyst_ids: Optional[list[int]] = None):
                 "error": str(e),
             })
             continue
+
+    # ── Feature gap resolution (once per flow run) ─────────────────────────
+    try:
+        task_feature_gap_resolution()
+    except Exception as e:
+        log.warning(f"Feature gap resolution failed: {e}")
 
     # ── Write flow run log ─────────────────────────────────────────────────
     flow_end = datetime.now(timezone.utc)
