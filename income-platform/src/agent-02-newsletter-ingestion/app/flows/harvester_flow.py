@@ -34,6 +34,7 @@ from app.models.models import Analyst
 from app.clients import seeking_alpha as sa_client
 from app.processors import deduplicator, extractor, vectorizer, article_store
 from app.processors import framework_extractor, suggestion_store
+from app.processors import feature_gap as feature_gap_mod
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -313,6 +314,18 @@ def extract_and_store_frameworks(
                     )
                     db.commit()
                     log.debug(f"Suggestion written: {fw['ticker']} {rec_label}")
+
+                # Detect feature gaps for this ticker's cited metrics
+                try:
+                    feature_gap_mod.detect_feature_gaps(
+                        db=db,
+                        article_id=article_id,
+                        analyst_id=analyst_id,
+                        metrics_cited=fw.get("valuation_metrics_cited") or [],
+                        asset_class=asset_cls,
+                    )
+                except Exception as e:
+                    log.warning(f"Feature gap detection failed for {fw.get('ticker')}: {e}")
 
             except Exception as e:
                 db.rollback()

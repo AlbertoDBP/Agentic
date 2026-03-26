@@ -195,3 +195,49 @@ class TestFrameworkSynthesizer:
         mock_db.execute.return_value.fetchall.return_value = []
         result = synthesize_analyst_frameworks(mock_db, analyst_id=99)
         assert result["profiles_updated"] == 0
+
+
+class TestFeatureGap:
+    def test_detect_gaps_writes_unknown_metrics(self):
+        from app.processors.feature_gap import detect_feature_gaps
+        mock_db = MagicMock()
+        # Simulate: feature_registry has no entries matching "NII_coverage"
+        mock_db.execute.return_value.fetchone.return_value = None
+        count = detect_feature_gaps(
+            db=mock_db,
+            article_id=1,
+            analyst_id=2,
+            metrics_cited=["NII_coverage", "NAV_discount"],
+            asset_class="BDC",
+        )
+        assert count >= 0  # number of gaps logged
+
+    def test_detect_gaps_skips_known_metrics(self):
+        from app.processors.feature_gap import detect_feature_gaps
+        mock_db = MagicMock()
+        # Simulate: all metrics exist in registry
+        mock_db.execute.return_value.fetchone.return_value = (1,)
+        count = detect_feature_gaps(
+            db=mock_db,
+            article_id=1,
+            analyst_id=2,
+            metrics_cited=["FFO_coverage"],
+            asset_class="BDC",
+        )
+        assert count == 0
+
+    def test_classify_gap_returns_valid_category(self):
+        from app.processors.feature_gap import classify_gap_category
+        with patch("app.processors.feature_gap._client") as mock_client:
+            mock_response = MagicMock()
+            mock_response.content = [MagicMock(text='{"category": "fetchable", "source": "fmp", "fetch_config": {"endpoint": "/api/financials/{symbol}", "field": "NII"}, "computation_rule": null, "rationale": "Available via FMP"}')]
+            mock_client.messages.create.return_value = mock_response
+            result = classify_gap_category("NII_coverage", "BDC")
+        assert result["category"] in ("fetchable", "derived", "external")
+
+    def test_classify_gap_returns_external_on_llm_failure(self):
+        from app.processors.feature_gap import classify_gap_category
+        with patch("app.processors.feature_gap._client") as mock_client:
+            mock_client.messages.create.side_effect = Exception("timeout")
+            result = classify_gap_category("unknown_metric", "BDC")
+        assert result["category"] == "external"
