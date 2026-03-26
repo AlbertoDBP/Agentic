@@ -32,6 +32,7 @@ export default function ScannerPage() {
   // Selection + proposal
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
   const [proposalOpen, setProposalOpen] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const { data: portfolios = [] } = usePortfolios();
 
@@ -103,8 +104,7 @@ export default function ScannerPage() {
   };
 
   const handleProposalSuccess = (proposalId: string) => {
-    // TODO: redirect to /proposals when page exists
-    alert(`Proposal created: ${proposalId}`);
+    setSuccessMsg(`Proposal ${proposalId} created.`);
     setSelectedTickers(new Set());
   };
 
@@ -117,15 +117,14 @@ export default function ScannerPage() {
           <h1 className="text-xl font-semibold">Scanner</h1>
         </div>
         <div className="flex items-center gap-2">
-          {selectedTickers.size > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setProposalOpen(true)}
-            >
-              Generate Proposal → ({selectedTickers.size})
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setProposalOpen(true)}
+            disabled={selectedTickers.size === 0}
+          >
+            Generate Proposal → {selectedTickers.size > 0 ? `(${selectedTickers.size})` : ""}
+          </Button>
           <Button onClick={handleScan} disabled={loading} size="sm">
             {loading ? "Scanning…" : "Run Scan"}
           </Button>
@@ -155,6 +154,13 @@ export default function ScannerPage() {
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {/* Success */}
+      {successMsg && (
+        <div className="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
+          {successMsg}
         </div>
       )}
 
