@@ -85,8 +85,8 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
               <Label className="text-sm w-24 shrink-0">Min Score: {filters.min_score}</Label>
               <Slider
                 min={0} max={100} step={5}
-                value={[filters.min_score]}
-                onValueChange={([v]) => set({ min_score: v })}
+                value={filters.min_score}
+                onValueChange={(v) => set({ min_score: v as number })}
                 className="flex-1"
               />
             </div>
@@ -131,7 +131,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
                   <Label className="text-xs text-muted-foreground">{label}</Label>
                   <Input
                     type="number"
-                    value={(filters as Record<string, unknown>)[key] as string}
+                    value={(filters as unknown as Record<string, string>)[key]}
                     onChange={(e) => set({ [key]: e.target.value } as Partial<ScanFilters>)}
                     className="h-8 text-sm"
                     placeholder="—"

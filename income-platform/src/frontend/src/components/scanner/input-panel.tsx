@@ -1,6 +1,7 @@
 // src/frontend/src/components/scanner/input-panel.tsx
 "use client";
 
+import React from "react";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -20,7 +21,7 @@ interface InputPanelProps {
   manualTickers: string;
   onManualTickersChange: (v: string) => void;
   selectedPortfolioId: string | null;
-  onPortfolioChange: (id: string) => void;
+  onPortfolioChange: (id: string | null) => void;
   portfolios: PortfolioListItem[];
 }
 
@@ -63,7 +64,7 @@ export function InputPanel({
       {mode === "manual" && (
         <Textarea
           value={manualTickers}
-          onChange={(e) => onManualTickersChange(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => onManualTickersChange(e.target.value)}
           placeholder={"Enter tickers (comma or newline separated)\nMAIN, ARCC, O, JEPI, ..."}
           rows={4}
           className="font-mono text-sm resize-none"

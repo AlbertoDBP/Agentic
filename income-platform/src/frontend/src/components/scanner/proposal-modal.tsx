@@ -101,7 +101,7 @@ export function ProposalModal({
           {/* Target portfolio */}
           <div className="space-y-2">
             <Label className="text-sm">Target Portfolio <span className="text-red-500">*</span></Label>
-            <Select value={targetPortfolioId} onValueChange={setTargetPortfolioId}>
+            <Select value={targetPortfolioId} onValueChange={(v) => setTargetPortfolioId(v ?? "")}>
               <SelectTrigger>
                 <SelectValue placeholder="Select target portfolio..." />
               </SelectTrigger>
