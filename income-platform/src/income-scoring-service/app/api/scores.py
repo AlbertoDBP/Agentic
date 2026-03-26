@@ -12,12 +12,13 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import get_db
+from sqlalchemy import text
+from app.database import get_db, get_db_context
 from app.models import IncomeScore, QualityGateResult, SignalPenaltyConfig, SignalPenaltyLog
 from app.scoring import newsletter_client
 from app.scoring.classification_client import get_asset_class as _classify_ticker
@@ -933,6 +934,37 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
                 result.chowder_signal,
             )
             raise
+
+
+@router.post("/refresh-portfolio")
+async def refresh_portfolio_scores(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Queue background scoring for all active portfolio positions.
+    Called by the scheduler daily at 19:00 ET after market cache refresh.
+    Returns immediately; scoring runs in background.
+    """
+    rows = db.execute(
+        text(
+            "SELECT DISTINCT symbol FROM platform_shared.positions "
+            "WHERE status = 'ACTIVE'"
+        )
+    ).fetchall()
+    tickers = [r[0].upper() for r in rows]
+
+    async def _score_ticker(ticker: str) -> None:
+        try:
+            with get_db_context() as bg_db:
+                await evaluate_score(ScoreRequest(ticker=ticker), bg_db)
+        except Exception as exc:
+            logger.warning("Portfolio refresh: scoring failed for %s: %s", ticker, exc)
+
+    for ticker in tickers:
+        background_tasks.add_task(_score_ticker, ticker)
+
+    logger.info("Portfolio refresh: queued scoring for %d tickers", len(tickers))
+    return {"queued": len(tickers)}
 
 
 @router.get("/{ticker}", response_model=ScoreResponse)

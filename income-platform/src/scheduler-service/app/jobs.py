@@ -50,10 +50,10 @@ def _call(method: str, url: str, label: str, **kwargs):
 
 
 def job_market_data_refresh():
-    """Agent 01 — Refresh price data for all active securities.
-    Schedule: Every weekday at 18:30 ET (after market close).
+    """Agent 07 — Force-refresh market_data_cache for all tracked tickers after market close.
+    Schedule: Every weekday at 18:30 ET (after market close, captures end-of-day prices).
     """
-    _call("POST", f"{settings.agent01_url}/stocks/refresh-all", "Market Data Refresh")
+    _call("POST", f"{settings.agent07_url}/cache/refresh?force=true", "Market Data Refresh")
 
 
 def job_newsletter_harvest():
@@ -64,11 +64,10 @@ def job_newsletter_harvest():
 
 
 def job_score_portfolio():
-    """Agent 03 — Re-score all portfolio positions via quality gate + evaluate.
+    """Agent 03 — Re-score all active portfolio positions.
     Schedule: Daily at 19:00 ET (after market data refresh).
     """
-    _call("POST", f"{settings.agent03_url}/quality-gate/batch", "Quality Gate Batch",
-          json={"mode": "portfolio"})
+    _call("POST", f"{settings.agent03_url}/scores/refresh-portfolio", "Portfolio Score Refresh")
 
 
 def job_classify_new():
@@ -80,11 +79,11 @@ def job_classify_new():
 
 
 def job_opportunity_scan():
-    """Agent 07 — Scan for new income opportunities.
+    """Agent 07 — Scan full universe for new income opportunities.
     Schedule: Mon & Thu at 08:00 ET.
     """
     _call("POST", f"{settings.agent07_url}/scan", "Opportunity Scan",
-          json={"min_score": 60})
+          json={"min_score": 60, "use_universe": True})
 
 
 def job_nav_monitor_scan():
