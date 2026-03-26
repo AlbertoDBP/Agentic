@@ -33,6 +33,18 @@ export const DESIGN_TOKENS = {
     BOND:               "bg-yellow-200",
     PREFERRED_STOCK:    "bg-pink-400",
     UNKNOWN:            "bg-slate-600",
+    // Sectors
+    "Financial Services":     "bg-blue-500",
+    "Real Estate":            "bg-green-500",
+    "Energy":                 "bg-orange-400",
+    "Utilities":              "bg-yellow-400",
+    "Healthcare":             "bg-red-400",
+    "Technology":             "bg-purple-400",
+    "Consumer Defensive":     "bg-teal-400",
+    "Consumer Cyclical":      "bg-pink-400",
+    "Industrials":            "bg-slate-400",
+    "Communication Services": "bg-cyan-400",
+    "Other":                  "bg-slate-600",
   } as Record<string, string>,
 } as const;
 

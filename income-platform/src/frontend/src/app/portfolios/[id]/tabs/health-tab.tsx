@@ -24,14 +24,18 @@ const PILLAR_COLOR: Record<string, string> = {
 function DetailRow({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
     <div>
-      <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
-      <div className={cn("text-sm font-medium", className)}>{value}</div>
+      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80 mb-0.5">{label}</div>
+      <div className={cn("text-sm font-semibold text-foreground", className)}>{value}</div>
     </div>
   );
 }
 
 function SectionTitle({ label }: { label: string }) {
-  return <div className="text-xs font-semibold uppercase tracking-wide text-blue-400 mb-2">{label}</div>;
+  return (
+    <div className="text-[10px] font-bold uppercase tracking-wider text-blue-400 mb-2 pb-1 border-b border-border/50">
+      {label}
+    </div>
+  );
 }
 
 interface HealthTabProps { portfolioId: string; }
@@ -71,7 +75,11 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
       meta: { label: "Ticker" },
       cell: ({ row }) => <TickerBadge symbol={row.original.symbol} assetType={row.original.asset_type} />,
     },
-    { accessorKey: "asset_type", header: "Class" },
+    {
+      accessorKey: "asset_type",
+      header: () => <ColHeader label="Class" help="Asset classification: CEF, BDC, REIT, Preferred Stock, etc." />,
+      meta: { label: "Class" },
+    },
     {
       accessorKey: "hhs_score",
       header: () => <ColHeader label="HHS" helpKey="hhs_score" helpMap={HHS_HELP} />,
@@ -112,7 +120,8 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
     },
     {
       accessorKey: "quality_gate_status",
-      header: "Gate",
+      header: () => <ColHeader label="Gate" help="Quality gate determines eligibility for scoring. PASS = all data available and valid." />,
+      meta: { label: "Gate" },
       cell: ({ getValue }) => {
         const v = getValue() as string | null;
         return <span className={cn("text-xs font-medium", v === "PASS" ? "text-green-400" : "text-amber-400")}>{v ?? "—"}</span>;
@@ -220,17 +229,31 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
                 <div className="text-xs text-muted-foreground mt-1.5">
                   HHS = (Income × {((selected.income_weight ?? 0.5) * 100).toFixed(0)}%) + (Durability × {((selected.durability_weight ?? 0.5) * 100).toFixed(0)}%)
                 </div>
-                <div className="mt-2.5 grid grid-cols-2 gap-y-2.5 gap-x-3">
-                  <DetailRow
-                    label="Income Pillar"
-                    value={selected.income_pillar_score != null ? `${selected.income_pillar_score.toFixed(0)}/100` : "—"}
-                    className={scoreTextColor(selected.income_pillar_score)}
-                  />
-                  <DetailRow
-                    label="Durability Pillar"
-                    value={selected.durability_pillar_score != null ? `${selected.durability_pillar_score.toFixed(0)}/100` : "—"}
-                    className={scoreTextColor(selected.durability_pillar_score)}
-                  />
+                <div className="mt-2.5 grid grid-cols-2 gap-2">
+                  {selected.income_pillar_score != null && (
+                    <div className={cn("rounded p-1.5 text-center border",
+                      selected.income_pillar_score >= 70 ? "bg-green-950/40 border-green-800/30" :
+                      selected.income_pillar_score >= 50 ? "bg-amber-950/40 border-amber-800/30" : "bg-red-950/40 border-red-800/30"
+                    )}>
+                      <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Income</div>
+                      <div className={cn("text-lg font-bold tabular-nums", scoreTextColor(selected.income_pillar_score))}>
+                        {selected.income_pillar_score.toFixed(0)}
+                      </div>
+                      <div className="text-[9px] text-muted-foreground">/ 100</div>
+                    </div>
+                  )}
+                  {selected.durability_pillar_score != null && (
+                    <div className={cn("rounded p-1.5 text-center border",
+                      selected.durability_pillar_score >= 70 ? "bg-green-950/40 border-green-800/30" :
+                      selected.durability_pillar_score >= 50 ? "bg-amber-950/40 border-amber-800/30" : "bg-red-950/40 border-red-800/30"
+                    )}>
+                      <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Durability</div>
+                      <div className={cn("text-lg font-bold tabular-nums", scoreTextColor(selected.durability_pillar_score))}>
+                        {selected.durability_pillar_score.toFixed(0)}
+                      </div>
+                      <div className="text-[9px] text-muted-foreground">/ 100</div>
+                    </div>
+                  )}
                 </div>
                 {selected.unsafe_flag && (
                   <div className="mt-2 bg-red-950/40 border border-red-900/50 rounded p-2 text-xs text-red-400">

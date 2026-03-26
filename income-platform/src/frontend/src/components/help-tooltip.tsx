@@ -33,12 +33,13 @@ export function HelpTooltip({ text, side = "top" }: HelpTooltipProps) {
 }
 
 // Convenience wrapper for table column headers
-export function ColHeader({ label, helpKey, helpMap }: {
+export function ColHeader({ label, helpKey, helpMap, help }: {
   label: string;
-  helpKey: string;
-  helpMap: Record<string, string>;
+  helpKey?: string;
+  helpMap?: Record<string, string>;
+  help?: string;
 }) {
-  const text = helpMap[helpKey];
+  const text = help ?? (helpKey && helpMap ? helpMap[helpKey] : undefined);
   return (
     <span className="inline-flex items-center gap-0.5">
       {label}

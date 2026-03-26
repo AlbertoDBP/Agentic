@@ -23,14 +23,18 @@ function fmtDate(v: string | null | undefined) {
 function DetailRow({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
     <div>
-      <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
-      <div className={cn("text-sm font-medium", className)}>{value}</div>
+      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80 mb-0.5">{label}</div>
+      <div className={cn("text-sm font-semibold text-foreground", className)}>{value}</div>
     </div>
   );
 }
 
 function SectionTitle({ label }: { label: string }) {
-  return <div className="text-xs font-semibold uppercase tracking-wide text-blue-400 mb-2">{label}</div>;
+  return (
+    <div className="text-[10px] font-bold uppercase tracking-wider text-blue-400 mb-2 pb-1 border-b border-border/50">
+      {label}
+    </div>
+  );
 }
 
 export function PortfolioTab({ portfolioId }: PortfolioTabProps) {

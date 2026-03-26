@@ -84,9 +84,9 @@ export default function PortfolioPage() {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2 ml-6 mt-0.5 text-[0.6rem] text-muted-foreground">
-            {summary?.tax_status && <span className="bg-muted rounded px-1.5 py-0.5">{summary.tax_status}</span>}
-            {summary?.broker && <span className="bg-muted rounded px-1.5 py-0.5">{summary.broker}</span>}
+          <div className="flex items-center gap-2 ml-6 mt-0.5 text-xs text-muted-foreground">
+            {summary?.tax_status && <span className="bg-muted/80 rounded px-1.5 py-0.5 text-foreground/80">{summary.tax_status}</span>}
+            {summary?.broker && <span className="bg-muted/80 rounded px-1.5 py-0.5 text-foreground/80">{summary.broker}</span>}
             {summary?.holding_count != null && <span>{summary.holding_count} holdings</span>}
             {summary?.last_refresh && <span>Refreshed {new Date(summary.last_refresh).toLocaleDateString()}</span>}
           </div>
@@ -118,29 +118,40 @@ export default function PortfolioPage() {
         </button>
         {summaryOpen && summary && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 px-3.5 pb-3.5">
-            <div>
-              <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-1.5">Asset Class</div>
+            {/* Asset Class box */}
+            <div className="rounded-lg border border-border/50 bg-background/40 p-3">
+              <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">Asset Class</div>
               <ConcentrationBar
                 items={(summary.concentration_by_class ?? []).map(c => ({ label: c.class, pct: c.pct }))}
               />
             </div>
-            <div>
-              <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-1.5">Top Income</div>
-              <div className="space-y-1">
-                {(summary.top_income_holdings ?? []).map((h) => (
-                  <div key={h.ticker} className="flex items-center justify-between text-xs">
-                    <span className={cn("font-medium", h.unsafe && "text-amber-400")}>
+
+            {/* Top Income box */}
+            <div className="rounded-lg border border-border/50 bg-background/40 p-3">
+              <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">Top Income</div>
+              {(summary.top_income_holdings ?? []).map((h) => (
+                <div key={h.ticker} className="mb-2">
+                  <div className="flex items-center justify-between text-xs mb-0.5">
+                    <span className={cn("font-mono font-medium", h.unsafe ? "text-amber-400" : "text-foreground")}>
                       {h.unsafe && "⚠ "}{h.ticker}
                     </span>
-                    <span className="text-muted-foreground">{formatCurrency(h.annual_income)} · {h.income_pct.toFixed(0)}%</span>
+                    <span className="text-foreground/80 tabular-nums text-[10px]">{formatCurrency(h.annual_income)}</span>
                   </div>
-                ))}
-              </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full rounded-full bg-blue-400/70" style={{ width: `${h.income_pct}%` }} />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground w-6 text-right tabular-nums">{h.income_pct.toFixed(0)}%</span>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div>
-              <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-1.5">Sector</div>
+
+            {/* Sector box */}
+            <div className="rounded-lg border border-border/50 bg-background/40 p-3">
+              <div className="text-[0.6rem] font-bold uppercase text-blue-400 mb-2">Sector</div>
               <ConcentrationBar
-                items={(summary.concentration_by_sector ?? []).map(s => ({ label: s.sector, pct: s.pct, colorClass: "bg-slate-500" }))}
+                items={(summary.concentration_by_sector ?? []).map(s => ({ label: s.sector, pct: s.pct }))}
               />
             </div>
           </div>
