@@ -556,8 +556,8 @@ async def fetch_and_upsert(
         # NAV per share: meaningful only for fund-type assets (CEF, BDC, ETF)
         # tangibleAssetValue = stockholders equity; shares = marketCap / price
         nav_value = s.get("nav_value")  # from etf-info (usually empty)
-        if not nav_value and cov_metric_type in ("NII", None):
-            # Only compute for CEF/BDC/ETF asset types
+        if not nav_value:
+            # Only compute for fund-type assets where NAV discount is meaningful
             try:
                 sec_at_row = db.execute(
                     text("SELECT asset_type FROM platform_shared.securities WHERE symbol = :sym"),
