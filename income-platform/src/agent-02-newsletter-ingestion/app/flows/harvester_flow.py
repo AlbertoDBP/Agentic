@@ -33,6 +33,7 @@ from app.database import get_db_context
 from app.models.models import Analyst
 from app.clients import seeking_alpha as sa_client
 from app.processors import deduplicator, extractor, vectorizer, article_store
+from app.processors import framework_extractor, suggestion_store
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,110 @@ def compute_alignment_task(rec_info: list[dict]) -> int:
     return scored
 
 
+@task(name="extract-and-store-frameworks", tags=["harvester", "llm", "pass2"])
+def extract_and_store_frameworks(
+    article_id: int,
+    analyst_id: int,
+    markdown: str,
+    pass1_extracted: Optional[dict],
+    published_at: datetime,
+) -> int:
+    """
+    Pass 2: Extract analyst frameworks via Sonnet, persist article_frameworks,
+    and write BUY/SELL suggestions to analyst_suggestions.
+    Returns number of frameworks extracted.
+    Failures are logged and do not abort the flow.
+    """
+    log = get_run_logger()
+
+    frameworks = framework_extractor.extract_frameworks(
+        markdown=markdown,
+        pass1_signals=pass1_extracted or {},
+        article_sa_id=str(article_id),
+    )
+
+    if not frameworks:
+        log.info(f"Article {article_id}: Pass 2 returned no frameworks")
+        return 0
+
+    saved_count = 0
+    with get_db_context() as db:
+        for fw in frameworks:
+            try:
+                from sqlalchemy import text as sql_text
+                import json
+
+                # Persist article_framework row
+                result = db.execute(sql_text("""
+                    INSERT INTO platform_shared.article_frameworks
+                        (article_id, analyst_id, ticker, valuation_metrics_cited,
+                         thresholds_identified, reasoning_structure, conviction_level,
+                         catalysts, price_guidance_type, price_guidance_value,
+                         risk_factors_cited, macro_factors, evaluation_narrative)
+                    VALUES
+                        (:article_id, :analyst_id, :ticker,
+                         CAST(:metrics AS JSONB), CAST(:thresholds AS JSONB),
+                         :reasoning, :conviction,
+                         CAST(:catalysts AS JSONB), :guidance_type,
+                         CAST(:guidance_value AS JSONB),
+                         CAST(:risks AS JSONB), CAST(:macro AS JSONB), :narrative)
+                    RETURNING id
+                """), {
+                    "article_id": article_id,
+                    "analyst_id": analyst_id,
+                    "ticker": fw["ticker"],
+                    "metrics": json.dumps(fw["valuation_metrics_cited"]),
+                    "thresholds": json.dumps(fw["thresholds_identified"]),
+                    "reasoning": fw["reasoning_structure"],
+                    "conviction": fw["conviction_level"],
+                    "catalysts": json.dumps(fw["catalysts"]),
+                    "guidance_type": fw["price_guidance_type"],
+                    "guidance_value": json.dumps(fw["price_guidance_value"]) if fw["price_guidance_value"] else None,
+                    "risks": json.dumps(fw["risk_factors_cited"]),
+                    "macro": json.dumps(fw["macro_factors"]),
+                    "narrative": fw["evaluation_narrative"],
+                })
+                framework_id = result.fetchone()[0]
+                db.commit()
+                saved_count += 1
+
+                # Resolve pass1 ticker data unconditionally (needed by both suggestion
+                # store and feature gap detection regardless of rec_label value)
+                rec_label = None
+                sentiment = None
+                asset_cls = None
+                if pass1_extracted:
+                    for t in (pass1_extracted.get("tickers") or []):
+                        if t.get("ticker", "").upper() == fw["ticker"]:
+                            rec_label = t.get("recommendation")
+                            sentiment = t.get("sentiment_score")
+                            asset_cls = t.get("asset_class")
+                            break
+
+                if suggestion_store.should_write_suggestion(rec_label):
+                    suggestion_store.upsert_suggestion(
+                        db=db,
+                        analyst_id=analyst_id,
+                        article_framework_id=framework_id,
+                        ticker=fw["ticker"],
+                        asset_class=asset_cls,
+                        recommendation=rec_label,
+                        sentiment_score=sentiment,
+                        price_guidance_type=fw["price_guidance_type"],
+                        price_guidance_value=fw["price_guidance_value"],
+                        sourced_at=published_at,
+                    )
+                    db.commit()
+                    log.debug(f"Suggestion written: {fw['ticker']} {rec_label}")
+
+            except Exception as e:
+                log.warning(f"Article {article_id}: framework persist failed for {fw.get('ticker')}: {e}")
+                continue
+
+    log.info(f"Article {article_id}: {saved_count} frameworks saved")
+    return saved_count
+
+
 # ── Main Flow ──────────────────────────────────────────────────────────────────
 
 @flow(
@@ -359,6 +464,18 @@ def harvester_flow(analyst_ids: Optional[list[int]] = None):
                     # 8. Compute platform alignment via Agent 03 (passive, non-blocking)
                     if result.get("rec_info"):
                         compute_alignment_task(result["rec_info"])
+
+                    # Pass 2: extract and store analyst frameworks
+                    try:
+                        extract_and_store_frameworks(
+                            article_id=result["article_id"],
+                            analyst_id=analyst_id,
+                            markdown=markdown,
+                            pass1_extracted=extracted,
+                            published_at=published_at,
+                        )
+                    except Exception as e:
+                        log.warning(f"Pass 2 framework extraction failed for article {article_sa_id}: {e}")
 
                 except Exception as e:
                     log.error(f"Error processing article {article_sa_id}: {e}")

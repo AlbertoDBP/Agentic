@@ -90,3 +90,66 @@ class TestFrameworkExtractor:
         }
         result = validate_framework(fw)
         assert result["ticker"] == "ARCC"
+
+
+class TestSuggestionStore:
+    def test_compute_expires_at_bdc(self):
+        from app.processors.suggestion_store import compute_expires_at
+        from datetime import datetime, timezone, timedelta
+        sourced = datetime(2026, 3, 26, tzinfo=timezone.utc)
+        expires = compute_expires_at(sourced, "BDC")
+        assert expires == sourced + timedelta(days=45)
+
+    def test_compute_expires_at_dividend_stock(self):
+        from app.processors.suggestion_store import compute_expires_at
+        from datetime import datetime, timezone, timedelta
+        sourced = datetime(2026, 3, 26, tzinfo=timezone.utc)
+        expires = compute_expires_at(sourced, "DIVIDEND_STOCK")
+        assert expires == sourced + timedelta(days=60)
+
+    def test_compute_expires_at_defaults_to_45_days(self):
+        from app.processors.suggestion_store import compute_expires_at
+        from datetime import datetime, timezone, timedelta
+        sourced = datetime(2026, 3, 26, tzinfo=timezone.utc)
+        expires = compute_expires_at(sourced, "UNKNOWN_CLASS")
+        assert expires == sourced + timedelta(days=45)
+
+    def test_upsert_suggestion_calls_db_with_correct_params(self):
+        from app.processors.suggestion_store import upsert_suggestion
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock()
+        from datetime import datetime, timezone
+        upsert_suggestion(
+            db=mock_db,
+            analyst_id=1,
+            article_framework_id=10,
+            ticker="ARCC",
+            asset_class="BDC",
+            recommendation="BUY",
+            sentiment_score=0.75,
+            price_guidance_type="none",
+            price_guidance_value=None,
+            sourced_at=datetime(2026, 3, 26, tzinfo=timezone.utc),
+        )
+        mock_db.execute.assert_called_once()
+        call_args = mock_db.execute.call_args
+        # Verify params dict passed to execute
+        params = call_args[0][1]
+        assert params["ticker"] == "ARCC"
+        assert params["recommendation"] == "BUY"
+        assert params["analyst_id"] == 1
+
+    def test_should_write_suggestion_true_for_buy(self):
+        from app.processors.suggestion_store import should_write_suggestion
+        assert should_write_suggestion("StrongBuy") is True
+        assert should_write_suggestion("Buy") is True
+
+    def test_should_write_suggestion_true_for_sell(self):
+        from app.processors.suggestion_store import should_write_suggestion
+        assert should_write_suggestion("StrongSell") is True
+        assert should_write_suggestion("Sell") is True
+
+    def test_should_write_suggestion_false_for_hold(self):
+        from app.processors.suggestion_store import should_write_suggestion
+        assert should_write_suggestion("Hold") is False
+        assert should_write_suggestion(None) is False
