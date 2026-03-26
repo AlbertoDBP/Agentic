@@ -19,14 +19,8 @@ logger = logging.getLogger(__name__)
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
-def _build_url(raw_url: str) -> str:
-    if "?" in raw_url:
-        return raw_url.split("?")[0]
-    return raw_url
-
-
 engine = create_engine(
-    _build_url(settings.database_url),
+    settings.database_url,
     poolclass=QueuePool,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
