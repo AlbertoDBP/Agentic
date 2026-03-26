@@ -189,8 +189,9 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
             created_at=str(__import__("datetime").datetime.utcnow()),
         )
 
-    # Fetch market data cache for entry/exit computation
+    # Batch-fetch market data and scores from DB — single query each, no HTTP per ticker
     market_cache: dict[str, dict] = {}
+    score_cache: dict[str, dict] = {}
     if tickers:
         cache_rows = db.execute(
             text("""
@@ -212,6 +213,42 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
                 "nav_value": row[7],
             }
 
+        # Fetch latest score per ticker directly from income_scores — avoids N HTTP calls
+        score_rows = db.execute(
+            text("""
+                SELECT DISTINCT ON (ticker)
+                    ticker, asset_class, total_score, grade, recommendation,
+                    valuation_yield_score, financial_durability_score,
+                    technical_entry_score, nav_erosion_penalty, signal_penalty,
+                    factor_details, scored_at
+                FROM platform_shared.income_scores
+                WHERE ticker = ANY(:syms)
+                ORDER BY ticker, scored_at DESC
+            """),
+            {"syms": tickers},
+        ).fetchall()
+        for row in score_rows:
+            fd = row[10] or {}
+            score_cache[row[0]] = {
+                "ticker": row[0],
+                "asset_class": row[1],
+                "total_score": row[2],
+                "grade": row[3],
+                "recommendation": row[4],
+                "valuation_yield_score": row[5],
+                "financial_durability_score": row[6],
+                "technical_entry_score": row[7],
+                "nav_erosion_penalty": row[8],
+                "signal_penalty": row[9],
+                "chowder_number": fd.get("chowder_number"),
+                "chowder_signal": fd.get("chowder_signal"),
+                "scored_at": str(row[11]),
+            }
+        logger.info(
+            "Batch DB fetch: %d market rows, %d score rows for %d tickers",
+            len(market_cache), len(score_cache), len(tickers),
+        )
+
     result = await run_scan(
         tickers=tickers,
         min_score=request.min_score,
@@ -219,6 +256,7 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
         asset_classes=request.asset_classes,
         quality_gate_only=request.quality_gate_only,
         market_cache=market_cache,
+        score_cache=score_cache,
     )
 
     filters_applied = {

@@ -58,10 +58,13 @@ async def run_scan(
     asset_classes: Optional[list[str]] = None,
     quality_gate_only: bool = False,
     market_cache: Optional[dict] = None,
+    score_cache: Optional[dict] = None,
 ) -> ScanEngineResult:
     """
-    Score all tickers concurrently (max scan_concurrency at a time),
-    apply filters, rank, and return the engine result.
+    Score all tickers, apply filters, rank, and return the engine result.
+
+    Fast path: use pre-fetched scores from score_cache (batch DB read — no HTTP).
+    Slow path: call Agent 03 HTTP for any tickers missing from score_cache.
     """
     if not tickers:
         return ScanEngineResult(0, 0, 0, [], [])
@@ -76,16 +79,28 @@ async def run_scan(
             unique.append(upper)
     tickers = unique
 
-    # Score concurrently with semaphore
-    semaphore = asyncio.Semaphore(settings.scan_concurrency)
+    cached = score_cache or {}
+    hits = [t for t in tickers if t in cached]
+    misses = [t for t in tickers if t not in cached]
 
-    async def _score_bounded(ticker: str) -> tuple[str, Optional[dict]]:
-        async with semaphore:
-            result = await score_ticker(ticker)
-            return ticker, result
+    logger.info("Score cache: %d hits, %d misses (HTTP fallback)", len(hits), len(misses))
 
-    tasks = [_score_bounded(t) for t in tickers]
-    raw_results: list[tuple[str, Optional[dict]]] = await asyncio.gather(*tasks)
+    # Resolve hits from cache immediately
+    raw_results: list[tuple[str, Optional[dict]]] = [
+        (t, cached[t]) for t in hits
+    ]
+
+    # Fall back to Agent 03 HTTP only for misses
+    if misses:
+        semaphore = asyncio.Semaphore(settings.scan_concurrency)
+
+        async def _score_bounded(ticker: str) -> tuple[str, Optional[dict]]:
+            async with semaphore:
+                result = await score_ticker(ticker)
+                return ticker, result
+
+        http_results = await asyncio.gather(*[_score_bounded(t) for t in misses])
+        raw_results.extend(http_results)
 
     threshold = settings.quality_gate_threshold
     all_items: list[ScanItem] = []
