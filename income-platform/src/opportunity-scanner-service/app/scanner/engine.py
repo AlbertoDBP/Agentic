@@ -38,6 +38,7 @@ class ScanItem:
     score_details: dict[str, Any] = field(default_factory=dict)
     entry_exit: Optional[dict] = None
     portfolio_context: Optional[dict] = None
+    analyst_context: Optional[dict] = None   # populated for analyst-ideas source scans
 
 
 @dataclass
@@ -47,6 +48,17 @@ class ScanEngineResult:
     total_vetoed: int
     items: list[ScanItem]         # only items that passed all filters, ranked
     all_items: list[ScanItem]     # all scored items including filtered-out
+
+
+def tickers_from_analyst_suggestions(suggestions: list[dict]) -> tuple[list[str], dict]:
+    """
+    Extract ticker list and analyst context map from suggestion rows.
+    Returns (tickers, {ticker: analyst_context}).
+    """
+    from app.scanner.analyst_ideas import build_analyst_context
+    tickers = [s["ticker"] for s in suggestions]
+    context_map = {s["ticker"]: build_analyst_context(s) for s in suggestions}
+    return tickers, context_map
 
 
 async def run_scan(
