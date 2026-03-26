@@ -56,7 +56,7 @@ function MiniPie({ data, colorMap }: { data: { name: string; value: number }[]; 
             contentStyle={{ background: "#1a2035", border: "1px solid #334155", borderRadius: 6, fontSize: 11 }}
             labelStyle={{ color: "#e2e4ea" }}
             itemStyle={{ color: "#a0aabb" }}
-            formatter={(v: number) => [`${v.toFixed(1)}%`, ""]}
+            formatter={(v) => [`${Number(v).toFixed(1)}%`, ""]}
           />
         </PieChart>
       </ResponsiveContainer>
