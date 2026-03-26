@@ -70,3 +70,4 @@ temp/
 .env
 src/*/.env
 .env
+.superpowers/
