@@ -443,7 +443,7 @@ def _seed_weight_profiles(engine) -> None:
                 VALUES
                     (:ac, 1, true,
                      :wy, :wd, :wt,
-                     :ysub::jsonb, :dsub::jsonb, :tsub::jsonb,
+                     CAST(:ysub AS jsonb), CAST(:dsub AS jsonb), CAST(:tsub AS jsonb),
                      'INITIAL_SEED', 'v2.0 initial seed weights', 'migration',
                      NOW(), NOW())
             """), {
@@ -468,7 +468,7 @@ def _seed_weight_profiles(engine) -> None:
                     (:ac, NULL, :pid,
                      NULL, NULL, NULL,
                      'INITIAL_SEED',
-                     '{"source": "v2.0 migration"}'::jsonb,
+                     CAST('{"source": "v2.0 migration"}' AS jsonb),
                      NOW(), 'migration')
             """), {"ac": asset_class, "pid": profile_id})
 
