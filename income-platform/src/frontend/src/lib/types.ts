@@ -372,7 +372,25 @@ export interface ScanItem {
   };
   entry_exit?: EntryExit | null;
   portfolio_context?: PortfolioContext | null;
+  analyst_context?: AnalystContext | null;
 }
+
+export interface AnalystContext {
+  analyst_id:           number | null;
+  analyst_name:         string | null;
+  analyst_accuracy:     number | null;
+  analyst_sector_alpha: Record<string, number> | null;
+  price_guidance_type:  string | null;
+  price_guidance_value: Record<string, unknown> | null;
+  staleness_weight:     number | null;
+  sourced_at:           string | null;   // ISO datetime
+  recommendation:       string | null;   // "BUY" | "SELL" | etc.
+  is_active:            boolean;         // false = history row (previous ingestion cycle)
+  is_proposed:          boolean;         // true = already submitted as a proposal
+  proposed_at:          string | null;   // ISO datetime of most recent proposal
+}
+
+export type PositionOverrides = Record<string, { amount_usd: number; target_price: number }>;
 
 export interface ScanResult {
   scan_id: string;
