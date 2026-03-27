@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+{% block title %}Newsletters — Income Platform{% endblock %}
+{% block content %}
+
+<style>
+  .article-card {
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+  }
+  .article-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.85rem;
+    padding: 0.85rem 1rem;
+  }
+  .article-date-col {
+    flex-shrink: 0;
+    text-align: center;
+    min-width: 48px;
+  }
+  .article-date-day {
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .article-date-mon {
+    font-size: 0.7rem;
+    color: var(--pico-muted-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .article-meta { flex: 1; min-width: 0; }
+  .article-analyst {
+    font-size: 0.75rem;
+    color: var(--pico-muted-color);
+    margin-bottom: 0.2rem;
+  }
+  .article-title {
+    font-size: 0.93rem;
+    font-weight: 600;
+    color: var(--pico-color);
+    text-decoration: none;
+    display: block;
+    margin-bottom: 0.4rem;
+    line-height: 1.35;
+  }
+  .article-title:hover { color: var(--pico-primary); }
+  .article-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+  }
+  .ticker-chip {
+    display: inline-block;
+    padding: 0.12rem 0.45rem;
+    border-radius: 3px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    font-family: monospace;
+  }
+  .chip-buy    { background: #22c55e22; color: #22c55e; }
+  .chip-sell   { background: #ef444422; color: #ef4444; }
+  .chip-hold   { background: #6b728022; color: #9ca3af; }
+  .article-stats {
+    font-size: 0.72rem;
+    color: var(--pico-muted-color);
+    white-space: nowrap;
+    flex-shrink: 0;
+    text-align: right;
+    padding-top: 0.1rem;
+  }
+  details.article-detail > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.4rem 1rem;
+    font-size: 0.78rem;
+    color: var(--pico-muted-color);
+    border-top: 1px solid var(--pico-muted-border-color);
+    background: transparent;
+    user-select: none;
+  }
+  details.article-detail > summary::-webkit-details-marker { display: none; }
+  details.article-detail > summary::before {
+    content: '+ Show analysis';
+  }
+  details.article-detail[open] > summary::before {
+    content: '- Hide analysis';
+  }
+  details.article-detail > summary:hover { color: var(--pico-primary); }
+  .detail-body {
+    padding: 0.75rem 1rem 1rem;
+    border-top: 1px solid var(--pico-muted-border-color);
+  }
+  .fw-block {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+  }
+  .fw-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .fw-ticker-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+  }
+  .fw-ticker-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    font-family: monospace;
+  }
+  .conviction-chip {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+  .conv-high   { background: #22c55e22; color: #22c55e; }
+  .conv-medium { background: #eab30822; color: #eab308; }
+  .conv-low    { background: #6b728022; color: #9ca3af; }
+  .fw-metrics {
+    margin: 0.3rem 0 0.4rem;
+    padding-left: 1rem;
+    font-size: 0.78rem;
+    color: var(--pico-muted-color);
+  }
+  .fw-metrics li { margin-bottom: 0.1rem; }
+  .fw-narrative {
+    font-size: 0.8rem;
+    color: var(--pico-color);
+    line-height: 1.5;
+  }
+  .ingest-panel {
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1.2rem;
+  }
+  .filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .filter-bar select, .filter-bar input {
+    padding: 0.3rem 0.5rem;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 4px;
+    color: var(--pico-color);
+    font-size: 0.83rem;
+  }
+  .input-label {
+    font-size: 0.75rem;
+    color: var(--pico-muted-color);
+    margin-bottom: 0.2rem;
+    display: block;
+  }
+</style>
+
+<div class="page-header">
+  <h1>Newsletters</h1>
+</div>
+
+{# ── Stats bar ── #}
+{% set total_recs = articles | sum(attribute='recommendation_count') %}
+{% set most_recent = articles[0].published_at if articles else None %}
+<div class="metric-grid" style="margin-bottom: 1rem;">
+  <div class="metric-card">
+    <div class="value">{{ articles | length }}</div>
+    <div class="label">Articles ingested</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">{{ total_recs }}</div>
+    <div class="label">Recommendations extracted</div>
+  </div>
+  <div class="metric-card">
+    <div class="value" style="font-size: 1rem;">{{ most_recent[:10] if most_recent else "—" }}</div>
+    <div class="label">Most recent article</div>
+  </div>
+</div>
+
+{# ── Add Article (collapsible) ── #}
+<details style="margin-bottom: 1rem;">
+  <summary style="cursor: pointer; font-size: 0.85rem; color: var(--pico-muted-color); padding: 0.4rem 0;">
+    + Add Article by SA URL or ID
+  </summary>
+  <div class="ingest-panel" style="margin-top: 0.5rem;">
+    <form method="post" action="/newsletters/ingest">
+      <div style="display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.6rem; align-items: end;">
+        <div>
+          <label class="input-label">SA Article URL or ID</label>
+          <input name="sa_article_id" type="text" placeholder="https://seekingalpha.com/article/4884914 or 4884914" required
+                 style="width: 100%; padding: 0.35rem 0.5rem; background: #111; border: 1px solid #444; border-radius: 4px; color: #eee; font-size: 0.83rem;">
+        </div>
+        <div>
+          <label class="input-label">Analyst</label>
+          <select name="analyst_id" required
+                  style="width: 100%; padding: 0.35rem 0.5rem; background: #111; border: 1px solid #444; border-radius: 4px; color: #eee; font-size: 0.83rem;">
+            <option value="">Select analyst...</option>
+            {% for a in analysts %}
+            <option value="{{ a.id }}">{{ a.display_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <button type="submit" class="btn-sm"
+                  onclick="return confirm('Ingest this article? This may take 15-20 seconds.')">
+            Ingest
+          </button>
+        </div>
+      </div>
+      <div style="font-size: 0.72rem; color: var(--pico-muted-color); margin-top: 0.4rem;">
+        Runs full pipeline: fetch content, extract signals (Pass 1 + Pass 2), store recommendations and frameworks.
+      </div>
+    </form>
+  </div>
+</details>
+
+{# ── Filter bar ── #}
+<form method="get" action="/newsletters" class="filter-bar">
+  <div>
+    <label class="input-label">Filter by analyst</label>
+    <select name="analyst_id" onchange="this.form.submit()">
+      <option value="">All analysts</option>
+      {% for a in analysts %}
+      <option value="{{ a.id }}" {% if selected_analyst == a.id | string %}selected{% endif %}>
+        {{ a.display_name }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  {% if selected_analyst %}
+  <div style="align-self: flex-end;">
+    <a href="/newsletters" class="btn-sm outline">Clear filter</a>
+  </div>
+  {% endif %}
+</form>
+
+{# ── Article list ── #}
+{% if articles %}
+  {% for article in articles %}
+  {% set pub = article.published_at or "" %}
+  {% set day = pub[8:10] if pub|length >= 10 else "?" %}
+  {% set mon = pub[5:7] if pub|length >= 7 else "?" %}
+  {% set mon_map = {"01":"Jan","02":"Feb","03":"Mar","04":"Apr","05":"May","06":"Jun",
+                    "07":"Jul","08":"Aug","09":"Sep","10":"Oct","11":"Nov","12":"Dec"} %}
+
+  <div class="article-card">
+    <div class="article-header">
+      <div class="article-date-col">
+        <div class="article-date-day">{{ day }}</div>
+        <div class="article-date-mon">{{ mon_map.get(mon, mon) }}</div>
+      </div>
+      <div class="article-meta">
+        <div class="article-analyst">{{ article.analyst_name }}</div>
+        <a class="article-title"
+           href="https://seekingalpha.com/article/{{ article.sa_article_id }}"
+           target="_blank" rel="noopener">{{ article.title }}</a>
+        <div class="article-chips">
+          {% if article.article_type == "recommendations" %}
+            <span class="badge badge-green" style="font-size: 0.7rem;">Recommendations</span>
+          {% else %}
+            <span class="badge badge-yellow" style="font-size: 0.7rem;">Market Analysis</span>
+          {% endif %}
+          {% for t in article.tickers %}
+            {% set rec = (t.recommendation or "") | lower %}
+            {% if "strongbuy" in rec or rec == "buy" %}
+              {% set chip_cls = "chip-buy" %}
+            {% elif "strongsell" in rec or rec == "sell" %}
+              {% set chip_cls = "chip-sell" %}
+            {% else %}
+              {% set chip_cls = "chip-hold" %}
+            {% endif %}
+            <span class="ticker-chip {{ chip_cls }}">
+              {{ t.ticker }}{% if t.recommendation %} {{ t.recommendation }}{% endif %}
+            </span>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="article-stats">
+        <div>{{ article.recommendation_count }} rec{% if article.recommendation_count != 1 %}s{% endif %}</div>
+        <div>{{ article.framework_count }} fw</div>
+        <div style="margin-top: 0.2rem;">{{ "{:,}".format(article.char_count) }} chars</div>
+      </div>
+    </div>
+
+    {% if article.tickers %}
+    <details class="article-detail">
+      <summary></summary>
+      <div class="detail-body">
+        {% set has_fw = article.tickers | selectattr("conviction_level") | list %}
+        {% if has_fw %}
+          {% for t in article.tickers %}
+          {% if t.conviction_level or t.evaluation_narrative or t.valuation_metrics_cited %}
+          <div class="fw-block">
+            <div class="fw-ticker-row">
+              <span class="fw-ticker-label">{{ t.ticker }}</span>
+              {% if t.conviction_level %}
+                {% set conv = t.conviction_level | lower %}
+                <span class="conviction-chip
+                  {% if conv == 'high' %}conv-high{% elif conv == 'medium' %}conv-medium{% else %}conv-low{% endif %}">
+                  {{ t.conviction_level }}
+                </span>
+              {% endif %}
+              {% if t.price_guidance_type and t.price_guidance_type != "none" %}
+                <span class="badge badge-blue" style="font-size: 0.68rem;">{{ t.price_guidance_type }}</span>
+              {% endif %}
+            </div>
+            {% if t.valuation_metrics_cited %}
+            <ul class="fw-metrics">
+              {% for m in t.valuation_metrics_cited %}
+              <li>{{ m }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+            {% if t.evaluation_narrative %}
+            <div class="fw-narrative">{{ t.evaluation_narrative }}</div>
+            {% endif %}
+          </div>
+          {% endif %}
+          {% endfor %}
+        {% else %}
+          <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin: 0;">
+            No framework analysis extracted for this article.
+          </p>
+        {% endif %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p style="color: var(--pico-muted-color);">No articles ingested yet. Use the form above to add one.</p>
+{% endif %}
+
+{% endblock %}

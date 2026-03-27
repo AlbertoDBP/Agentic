@@ -7,14 +7,16 @@ POST /analysts                      Add new analyst by SA author ID
 GET  /analysts/{id}                 Single analyst profile + accuracy stats
 GET  /analysts/{id}/recommendations All active recommendations by analyst
 """
+import json
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, text
 
 from app.database import get_db
-from app.models.models import Analyst, AnalystRecommendation
+from app.models.models import Analyst, AnalystArticle, AnalystRecommendation
 from app.models.schemas import (
     AnalystCreate, AnalystUpdate, AnalystResponse, AnalystListResponse,
     RecommendationResponse,
@@ -83,6 +85,212 @@ def lookup_analyst_name(sa_id: str):
     from app.clients import seeking_alpha as sa_client
     name = sa_client.fetch_author_name(sa_id)
     return {"sa_id": sa_id, "display_name": name}
+
+
+@router.get("/articles", tags=["Articles"])
+def list_articles(
+    analyst_id: Optional[int] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    rows = db.execute(text("""
+        SELECT
+            a.id,
+            a.sa_article_id,
+            a.analyst_id,
+            an.display_name    AS analyst_name,
+            a.title,
+            a.published_at,
+            COALESCE(LENGTH(a.full_text), 0) AS char_count,
+            COUNT(DISTINCT r.id)             AS recommendation_count,
+            COUNT(DISTINCT f.id)             AS framework_count
+        FROM platform_shared.analyst_articles a
+        JOIN platform_shared.analysts an ON an.id = a.analyst_id
+        LEFT JOIN platform_shared.analyst_recommendations r ON r.article_id = a.id
+        LEFT JOIN platform_shared.article_frameworks f ON f.article_id = a.id
+        WHERE (:analyst_id IS NULL OR a.analyst_id = :analyst_id)
+        GROUP BY a.id, an.display_name
+        ORDER BY a.published_at DESC
+        LIMIT :limit
+    """), {"analyst_id": analyst_id, "limit": limit}).fetchall()
+
+    results = []
+    for row in rows:
+        article_id = row.id
+        rec_count = row.recommendation_count
+        fw_count = row.framework_count
+
+        ticker_rows = db.execute(text("""
+            SELECT
+                r.ticker,
+                r.recommendation,
+                r.sentiment_score,
+                r.asset_class,
+                f.conviction_level,
+                f.price_guidance_type,
+                f.evaluation_narrative,
+                f.valuation_metrics_cited
+            FROM platform_shared.analyst_recommendations r
+            LEFT JOIN platform_shared.article_frameworks f
+                ON f.article_id = r.article_id AND f.ticker = r.ticker
+            WHERE r.article_id = :article_id
+        """), {"article_id": article_id}).fetchall()
+
+        tickers = []
+        for t in ticker_rows:
+            tickers.append({
+                "ticker": t.ticker,
+                "recommendation": t.recommendation,
+                "sentiment_score": float(t.sentiment_score) if t.sentiment_score is not None else None,
+                "asset_class": t.asset_class,
+                "conviction_level": t.conviction_level,
+                "price_guidance_type": t.price_guidance_type,
+                "evaluation_narrative": t.evaluation_narrative,
+                "valuation_metrics_cited": t.valuation_metrics_cited or [],
+            })
+
+        results.append({
+            "id": article_id,
+            "sa_article_id": row.sa_article_id,
+            "analyst_id": row.analyst_id,
+            "analyst_name": row.analyst_name,
+            "title": row.title,
+            "published_at": row.published_at.isoformat() if row.published_at else None,
+            "char_count": row.char_count,
+            "recommendation_count": rec_count,
+            "framework_count": fw_count,
+            "article_type": "recommendations" if rec_count > 0 else "analysis",
+            "tickers": tickers,
+        })
+
+    return results
+
+
+@router.post("/articles/ingest", tags=["Articles"])
+def ingest_article_by_id(payload: dict, db: Session = Depends(get_db)):
+    from app.clients import seeking_alpha as sa_client
+    from app.processors import extractor, article_store, deduplicator, framework_extractor, suggestion_store
+
+    sa_article_id = str(payload.get("sa_article_id", "")).strip()
+    analyst_id = int(payload.get("analyst_id"))
+
+    if not sa_article_id:
+        raise HTTPException(status_code=400, detail="sa_article_id is required")
+
+    analyst = db.query(Analyst).filter(Analyst.id == analyst_id).first()
+    if not analyst:
+        raise HTTPException(status_code=404, detail=f"Analyst {analyst_id} not found")
+
+    if deduplicator.is_duplicate_by_sa_id(db, sa_article_id):
+        raise HTTPException(status_code=409, detail=f"Article {sa_article_id} already ingested")
+
+    detail = sa_client.fetch_article_detail(sa_article_id)
+    if not detail:
+        raise HTTPException(status_code=502, detail=f"Could not fetch article {sa_article_id} from Seeking Alpha")
+
+    html = detail["content"]
+    title = detail.get("title", "")
+    published_at = sa_client.parse_published_at(detail.get("published_date", ""))
+    if not published_at:
+        published_at = datetime.now(timezone.utc)
+
+    markdown = extractor.html_to_markdown(html)
+    pass1 = extractor.extract_signals(markdown, sa_article_id=sa_article_id)
+
+    extracted_tickers = []
+    if pass1 and isinstance(pass1, dict):
+        extracted_tickers = pass1.get("tickers") or []
+
+    tickers_mentioned = [t.get("ticker") for t in extracted_tickers if t.get("ticker")]
+
+    article = article_store.save_article(
+        db,
+        analyst_id=analyst_id,
+        sa_article_id=sa_article_id,
+        title=title,
+        markdown_body=markdown,
+        published_at=published_at,
+        tickers_mentioned=tickers_mentioned,
+        content_embedding=None,
+        metadata={"source": "manual_ingest", "char_count": len(markdown)},
+    )
+
+    saved_recs = article_store.save_recommendations_for_article(
+        db,
+        analyst_id=analyst_id,
+        article=article,
+        extracted_tickers=extracted_tickers,
+        thesis_embeddings=[],
+        aging_days=365,
+    )
+
+    frameworks = framework_extractor.extract_frameworks(markdown, pass1 or {}, sa_article_id)
+
+    suggestions_written = 0
+    for fw in frameworks:
+        ticker = fw.get("ticker")
+        result = db.execute(text("""
+            INSERT INTO platform_shared.article_frameworks
+                (article_id, analyst_id, ticker, valuation_metrics_cited,
+                 thresholds_identified, reasoning_structure, conviction_level,
+                 catalysts, price_guidance_type, price_guidance_value,
+                 risk_factors_cited, macro_factors, evaluation_narrative)
+            VALUES (:article_id, :analyst_id, :ticker,
+                CAST(:metrics AS JSONB), CAST(:thresholds AS JSONB),
+                :reasoning, :conviction, CAST(:catalysts AS JSONB),
+                :guidance_type, CAST(:guidance_value AS JSONB),
+                CAST(:risks AS JSONB), CAST(:macro AS JSONB), :narrative)
+            ON CONFLICT DO NOTHING RETURNING id
+        """), {
+            "article_id": article.id,
+            "analyst_id": analyst_id,
+            "ticker": ticker,
+            "metrics": json.dumps(fw.get("valuation_metrics_cited") or []),
+            "thresholds": json.dumps(fw.get("thresholds_identified") or {}),
+            "reasoning": fw.get("reasoning_structure"),
+            "conviction": fw.get("conviction_level"),
+            "catalysts": json.dumps(fw.get("catalysts") or []),
+            "guidance_type": fw.get("price_guidance_type"),
+            "guidance_value": json.dumps(fw.get("price_guidance_value")),
+            "risks": json.dumps(fw.get("risk_factors_cited") or []),
+            "macro": json.dumps(fw.get("macro_factors") or []),
+            "narrative": fw.get("evaluation_narrative"),
+        })
+        inserted = result.fetchone()
+        if inserted:
+            framework_id = inserted[0]
+            rec_for_ticker = next(
+                (r for r in saved_recs if r.ticker == ticker), None
+            )
+            rec_label = rec_for_ticker.recommendation if rec_for_ticker else None
+            if suggestion_store.should_write_suggestion(rec_label):
+                suggestion_store.upsert_suggestion(
+                    db=db,
+                    analyst_id=analyst_id,
+                    article_framework_id=framework_id,
+                    ticker=ticker,
+                    asset_class=rec_for_ticker.asset_class if rec_for_ticker else fw.get("asset_class"),
+                    recommendation=rec_label,
+                    sentiment_score=float(rec_for_ticker.sentiment_score) if rec_for_ticker and rec_for_ticker.sentiment_score is not None else None,
+                    price_guidance_type=fw.get("price_guidance_type"),
+                    price_guidance_value=fw.get("price_guidance_value"),
+                    sourced_at=published_at,
+                )
+                suggestions_written += 1
+
+    article_store.update_analyst_after_fetch(db, analyst_id, articles_added=1)
+    db.commit()
+
+    logger.info(f"Manual ingest: article {sa_article_id} saved as id={article.id}, "
+                f"tickers={len(extracted_tickers)}, frameworks={len(frameworks)}, suggestions={suggestions_written}")
+
+    return {
+        "success": True,
+        "article_id": article.id,
+        "tickers_found": len(extracted_tickers),
+        "frameworks_extracted": len(frameworks),
+        "suggestions_written": suggestions_written,
+    }
 
 
 @router.put("/{analyst_id}", response_model=AnalystResponse, tags=["Analysts"])
