@@ -81,6 +81,7 @@ class WeightProfileRequest(BaseModel):
     technical_sub_weights: TechnicalSubWeights
     change_reason: Optional[str] = None
     created_by: Optional[str] = None
+    benchmark_ticker: Optional[str] = None
 
     @model_validator(mode="after")
     def check_pillar_sum(self):
@@ -109,6 +110,7 @@ class WeightProfileResponse(BaseModel):
     yield_sub_weights: dict
     durability_sub_weights: dict
     technical_sub_weights: dict
+    benchmark_ticker: Optional[str] = None
     change_reason: Optional[str]
     created_by: Optional[str]
     created_at: Optional[datetime]
@@ -130,6 +132,7 @@ def _orm_to_response(profile: ScoringWeightProfile) -> WeightProfileResponse:
         yield_sub_weights=profile.yield_sub_weights or {},
         durability_sub_weights=profile.durability_sub_weights or {},
         technical_sub_weights=profile.technical_sub_weights or {},
+        benchmark_ticker=profile.benchmark_ticker,
         change_reason=profile.change_reason,
         created_by=profile.created_by,
         created_at=profile.created_at,
@@ -216,6 +219,7 @@ def create_weight_profile(
             yield_sub_weights=req.yield_sub_weights.model_dump(),
             durability_sub_weights=req.durability_sub_weights.model_dump(),
             technical_sub_weights=req.technical_sub_weights.model_dump(),
+            benchmark_ticker=req.benchmark_ticker,
             source="MANUAL",
             change_reason=req.change_reason,
             created_by=req.created_by,

@@ -65,6 +65,9 @@ def _make_entry(
     outcome_label="PENDING",
     entry_date=None,
     outcome_populated_at=None,
+    income_outcome_label=None,
+    durability_outcome_label=None,
+    technical_outcome_label=None,
     **kwargs,
 ):
     e = MagicMock(spec=ShadowPortfolioEntry)
@@ -79,6 +82,10 @@ def _make_entry(
     e.financial_durability_score = financial_durability_score
     e.technical_entry_score = technical_entry_score
     e.outcome_label = outcome_label
+    # Per-pillar labels default to matching the aggregate outcome_label
+    e.income_outcome_label = income_outcome_label if income_outcome_label is not None else outcome_label
+    e.durability_outcome_label = durability_outcome_label if durability_outcome_label is not None else outcome_label
+    e.technical_outcome_label = technical_outcome_label if technical_outcome_label is not None else outcome_label
     e.entry_date = entry_date or OLD
     e.exit_price = None
     e.exit_date = None
@@ -840,6 +847,7 @@ class TestLearningLoopAPI:
         r.delta_technical = -1
         r.skip_reason = None
         r.completed_at = NOW
+        r.pillar_reviewed = None
         return r
 
     # ── Auth guard ─────────────────────────────────────────────────────────────
@@ -942,65 +950,39 @@ class TestLearningLoopAPI:
 
     # ── POST /populate-outcomes ────────────────────────────────────────────────
 
-    def test_populate_outcomes_success(self):
-        with patch(
-            "app.api.learning_loop.shadow_portfolio_manager.populate_outcomes",
-            return_value={
-                "updated": 3,
-                "skipped_no_price": 1,
-                "skipped_no_entry_price": 0,
-                "total_pending": 4,
-            },
-        ):
-            resp = self._client.post(
-                "/learning-loop/populate-outcomes",
-                json={"exit_prices": {"AAPL": 175.0, "MSFT": 420.0}},
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["updated"] == 3
-        assert data["total_pending"] == 4
+    def test_populate_outcomes_deprecated_returns_410(self):
+        """Deprecated endpoint always returns 410 Gone."""
+        resp = self._client.post(
+            "/learning-loop/populate-outcomes",
+            json={"exit_prices": {"AAPL": 175.0, "MSFT": 420.0}},
+        )
+        assert resp.status_code == 410
+        assert "detail" in resp.json()
 
-    def test_populate_outcomes_empty_prices(self):
-        with patch(
-            "app.api.learning_loop.shadow_portfolio_manager.populate_outcomes",
-            return_value={
-                "updated": 0,
-                "skipped_no_price": 5,
-                "skipped_no_entry_price": 0,
-                "total_pending": 5,
-            },
-        ):
-            resp = self._client.post(
-                "/learning-loop/populate-outcomes",
-                json={"exit_prices": {}},
-            )
-        assert resp.status_code == 200
-        assert resp.json()["updated"] == 0
+    def test_populate_outcomes_empty_prices_deprecated(self):
+        """Deprecated endpoint returns 410 regardless of body."""
+        resp = self._client.post(
+            "/learning-loop/populate-outcomes",
+            json={"exit_prices": {}},
+        )
+        assert resp.status_code == 410
 
-    def test_populate_outcomes_response_shape(self):
-        with patch(
-            "app.api.learning_loop.shadow_portfolio_manager.populate_outcomes",
-            return_value={
-                "updated": 0,
-                "skipped_no_price": 0,
-                "skipped_no_entry_price": 0,
-                "total_pending": 0,
-            },
-        ):
-            resp = self._client.post(
-                "/learning-loop/populate-outcomes",
-                json={"exit_prices": {}},
-            )
-        keys = set(resp.json().keys())
-        assert keys == {"updated", "skipped_no_price", "skipped_no_entry_price", "total_pending"}
+    def test_populate_outcomes_response_shape_deprecated(self):
+        """Deprecated endpoint returns 410 with detail key."""
+        resp = self._client.post(
+            "/learning-loop/populate-outcomes",
+            json={"exit_prices": {}},
+        )
+        assert resp.status_code == 410
+        assert "detail" in resp.json()
 
-    def test_populate_outcomes_invalid_body(self):
+    def test_populate_outcomes_invalid_body_deprecated(self):
+        """Deprecated endpoint returns 410 even for invalid body."""
         resp = self._client.post(
             "/learning-loop/populate-outcomes",
             json={"not_exit_prices": {}},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 410
 
     # ── POST /review/{asset_class} ─────────────────────────────────────────────
 
@@ -1165,3 +1147,562 @@ class TestLearningLoopAPI:
         resp = self._client.get("/learning-loop/reviews")
         assert resp.status_code == 200
         self._mock_db.query.return_value.order_by.return_value.limit.assert_called_with(20)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 2: Migration seed helper
+# ══════════════════════════════════════════════════════════════════════════════
+
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), "..", "scripts"))
+
+def test_benchmark_defaults_cover_all_valid_asset_classes():
+    """All asset classes in VALID_ASSET_CLASSES have a benchmark ticker."""
+    from migrate import BENCHMARK_DEFAULTS
+    from app.api.weights import VALID_ASSET_CLASSES
+    for ac in VALID_ASSET_CLASSES:
+        assert ac in BENCHMARK_DEFAULTS, f"{ac} missing from benchmark defaults"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 3: ShadowPortfolioManager v3 — entry recording
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestShadowPortfolioManagerV3Entry:
+    def setup_method(self):
+        self.mgr = ShadowPortfolioManager()
+        self.db = MagicMock()
+
+    def _base_kwargs(self):
+        return dict(
+            income_score_id=uuid.uuid4(),
+            ticker="STWD",
+            asset_class="MORTGAGE_REIT",
+            entry_score=82.0,
+            entry_grade="A",
+            entry_recommendation="ACCUMULATE",
+            valuation_yield_score=32.0,
+            financial_durability_score=28.0,
+            technical_entry_score=18.0,
+            entry_price=25.0,
+            # v3.0 new params
+            benchmark_ticker="REM",
+            benchmark_entry_price=22.50,
+            durability_score_at_entry=28.0,
+            income_ttm_at_entry=1.80,
+        )
+
+    def test_records_entry_with_v3_fields(self):
+        entry = self.mgr.maybe_record_entry(self.db, **self._base_kwargs())
+        assert entry is not None
+        self.db.add.assert_called_once()
+        added = self.db.add.call_args[0][0]
+        assert added.benchmark_ticker == "REM"
+        assert added.benchmark_entry_price == 22.50
+        assert added.durability_score_at_entry == 28.0
+        assert added.income_ttm_at_entry == 1.80
+        assert added.hold_period_days == 365  # longest hold period
+
+    def test_does_not_record_hold_or_sell(self):
+        kw = self._base_kwargs()
+        kw["entry_recommendation"] = "HOLD"
+        entry = self.mgr.maybe_record_entry(self.db, **kw)
+        assert entry is None
+        self.db.add.assert_not_called()
+
+    def test_v3_params_default_to_none(self):
+        """Callers that don't pass v3 params still work (backward compat)."""
+        kw = self._base_kwargs()
+        del kw["benchmark_ticker"]
+        del kw["benchmark_entry_price"]
+        del kw["durability_score_at_entry"]
+        del kw["income_ttm_at_entry"]
+        entry = self.mgr.maybe_record_entry(self.db, **kw)
+        assert entry is not None
+        added = self.db.add.call_args[0][0]
+        assert added.benchmark_ticker is None
+        assert added.income_ttm_at_entry is None
+
+
+class TestPopulateTechnicalOutcomes:
+    def setup_method(self):
+        self.mgr = ShadowPortfolioManager()
+        self.db = MagicMock()
+        self.now = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+    def _make_pending_tech(self, ticker="STWD", entry_price=25.0, benchmark_entry_price=22.0, entry_days_ago=70):
+        e = MagicMock(spec=ShadowPortfolioEntry)
+        e.ticker = ticker
+        e.entry_price = entry_price
+        e.benchmark_entry_price = benchmark_entry_price
+        e.benchmark_ticker = "REM"
+        e.technical_outcome_label = "PENDING"
+        e.entry_date = self.now - timedelta(days=entry_days_ago)
+        return e
+
+    def _query_returns(self, entries):
+        self.db.query.return_value.filter.return_value.filter.return_value.all.return_value = entries
+
+    def test_correct_alpha(self):
+        e = self._make_pending_tech(entry_price=25.0, benchmark_entry_price=22.0)
+        self._query_returns([e])
+        # ticker +8%, benchmark +2% → alpha = +6% → CORRECT
+        result = self.mgr.populate_technical_outcomes(
+            self.db,
+            exit_prices={"STWD": 27.0},
+            benchmark_exit_prices={"REM": 22.44},
+            as_of=self.now,
+        )
+        assert e.technical_outcome_label == "CORRECT"
+        assert result["updated"] == 1
+
+    def test_incorrect_alpha(self):
+        e = self._make_pending_tech(entry_price=25.0, benchmark_entry_price=22.0)
+        self._query_returns([e])
+        # ticker -6%, benchmark +1% → alpha = -7% → INCORRECT
+        result = self.mgr.populate_technical_outcomes(
+            self.db,
+            exit_prices={"STWD": 23.5},
+            benchmark_exit_prices={"REM": 22.22},
+            as_of=self.now,
+        )
+        assert e.technical_outcome_label == "INCORRECT"
+
+    def test_neutral_alpha_within_band(self):
+        e = self._make_pending_tech(entry_price=25.0, benchmark_entry_price=22.0)
+        self._query_returns([e])
+        # ticker +1%, benchmark +0% → alpha = +1% → NEUTRAL (< 3%)
+        result = self.mgr.populate_technical_outcomes(
+            self.db,
+            exit_prices={"STWD": 25.25},
+            benchmark_exit_prices={"REM": 22.0},
+            as_of=self.now,
+        )
+        assert e.technical_outcome_label == "NEUTRAL"
+
+    def test_no_entry_price_sets_neutral(self):
+        e = self._make_pending_tech()
+        e.entry_price = None
+        self._query_returns([e])
+        self.mgr.populate_technical_outcomes(
+            self.db, exit_prices={"STWD": 27.0}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
+        )
+        assert e.technical_outcome_label == "NEUTRAL"
+
+    def test_missing_benchmark_entry_price_sets_neutral(self):
+        e = self._make_pending_tech()
+        e.benchmark_entry_price = None
+        self._query_returns([e])
+        self.mgr.populate_technical_outcomes(
+            self.db, exit_prices={"STWD": 27.0}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
+        )
+        assert e.technical_outcome_label == "NEUTRAL"
+
+    def test_delisted_ticker_sets_incorrect(self):
+        e = self._make_pending_tech()
+        self._query_returns([e])
+        # exit price not in dict → delisted
+        self.mgr.populate_technical_outcomes(
+            self.db, exit_prices={}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
+        )
+        assert e.technical_outcome_label == "INCORRECT"
+
+    def test_skips_entries_within_hold_period(self):
+        e = self._make_pending_tech(entry_days_ago=30)  # 30 < 60 day hold
+        self._query_returns([])  # query filters them out
+        result = self.mgr.populate_technical_outcomes(
+            self.db, exit_prices={"STWD": 27.0}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
+        )
+        assert result["updated"] == 0
+
+
+class TestPopulateIncomeDurabilityOutcomes:
+    def setup_method(self):
+        self.mgr = ShadowPortfolioManager()
+        self.db = MagicMock()
+        self.now = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+    def _make_pending_income(self, ticker="STWD", ttm_at_entry=1.80, dur_score=28.0, entry_days_ago=370):
+        e = MagicMock(spec=ShadowPortfolioEntry)
+        e.ticker = ticker
+        e.income_ttm_at_entry = ttm_at_entry
+        e.durability_score_at_entry = dur_score
+        e.income_outcome_label = "PENDING"
+        e.durability_outcome_label = "PENDING"
+        e.entry_date = self.now - timedelta(days=entry_days_ago)
+        return e
+
+    def _query_returns(self, entries):
+        self.db.query.return_value.filter.return_value.filter.return_value.all.return_value = entries
+
+    # ── Income tests ──────────────────────────────────────────────────────────
+
+    def test_income_correct_growth(self):
+        e = self._make_pending_income(ttm_at_entry=1.80)
+        self._query_returns([e])
+        # TTM grew by +3% → CORRECT
+        result = self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.854}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "CORRECT"
+        assert result["income"]["updated"] == 1
+
+    def test_income_incorrect_cut(self):
+        e = self._make_pending_income(ttm_at_entry=1.80)
+        self._query_returns([e])
+        # TTM cut by -6% → INCORRECT
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.692}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "INCORRECT"
+
+    def test_income_neutral_flat(self):
+        e = self._make_pending_income(ttm_at_entry=1.80)
+        self._query_returns([e])
+        # TTM unchanged (0%) → NEUTRAL (between -5% and +2%)
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.80}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "NEUTRAL"
+
+    def test_income_suspended_forced_incorrect(self):
+        e = self._make_pending_income(ttm_at_entry=1.80)
+        self._query_returns([e])
+        # TTM at exit = 0 → forced INCORRECT (suspension)
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 0.0}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "INCORRECT"
+
+    def test_income_null_entry_ttm_sets_neutral(self):
+        e = self._make_pending_income(ttm_at_entry=None)
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.80}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "NEUTRAL"
+
+    def test_income_zero_entry_ttm_sets_neutral(self):
+        e = self._make_pending_income(ttm_at_entry=0.0)
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.80}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "NEUTRAL"
+
+    # ── Durability tests ──────────────────────────────────────────────────────
+
+    def test_durability_correct_high_confidence_income_correct(self):
+        # weight_durability=40 → threshold=24; dur_score_at_entry=30 (HIGH)
+        e = self._make_pending_income(ttm_at_entry=1.80, dur_score=30.0)
+        self._query_returns([e])
+        # Force income CORRECT first
+        self.mgr.populate_income_durability_outcomes(
+            self.db,
+            ttm_dividends={"STWD": 1.854},  # +3% → CORRECT
+            current_durability_scores={"STWD": 32.0},
+            as_of=self.now,
+            weight_durability=40.0,
+        )
+        assert e.durability_outcome_label == "CORRECT"
+
+    def test_durability_incorrect_high_confidence_income_incorrect(self):
+        e = self._make_pending_income(ttm_at_entry=1.80, dur_score=30.0)
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db,
+            ttm_dividends={"STWD": 1.692},  # -6% → INCORRECT
+            current_durability_scores={"STWD": 28.0},
+            as_of=self.now,
+            weight_durability=40.0,
+        )
+        assert e.durability_outcome_label == "INCORRECT"
+
+    def test_durability_neutral_low_confidence_income_incorrect(self):
+        # dur_score_at_entry=15 < threshold=24 (LOW confidence) → NEUTRAL even with cut
+        e = self._make_pending_income(ttm_at_entry=1.80, dur_score=15.0)
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db,
+            ttm_dividends={"STWD": 1.692},  # cut → income INCORRECT
+            current_durability_scores={"STWD": 12.0},
+            as_of=self.now,
+            weight_durability=40.0,
+        )
+        assert e.durability_outcome_label == "NEUTRAL"
+
+    def test_durability_skipped_when_income_still_pending(self):
+        e = self._make_pending_income(ttm_at_entry=1.80, dur_score=30.0)
+        # income not in ttm_dividends dict → stays PENDING
+        e.income_outcome_label = "PENDING"  # won't be updated
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db,
+            ttm_dividends={},  # no data → income stays PENDING
+            current_durability_scores={"STWD": 32.0},
+            as_of=self.now,
+        )
+        assert e.durability_outcome_label == "PENDING"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 5: Weight tuner — per-pillar signal
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPerPillarWeightTuner:
+    def setup_method(self):
+        self.tuner = QuarterlyWeightTuner()
+        self.profile = {
+            "asset_class": "DIVIDEND_STOCK",
+            "version": 1,
+            "weight_yield": 40,
+            "weight_durability": 40,
+            "weight_technical": 20,
+            "yield_sub_weights": {},
+            "durability_sub_weights": {},
+            "technical_sub_weights": {},
+        }
+
+    def _make_outcome(self, income_label="NEUTRAL", dur_label="NEUTRAL", tech_label="NEUTRAL",
+                      vy=32.0, fd=32.0, te=16.0):
+        e = MagicMock(spec=ShadowPortfolioEntry)
+        e.income_outcome_label = income_label
+        e.durability_outcome_label = dur_label
+        e.technical_outcome_label = tech_label
+        e.valuation_yield_score = vy
+        e.financial_durability_score = fd
+        e.technical_entry_score = te
+        return e
+
+    def test_income_pillar_increases_when_yield_scores_predict_correct(self):
+        """High yield scores on CORRECT income outcomes → positive signal → increase weight_yield."""
+        outcomes = (
+            [self._make_outcome(income_label="CORRECT", vy=38.0)] * 8 +
+            [self._make_outcome(income_label="INCORRECT", vy=18.0)] * 5
+        )
+        proposed, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="income_durability")
+        assert skip is None
+        assert proposed["weight_yield"] > self.profile["weight_yield"]
+
+    def test_technical_pillar_decreases_when_technical_scores_predict_incorrectly(self):
+        """High technical scores on INCORRECT tech outcomes → negative signal → decrease weight."""
+        outcomes = (
+            [self._make_outcome(tech_label="CORRECT", te=8.0)] * 5 +
+            [self._make_outcome(tech_label="INCORRECT", te=18.0)] * 8
+        )
+        proposed, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="technical")
+        assert skip is None
+        assert proposed["weight_technical"] < self.profile["weight_technical"]
+
+    def test_skips_insufficient_pillar_samples(self):
+        """Fewer than MIN_SAMPLES per pillar → SKIPPED."""
+        outcomes = [self._make_outcome(income_label="CORRECT")] * 3  # < 10
+        _, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="income_durability")
+        assert skip is not None
+        assert SKIP_INSUFFICIENT in skip
+
+    def test_all_pillar_uses_all_labels(self):
+        """pillar='all' computes signal from all three label columns."""
+        outcomes = (
+            [self._make_outcome(income_label="CORRECT", vy=38.0, dur_label="CORRECT", fd=36.0, tech_label="CORRECT", te=18.0)] * 10 +
+            [self._make_outcome(income_label="INCORRECT", vy=18.0, dur_label="INCORRECT", fd=16.0, tech_label="INCORRECT", te=6.0)] * 10
+        )
+        proposed, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="all")
+        assert skip is None
+        assert proposed is not None
+
+    def test_no_signal_returns_skip(self):
+        """Balanced CORRECT/INCORRECT with equal scores → no signal → SKIP."""
+        outcomes = (
+            [self._make_outcome(income_label="CORRECT", vy=32.0)] * 10 +
+            [self._make_outcome(income_label="INCORRECT", vy=32.0)] * 10
+        )
+        _, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="income_durability")
+        assert skip == SKIP_NO_SIGNAL
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 6: Threshold trigger
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestThresholdTrigger:
+    def setup_method(self):
+        self.db = MagicMock()
+
+    def _make_outcome(self, income_label="NEUTRAL", tech_label="NEUTRAL"):
+        e = MagicMock(spec=ShadowPortfolioEntry)
+        e.income_outcome_label = income_label
+        e.technical_outcome_label = tech_label
+        return e
+
+    def test_triggers_when_incorrect_rate_exceeds_threshold(self):
+        from app.scoring.weight_tuner import should_trigger_early_review
+        # 15 INCORRECT out of 20 = 75% > 60%
+        outcomes = [self._make_outcome(income_label="INCORRECT")] * 15 + [self._make_outcome(income_label="CORRECT")] * 5
+        result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=60)
+        assert result is True
+
+    def test_does_not_trigger_when_rate_below_threshold(self):
+        from app.scoring.weight_tuner import should_trigger_early_review
+        # 10 INCORRECT out of 20 = 50% < 60%
+        outcomes = [self._make_outcome(income_label="INCORRECT")] * 10 + [self._make_outcome(income_label="CORRECT")] * 10
+        result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=60)
+        assert result is False
+
+    def test_does_not_trigger_below_min_outcomes(self):
+        from app.scoring.weight_tuner import should_trigger_early_review
+        # only 12 outcomes < 20 minimum
+        outcomes = [self._make_outcome(income_label="INCORRECT")] * 12
+        result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=60)
+        assert result is False
+
+    def test_does_not_trigger_within_gap_period(self):
+        from app.scoring.weight_tuner import should_trigger_early_review
+        # 15/20 incorrect (would trigger) but last review was 15 days ago (< 30 day gap)
+        outcomes = [self._make_outcome(income_label="INCORRECT")] * 15 + [self._make_outcome(income_label="CORRECT")] * 5
+        result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=15)
+        assert result is False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 7: Learning Loop API v3 endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_token():
+    import jwt as pyjwt
+    secret = os.environ.get("JWT_SECRET", "test-secret-for-tests")
+    return pyjwt.encode({"sub": "test", "exp": 9999999999}, secret, algorithm="HS256")
+
+
+class TestLearningLoopAPIV3:
+    def setup_method(self):
+        from app.main import app
+        from fastapi.testclient import TestClient
+        self.client = TestClient(app)
+        self.headers = {"Authorization": "Bearer " + _make_token()}
+
+    def test_populate_technical_outcomes_returns_200(self):
+        with patch("app.api.learning_loop.shadow_portfolio_manager") as mock_mgr, \
+             patch("app.api.learning_loop.should_trigger_early_review", return_value=False):
+            mock_mgr.populate_technical_outcomes.return_value = {
+                "updated": 3, "total_pending": 3
+            }
+            resp = self.client.post(
+                "/learning-loop/populate-technical-outcomes",
+                json={"exit_prices": {"STWD": 25.0}, "benchmark_exit_prices": {"REM": 22.0}},
+                headers=self.headers,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["updated"] == 3
+
+    def test_populate_income_durability_returns_200(self):
+        with patch("app.api.learning_loop.shadow_portfolio_manager") as mock_mgr, \
+             patch("app.api.learning_loop.should_trigger_early_review", return_value=False):
+            mock_mgr.populate_income_durability_outcomes.return_value = {
+                "income": {"updated": 2, "skipped": 0, "total_pending": 2},
+                "durability": {"updated": 2, "skipped_awaiting_income": 0, "total_pending": 2},
+            }
+            resp = self.client.post(
+                "/learning-loop/populate-income-durability-outcomes",
+                json={"ttm_dividends": {"STWD": 1.85}, "current_durability_scores": {"STWD": 30.0}},
+                headers=self.headers,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["income"]["updated"] == 2
+
+    def test_old_populate_outcomes_returns_410(self):
+        resp = self.client.post(
+            "/learning-loop/populate-outcomes",
+            json={"exit_prices": {}},
+            headers=self.headers,
+        )
+        assert resp.status_code == 410
+
+    def test_review_accepts_pillar_param(self):
+        with patch("app.api.learning_loop.shadow_portfolio_manager") as mock_mgr, \
+             patch("app.api.learning_loop.quarterly_weight_tuner") as mock_tuner:
+            mock_mgr.get_completed_outcomes.return_value = []
+            review_mock = MagicMock()
+            review_mock.id = uuid.uuid4()
+            review_mock.asset_class = "DIVIDEND_STOCK"
+            review_mock.triggered_at = datetime.now(timezone.utc)
+            review_mock.triggered_by = "test"
+            review_mock.status = "SKIPPED"
+            review_mock.outcomes_analyzed = 0
+            review_mock.correct_count = 0
+            review_mock.incorrect_count = 0
+            review_mock.neutral_count = 0
+            review_mock.weight_yield_before = None
+            review_mock.weight_durability_before = None
+            review_mock.weight_technical_before = None
+            review_mock.weight_yield_after = None
+            review_mock.weight_durability_after = None
+            review_mock.weight_technical_after = None
+            review_mock.delta_yield = None
+            review_mock.delta_durability = None
+            review_mock.delta_technical = None
+            review_mock.skip_reason = "insufficient_samples:0"
+            review_mock.completed_at = None
+            review_mock.pillar_reviewed = "technical"
+            mock_tuner.apply_review.return_value = review_mock
+            resp = self.client.post(
+                "/learning-loop/review/DIVIDEND_STOCK",
+                json={"triggered_by": "test", "pillar": "technical"},
+                headers=self.headers,
+            )
+        assert resp.status_code == 201
+        assert resp.json()["pillar_reviewed"] == "technical"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 8: Weights API — benchmark_ticker
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestWeightsBenchmarkTicker:
+    def setup_method(self):
+        from app.main import app
+        from app.database import get_db
+        from app.auth import verify_token
+        from fastapi.testclient import TestClient
+
+        self._mock_db = MagicMock()
+        app.dependency_overrides[get_db] = lambda: self._mock_db
+        app.dependency_overrides[verify_token] = lambda: {"sub": "test-user"}
+        self.client = TestClient(app, raise_server_exceptions=False)
+        self.headers = {"Authorization": "Bearer " + _make_token()}
+
+    def teardown_method(self):
+        from app.main import app
+        from app.database import get_db
+        from app.auth import verify_token
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(verify_token, None)
+
+    def test_get_profile_includes_benchmark_ticker(self):
+        mock_profile = MagicMock(spec=ScoringWeightProfile)
+        mock_profile.id = uuid.uuid4()
+        mock_profile.asset_class = "DIVIDEND_STOCK"
+        mock_profile.version = 1
+        mock_profile.is_active = True
+        mock_profile.weight_yield = 40
+        mock_profile.weight_durability = 40
+        mock_profile.weight_technical = 20
+        mock_profile.yield_sub_weights = {}
+        mock_profile.durability_sub_weights = {}
+        mock_profile.technical_sub_weights = {}
+        mock_profile.benchmark_ticker = "DVY"
+        mock_profile.source = "MANUAL"
+        mock_profile.change_reason = None
+        mock_profile.created_by = None
+        mock_profile.created_at = datetime.now(timezone.utc)
+        mock_profile.activated_at = None
+        mock_profile.superseded_at = None
+        mock_profile.superseded_by_id = None
+
+        self._mock_db.query.return_value.filter.return_value.first.return_value = mock_profile
+
+        resp = self.client.get("/weights/DIVIDEND_STOCK", headers=self.headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["benchmark_ticker"] == "DVY"

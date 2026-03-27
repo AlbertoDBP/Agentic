@@ -265,6 +265,7 @@ class ScoringWeightProfile(Base):
     # Provenance
     source = Column(String(30), nullable=False, default="MANUAL")
     # MANUAL | LEARNING_LOOP | INITIAL_SEED
+    benchmark_ticker = Column(String(20), nullable=True)
     change_reason = Column(Text, nullable=True)
     created_by = Column(String(100), nullable=True)
 
@@ -456,6 +457,36 @@ class ShadowPortfolioEntry(Base):
     entry_date = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     hold_period_days = Column(Integer, nullable=False, default=90)
 
+    # ── v3.0: per-pillar entry-time capture ───────────────────────────────
+    benchmark_ticker          = Column(String(20),  nullable=True)
+    benchmark_entry_price     = Column(Float,        nullable=True)
+    durability_score_at_entry = Column(Float,        nullable=True)
+    income_ttm_at_entry       = Column(Float,        nullable=True)
+    # hold_period_days set to 365 for new entries (longest pillar hold)
+
+    # ── v3.0: Technical outcome (T+60) ───────────────────────────────────
+    technical_exit_price            = Column(Float,       nullable=True)
+    benchmark_exit_price            = Column(Float,       nullable=True)
+    technical_return_pct            = Column(Float,       nullable=True)
+    technical_benchmark_return_pct  = Column(Float,       nullable=True)
+    technical_alpha_pct             = Column(Float,       nullable=True)
+    technical_outcome_label         = Column(String(20),  nullable=True)
+    # PENDING | CORRECT | INCORRECT | NEUTRAL
+    technical_outcome_at            = Column(DateTime,    nullable=True)
+
+    # ── v3.0: Income outcome (T+365) ─────────────────────────────────────
+    income_ttm_at_exit    = Column(Float,       nullable=True)
+    income_change_pct     = Column(Float,       nullable=True)
+    income_outcome_label  = Column(String(20),  nullable=True)
+    # PENDING | CORRECT | INCORRECT | NEUTRAL
+    income_outcome_at     = Column(DateTime,    nullable=True)
+
+    # ── v3.0: Durability outcome (T+365, derived from Income) ────────────
+    durability_score_at_exit  = Column(Float,       nullable=True)
+    durability_outcome_label  = Column(String(20),  nullable=True)
+    # PENDING | CORRECT | INCORRECT | NEUTRAL
+    durability_outcome_at     = Column(DateTime,    nullable=True)
+
     # Outcome (populated after hold period)
     exit_price = Column(Float, nullable=True)
     exit_date = Column(DateTime, nullable=True)
@@ -494,6 +525,8 @@ class WeightReviewRun(Base):
 
     triggered_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     triggered_by = Column(String(100), nullable=True)
+    pillar_reviewed = Column(String(30), nullable=True)
+    # "technical" | "income_durability" | "all"
 
     status = Column(String(20), nullable=False, default="RUNNING")
     # RUNNING | COMPLETE | SKIPPED | FAILED

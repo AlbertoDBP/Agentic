@@ -57,12 +57,17 @@ MAX_DELTA_PER_REVIEW: int = 5  # max pts change per pillar per review cycle
 MIN_PILLAR_WEIGHT: int = 5     # floor for any single pillar
 MAX_PILLAR_WEIGHT: int = 90    # ceiling for any single pillar
 
+THRESHOLD_INCORRECT_RATE: float = 0.60
+THRESHOLD_MIN_OUTCOMES: int = 20
+MIN_REVIEW_GAP_DAYS: int = 30
+
 
 # ── Skip reasons (returned as string tokens) ──────────────────────────────────
 
-SKIP_INSUFFICIENT = "insufficient_samples"
-SKIP_NO_SIGNAL    = "no_signal"
-SKIP_NO_PROFILE   = "no_active_profile"
+SKIP_INSUFFICIENT    = "insufficient_samples"
+SKIP_NO_SIGNAL       = "no_signal"
+SKIP_NO_PROFILE      = "no_active_profile"
+SKIP_NO_PILLAR_DATA  = "no_pillar_data"
 
 
 def _mean(values: list[float]) -> float:
@@ -100,50 +105,76 @@ class QuarterlyWeightTuner:
         self,
         outcomes: list[ShadowPortfolioEntry],
         current_profile: dict,
+        pillar: str = "all",
     ) -> tuple[Optional[dict], Optional[str]]:
         """
-        Compute proposed pillar weight adjustments from completed outcomes.
+        Compute pillar weight adjustments using per-pillar outcome labels.
 
-        Args:
-            outcomes:        List of ShadowPortfolioEntry with outcome_label
-                             in (CORRECT, INCORRECT, NEUTRAL).
-            current_profile: Profile dict from WeightProfileLoader.
-
-        Returns:
-            (proposed_profile_dict, None)  if an adjustment is warranted.
-            (None, skip_reason_str)        if no adjustment should be made.
+        pillar: "technical" | "income_durability" | "all"
         """
-        correct   = [o for o in outcomes if o.outcome_label == "CORRECT"]
-        incorrect = [o for o in outcomes if o.outcome_label == "INCORRECT"]
-        usable    = len(correct) + len(incorrect)
-
-        if usable < MIN_SAMPLES:
-            return None, f"{SKIP_INSUFFICIENT}:{usable}"
-
         wy = float(current_profile["weight_yield"])
         wd = float(current_profile["weight_durability"])
         wt = float(current_profile["weight_technical"])
 
-        def _fracs(entries: list) -> tuple[float, float, float]:
-            if not entries:
-                return 0.5, 0.5, 0.5
-            yf = [e.valuation_yield_score / wy      if wy > 0 else 0.5 for e in entries]
-            df = [e.financial_durability_score / wd  if wd > 0 else 0.5 for e in entries]
-            tf = [e.technical_entry_score / wt       if wt > 0 else 0.5 for e in entries]
-            return _mean(yf), _mean(df), _mean(tf)
+        def _signal(correct_entries, incorrect_entries, score_fn, weight):
+            if len(correct_entries) + len(incorrect_entries) < MIN_SAMPLES:
+                return None, f"{SKIP_INSUFFICIENT}:{len(correct_entries) + len(incorrect_entries)}"
+            cy = _mean([score_fn(e) / weight for e in correct_entries] if correct_entries else [0.5])
+            iy = _mean([score_fn(e) / weight for e in incorrect_entries] if incorrect_entries else [0.5])
+            return cy - iy, None
 
-        cy, cd, ct = _fracs(correct)
-        iy, id_, it = _fracs(incorrect)
+        dy = dd = dt = 0
+        skip_reasons = []
+        all_skipped_insufficient = True  # track if every evaluated pillar was skipped
 
-        # Signal: positive → pillar predicts CORRECT, increase weight
-        sy = cy - iy
-        sd = cd - id_
-        st = ct - it
+        if pillar in ("income_durability", "all"):
+            y_correct   = [o for o in outcomes if o.income_outcome_label == "CORRECT"]
+            y_incorrect = [o for o in outcomes if o.income_outcome_label == "INCORRECT"]
+            sy, skip = _signal(y_correct, y_incorrect, lambda e: e.valuation_yield_score, wy)
+            if skip:
+                skip_reasons.append(f"income:{skip}")
+                sy = 0.0
+            else:
+                all_skipped_insufficient = False
 
-        scale = MAX_DELTA_PER_REVIEW
-        dy = int(max(-scale, min(scale, round(sy * scale * 2))))
-        dd = int(max(-scale, min(scale, round(sd * scale * 2))))
-        dt = int(max(-scale, min(scale, round(st * scale * 2))))
+            d_correct   = [o for o in outcomes if o.durability_outcome_label == "CORRECT"]
+            d_incorrect = [o for o in outcomes if o.durability_outcome_label == "INCORRECT"]
+            sd, skip = _signal(d_correct, d_incorrect, lambda e: e.financial_durability_score, wd)
+            if skip:
+                skip_reasons.append(f"durability:{skip}")
+                sd = 0.0
+            else:
+                all_skipped_insufficient = False
+
+            scale = MAX_DELTA_PER_REVIEW
+            dy = int(max(-scale, min(scale, round((sy or 0) * scale * 2))))
+            dd = int(max(-scale, min(scale, round((sd or 0) * scale * 2))))
+
+            # When only income_durability pillar is evaluated, use technical as slack
+            if pillar == "income_durability":
+                dt = -(dy + dd)
+                dt = int(max(-scale, min(scale, dt)))
+
+        if pillar in ("technical", "all"):
+            t_correct   = [o for o in outcomes if o.technical_outcome_label == "CORRECT"]
+            t_incorrect = [o for o in outcomes if o.technical_outcome_label == "INCORRECT"]
+            st, skip = _signal(t_correct, t_incorrect, lambda e: e.technical_entry_score, wt)
+            if skip:
+                skip_reasons.append(f"technical:{skip}")
+                st = 0.0
+            else:
+                all_skipped_insufficient = False
+            scale = MAX_DELTA_PER_REVIEW
+            if pillar == "technical":
+                dt = int(max(-scale, min(scale, round((st or 0) * scale * 2))))
+                # Use yield as slack when only technical pillar is evaluated
+                dy = -dt
+                dy = int(max(-scale, min(scale, dy)))
+            else:
+                dt = int(max(-scale, min(scale, round((st or 0) * scale * 2))))
+
+        if skip_reasons and all_skipped_insufficient:
+            return None, skip_reasons[0].split(":", 1)[1] if ":" in skip_reasons[0] else SKIP_INSUFFICIENT
 
         if dy == 0 and dd == 0 and dt == 0:
             return None, SKIP_NO_SIGNAL
@@ -154,9 +185,9 @@ class QuarterlyWeightTuner:
         new_wy, new_wd, new_wt = _normalize_to_100(new_wy, new_wd, new_wt)
 
         proposed = dict(current_profile)
-        proposed["weight_yield"]       = new_wy
-        proposed["weight_durability"]  = new_wd
-        proposed["weight_technical"]   = new_wt
+        proposed["weight_yield"]      = new_wy
+        proposed["weight_durability"] = new_wd
+        proposed["weight_technical"]  = new_wt
         return proposed, None
 
     def apply_review(
@@ -164,7 +195,9 @@ class QuarterlyWeightTuner:
         db: Session,
         asset_class: str,
         outcomes: list[ShadowPortfolioEntry],
+        *,
         triggered_by: Optional[str] = None,
+        pillar: str = "all",
     ) -> WeightReviewRun:
         """
         Run a full quarterly review for one asset class.
@@ -185,12 +218,30 @@ class QuarterlyWeightTuner:
             triggered_by=triggered_by,
             status="RUNNING",
             outcomes_analyzed=len(outcomes),
-            correct_count=sum(1 for o in outcomes if o.outcome_label == "CORRECT"),
-            incorrect_count=sum(1 for o in outcomes if o.outcome_label == "INCORRECT"),
-            neutral_count=sum(1 for o in outcomes if o.outcome_label == "NEUTRAL"),
         )
+        review.pillar_reviewed = pillar
         db.add(review)
         db.flush()  # get review.id
+
+        # Compute aggregate counts from the active pillar's outcome labels
+        if pillar == "technical":
+            review.correct_count   = sum(1 for o in outcomes if o.technical_outcome_label == "CORRECT")
+            review.incorrect_count = sum(1 for o in outcomes if o.technical_outcome_label == "INCORRECT")
+            review.neutral_count   = sum(1 for o in outcomes if o.technical_outcome_label == "NEUTRAL")
+        elif pillar == "income_durability":
+            review.correct_count   = sum(1 for o in outcomes if o.income_outcome_label == "CORRECT") + sum(1 for o in outcomes if o.durability_outcome_label == "CORRECT")
+            review.incorrect_count = sum(1 for o in outcomes if o.income_outcome_label == "INCORRECT") + sum(1 for o in outcomes if o.durability_outcome_label == "INCORRECT")
+            review.neutral_count   = sum(1 for o in outcomes if o.income_outcome_label == "NEUTRAL") + sum(1 for o in outcomes if o.durability_outcome_label == "NEUTRAL")
+        else:  # "all" — sum counts across all three pillars; one entry can contribute up to 3 counts
+            review.correct_count   = (sum(1 for o in outcomes if o.income_outcome_label == "CORRECT") +
+                                      sum(1 for o in outcomes if o.durability_outcome_label == "CORRECT") +
+                                      sum(1 for o in outcomes if o.technical_outcome_label == "CORRECT"))
+            review.incorrect_count = (sum(1 for o in outcomes if o.income_outcome_label == "INCORRECT") +
+                                      sum(1 for o in outcomes if o.durability_outcome_label == "INCORRECT") +
+                                      sum(1 for o in outcomes if o.technical_outcome_label == "INCORRECT"))
+            review.neutral_count   = (sum(1 for o in outcomes if o.income_outcome_label == "NEUTRAL") +
+                                      sum(1 for o in outcomes if o.durability_outcome_label == "NEUTRAL") +
+                                      sum(1 for o in outcomes if o.technical_outcome_label == "NEUTRAL"))
 
         # Load current active profile from DB (not cache — need live values)
         current_orm = (
@@ -225,7 +276,7 @@ class QuarterlyWeightTuner:
             "technical_sub_weights": current_orm.technical_sub_weights,
         }
 
-        proposed, skip_reason = self.compute_adjustment(outcomes, current_profile)
+        proposed, skip_reason = self.compute_adjustment(outcomes, current_profile, pillar=pillar)
 
         if skip_reason is not None:
             review.status = "SKIPPED"
@@ -322,6 +373,36 @@ class QuarterlyWeightTuner:
             logger.error("Weight review FAILED for %s: %s", ac, exc)
 
         return review
+
+
+def should_trigger_early_review(
+    outcomes: list[ShadowPortfolioEntry],
+    pillar: str,
+    last_review_days_ago: Optional[int] = None,
+) -> bool:
+    """
+    Return True if an early weight review should be triggered.
+
+    outcomes: list of ShadowPortfolioEntry with per-pillar labels populated
+    pillar: "technical" | "income_durability"
+    last_review_days_ago: days since last review for this asset_class+pillar (None = never reviewed)
+    """
+    # Enforce gap
+    if last_review_days_ago is not None and last_review_days_ago < MIN_REVIEW_GAP_DAYS:
+        return False
+
+    if pillar == "technical":
+        correct   = sum(1 for o in outcomes if o.technical_outcome_label == "CORRECT")
+        incorrect = sum(1 for o in outcomes if o.technical_outcome_label == "INCORRECT")
+    else:  # income_durability
+        correct   = sum(1 for o in outcomes if o.income_outcome_label == "CORRECT")
+        incorrect = sum(1 for o in outcomes if o.income_outcome_label == "INCORRECT")
+
+    total = correct + incorrect
+    if total < THRESHOLD_MIN_OUTCOMES:
+        return False
+
+    return incorrect / total > THRESHOLD_INCORRECT_RATE
 
 
 # Module-level singleton

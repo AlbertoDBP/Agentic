@@ -20,6 +20,17 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
+BENCHMARK_DEFAULTS: dict[str, str] = {
+    "EQUITY_REIT":      "VNQ",
+    "MORTGAGE_REIT":    "REM",
+    "BDC":              "BIZD",
+    "COVERED_CALL_ETF": "JEPI",
+    "DIVIDEND_STOCK":   "DVY",
+    "BOND":             "AGG",
+    "PREFERRED_STOCK":  "PFF",
+}
+
+
 def run_migration(drop_first: bool = False):
     from app.database import engine, check_database_connection
 
@@ -311,6 +322,50 @@ def run_migration(drop_first: bool = False):
                ADD COLUMN IF NOT EXISTS signal_penalty_details JSONB""",
         ]:
             conn.execute(text(col_sql))
+        # ── v3.0: per-pillar learning loop columns ─────────────────────
+        conn.execute(text("""
+            ALTER TABLE platform_shared.shadow_portfolio_entries
+                ADD COLUMN IF NOT EXISTS benchmark_ticker          VARCHAR(20),
+                ADD COLUMN IF NOT EXISTS benchmark_entry_price     FLOAT,
+                ADD COLUMN IF NOT EXISTS durability_score_at_entry FLOAT,
+                ADD COLUMN IF NOT EXISTS income_ttm_at_entry       FLOAT,
+                ADD COLUMN IF NOT EXISTS technical_exit_price           FLOAT,
+                ADD COLUMN IF NOT EXISTS benchmark_exit_price           FLOAT,
+                ADD COLUMN IF NOT EXISTS technical_return_pct           FLOAT,
+                ADD COLUMN IF NOT EXISTS technical_benchmark_return_pct FLOAT,
+                ADD COLUMN IF NOT EXISTS technical_alpha_pct            FLOAT,
+                ADD COLUMN IF NOT EXISTS technical_outcome_label        VARCHAR(20),
+                ADD COLUMN IF NOT EXISTS technical_outcome_at           TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS income_ttm_at_exit    FLOAT,
+                ADD COLUMN IF NOT EXISTS income_change_pct     FLOAT,
+                ADD COLUMN IF NOT EXISTS income_outcome_label  VARCHAR(20),
+                ADD COLUMN IF NOT EXISTS income_outcome_at     TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS durability_score_at_exit  FLOAT,
+                ADD COLUMN IF NOT EXISTS durability_outcome_label  VARCHAR(20),
+                ADD COLUMN IF NOT EXISTS durability_outcome_at     TIMESTAMPTZ
+        """))
+
+        conn.execute(text("""
+            ALTER TABLE platform_shared.scoring_weight_profiles
+                ADD COLUMN IF NOT EXISTS benchmark_ticker VARCHAR(20)
+        """))
+
+        conn.execute(text("""
+            ALTER TABLE platform_shared.weight_review_runs
+                ADD COLUMN IF NOT EXISTS pillar_reviewed VARCHAR(30)
+        """))
+
+        # Seed benchmark tickers into active profiles that don't have one yet
+        for asset_class, ticker in BENCHMARK_DEFAULTS.items():
+            conn.execute(text("""
+                UPDATE platform_shared.scoring_weight_profiles
+                   SET benchmark_ticker = :ticker
+                 WHERE asset_class = :ac
+                   AND is_active = true
+                   AND benchmark_ticker IS NULL
+            """), {"ticker": ticker, "ac": asset_class})
+        logger.info("v3.0 migration complete: per-pillar columns + benchmark tickers seeded")
+
         conn.commit()
 
     logger.info("Creating indexes...")
