@@ -38,6 +38,10 @@ CORRECT_THRESHOLD: float = 5.0    # % return → CORRECT
 INCORRECT_THRESHOLD: float = -5.0  # % return → INCORRECT
 MIN_ENTRY_SCORE: float = 70.0     # only ACCUMULATE+ (score ≥ 70) recorded
 
+INCOME_CORRECT_CHANGE_PCT: float = 2.0
+INCOME_INCORRECT_CHANGE_PCT: float = -5.0
+DURABILITY_CONFIDENCE_RATIO: float = 0.60
+
 
 class ShadowPortfolioManager:
     """Records scoring outcomes and computes prediction labels."""
@@ -192,6 +196,115 @@ class ShadowPortfolioManager:
 
         logger.info("Technical outcomes: %d updated, %d pending total", updated, len(pending))
         return {"updated": updated, "total_pending": len(pending)}
+
+    def populate_income_durability_outcomes(
+        self,
+        db: Session,
+        ttm_dividends: dict[str, float],
+        current_durability_scores: dict[str, float],
+        *,
+        as_of: Optional[datetime] = None,
+        weight_durability: float = 40.0,
+    ) -> dict:
+        """
+        Populate income_outcome_label and durability_outcome_label for entries past T+365.
+
+        Income is computed first; Durability is derived from the income outcome.
+        ttm_dividends: {ticker: ttm_sum_at_exit}
+        current_durability_scores: {ticker: financial_durability_score_now}
+        weight_durability: active weight for this asset class (used for confidence threshold)
+        """
+        now = as_of or datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=INCOME_DURABILITY_HOLD_DAYS)
+
+        pending = (
+            db.query(ShadowPortfolioEntry)
+            .filter(ShadowPortfolioEntry.income_outcome_label == "PENDING")
+            .filter(ShadowPortfolioEntry.entry_date <= cutoff)
+            .all()
+        )
+
+        income_updated = income_skipped = 0
+        dur_updated = dur_skipped_awaiting = 0
+
+        confidence_threshold = DURABILITY_CONFIDENCE_RATIO * weight_durability
+
+        for entry in pending:
+            # ── Income ────────────────────────────────────────────────────────
+            ttm_at_exit = ttm_dividends.get(entry.ticker)
+            if ttm_at_exit is None:
+                income_skipped += 1
+                continue
+
+            ttm_at_entry = entry.income_ttm_at_entry
+
+            # Guard 1: entry TTM null or zero → NEUTRAL (no formula possible)
+            if not ttm_at_entry or ttm_at_entry <= 0:
+                entry.income_outcome_label = "NEUTRAL"
+                entry.income_ttm_at_exit = ttm_at_exit
+                entry.income_outcome_at = now
+                income_updated += 1
+            # Guard 2: exit TTM zero → suspended → INCORRECT
+            elif ttm_at_exit == 0.0:
+                entry.income_outcome_label = "INCORRECT"
+                entry.income_ttm_at_exit = ttm_at_exit
+                entry.income_change_pct = -100.0
+                entry.income_outcome_at = now
+                income_updated += 1
+            else:
+                change_pct = (ttm_at_exit - ttm_at_entry) / ttm_at_entry * 100.0
+                entry.income_ttm_at_exit = ttm_at_exit
+                entry.income_change_pct = round(change_pct, 4)
+                entry.income_outcome_at = now
+                if change_pct >= INCOME_CORRECT_CHANGE_PCT:
+                    entry.income_outcome_label = "CORRECT"
+                elif change_pct <= INCOME_INCORRECT_CHANGE_PCT:
+                    entry.income_outcome_label = "INCORRECT"
+                else:
+                    entry.income_outcome_label = "NEUTRAL"
+                income_updated += 1
+
+            # ── Durability (derived from income outcome) ───────────────────
+            if entry.income_outcome_label == "PENDING":
+                dur_skipped_awaiting += 1
+                continue
+
+            dur_score_at_exit = current_durability_scores.get(entry.ticker)
+            if dur_score_at_exit is not None:
+                entry.durability_score_at_exit = dur_score_at_exit
+
+            dur_entry = entry.durability_score_at_entry or 0.0
+            high_confidence = dur_entry >= confidence_threshold
+            income_label = entry.income_outcome_label
+
+            if income_label == "NEUTRAL":
+                entry.durability_outcome_label = "NEUTRAL"
+            elif high_confidence and income_label == "CORRECT":
+                entry.durability_outcome_label = "CORRECT"
+            elif high_confidence and income_label == "INCORRECT":
+                entry.durability_outcome_label = "INCORRECT"
+            else:
+                # low confidence regardless of income outcome
+                entry.durability_outcome_label = "NEUTRAL"
+
+            entry.durability_outcome_at = now
+            dur_updated += 1
+
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.error("populate_income_durability_outcomes commit failed: %s", exc)
+            raise
+
+        logger.info(
+            "Income/Durability outcomes: income=%d updated, %d skipped; dur=%d updated, %d skipped",
+            income_updated, income_skipped, dur_updated, dur_skipped_awaiting,
+        )
+        return {
+            "income": {"updated": income_updated, "skipped": income_skipped, "total_pending": len(pending)},
+            "durability": {"updated": dur_updated, "skipped_awaiting_income": dur_skipped_awaiting, "total_pending": len(pending)},
+        }
 
     def populate_outcomes_legacy(
         self,

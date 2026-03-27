@@ -1332,3 +1332,132 @@ class TestPopulateTechnicalOutcomes:
             self.db, exit_prices={"STWD": 27.0}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
         )
         assert result["updated"] == 0
+
+
+class TestPopulateIncomeDurabilityOutcomes:
+    def setup_method(self):
+        self.mgr = ShadowPortfolioManager()
+        self.db = MagicMock()
+        self.now = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+    def _make_pending_income(self, ticker="STWD", ttm_at_entry=1.80, dur_score=28.0, entry_days_ago=370):
+        e = MagicMock(spec=ShadowPortfolioEntry)
+        e.ticker = ticker
+        e.income_ttm_at_entry = ttm_at_entry
+        e.durability_score_at_entry = dur_score
+        e.income_outcome_label = "PENDING"
+        e.durability_outcome_label = "PENDING"
+        e.entry_date = self.now - timedelta(days=entry_days_ago)
+        return e
+
+    def _query_returns(self, entries):
+        self.db.query.return_value.filter.return_value.filter.return_value.all.return_value = entries
+
+    # ── Income tests ──────────────────────────────────────────────────────────
+
+    def test_income_correct_growth(self):
+        e = self._make_pending_income(ttm_at_entry=1.80)
+        self._query_returns([e])
+        # TTM grew by +3% → CORRECT
+        result = self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.854}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "CORRECT"
+        assert result["income"]["updated"] == 1
+
+    def test_income_incorrect_cut(self):
+        e = self._make_pending_income(ttm_at_entry=1.80)
+        self._query_returns([e])
+        # TTM cut by -6% → INCORRECT
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.692}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "INCORRECT"
+
+    def test_income_neutral_flat(self):
+        e = self._make_pending_income(ttm_at_entry=1.80)
+        self._query_returns([e])
+        # TTM unchanged (0%) → NEUTRAL (between -5% and +2%)
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.80}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "NEUTRAL"
+
+    def test_income_suspended_forced_incorrect(self):
+        e = self._make_pending_income(ttm_at_entry=1.80)
+        self._query_returns([e])
+        # TTM at exit = 0 → forced INCORRECT (suspension)
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 0.0}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "INCORRECT"
+
+    def test_income_null_entry_ttm_sets_neutral(self):
+        e = self._make_pending_income(ttm_at_entry=None)
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.80}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "NEUTRAL"
+
+    def test_income_zero_entry_ttm_sets_neutral(self):
+        e = self._make_pending_income(ttm_at_entry=0.0)
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db, ttm_dividends={"STWD": 1.80}, current_durability_scores={}, as_of=self.now
+        )
+        assert e.income_outcome_label == "NEUTRAL"
+
+    # ── Durability tests ──────────────────────────────────────────────────────
+
+    def test_durability_correct_high_confidence_income_correct(self):
+        # weight_durability=40 → threshold=24; dur_score_at_entry=30 (HIGH)
+        e = self._make_pending_income(ttm_at_entry=1.80, dur_score=30.0)
+        self._query_returns([e])
+        # Force income CORRECT first
+        self.mgr.populate_income_durability_outcomes(
+            self.db,
+            ttm_dividends={"STWD": 1.854},  # +3% → CORRECT
+            current_durability_scores={"STWD": 32.0},
+            as_of=self.now,
+            weight_durability=40.0,
+        )
+        assert e.durability_outcome_label == "CORRECT"
+
+    def test_durability_incorrect_high_confidence_income_incorrect(self):
+        e = self._make_pending_income(ttm_at_entry=1.80, dur_score=30.0)
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db,
+            ttm_dividends={"STWD": 1.692},  # -6% → INCORRECT
+            current_durability_scores={"STWD": 28.0},
+            as_of=self.now,
+            weight_durability=40.0,
+        )
+        assert e.durability_outcome_label == "INCORRECT"
+
+    def test_durability_neutral_low_confidence_income_incorrect(self):
+        # dur_score_at_entry=15 < threshold=24 (LOW confidence) → NEUTRAL even with cut
+        e = self._make_pending_income(ttm_at_entry=1.80, dur_score=15.0)
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db,
+            ttm_dividends={"STWD": 1.692},  # cut → income INCORRECT
+            current_durability_scores={"STWD": 12.0},
+            as_of=self.now,
+            weight_durability=40.0,
+        )
+        assert e.durability_outcome_label == "NEUTRAL"
+
+    def test_durability_skipped_when_income_still_pending(self):
+        e = self._make_pending_income(ttm_at_entry=1.80, dur_score=30.0)
+        # income not in ttm_dividends dict → stays PENDING
+        e.income_outcome_label = "PENDING"  # won't be updated
+        self._query_returns([e])
+        self.mgr.populate_income_durability_outcomes(
+            self.db,
+            ttm_dividends={},  # no data → income stays PENDING
+            current_durability_scores={"STWD": 32.0},
+            as_of=self.now,
+        )
+        assert e.durability_outcome_label == "PENDING"
