@@ -15,16 +15,18 @@ interface Analyst {
 
 const ASSET_CLASSES = ["BDC", "mREIT", "REIT", "Preferred", "Stock", "CEF", "Bond"];
 
-const GRADE_COLORS: Record<string, string> = {
-  A: "bg-emerald-800 text-emerald-100 border-emerald-600",
-  B: "bg-emerald-900 text-emerald-300 border-emerald-700",
-  C: "bg-yellow-800 text-yellow-100 border-yellow-600",
-  D: "bg-stone-700 text-stone-200 border-stone-500",
-  F: "bg-red-900 text-red-200 border-red-700",
+// Same neutral bg for all grades, colored text — consistent with HHS badge
+const GRADE_TEXT: Record<string, string> = {
+  A: "text-emerald-400",
+  B: "text-lime-400",
+  C: "text-amber-400",
+  D: "text-orange-400",
+  F: "text-red-400",
 };
 
 // Shared column template used by both header and rows
-const COL_TEMPLATE = "20px 24px 110px 80px 50px minmax(0,1fr) 100px 72px";
+// checkbox | rank | ticker | grade+score | rec | analyst | entry | exit
+const COL_TEMPLATE = "20px 24px 100px 72px 92px minmax(0,1fr) 80px 68px";
 
 interface AnalystIdeasTabProps {
   portfolios: PortfolioListItem[];
@@ -169,7 +171,8 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
   const renderRow = (item: ScanItem, isHistoryRow = false) => {
     const ctx = item.analyst_context;
     const isBelow = !item.passed_quality_gate;
-    const gradeClass = GRADE_COLORS[item.grade] ?? GRADE_COLORS.F;
+    const gradeKey = item.grade?.[0] ?? "F";
+    const gradeTextClass = GRADE_TEXT[gradeKey] ?? GRADE_TEXT.F;
 
     return (
       <div
@@ -213,11 +216,11 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
           )}
         </div>
 
-        {/* Grade + Score — vivid badge, score prominent */}
+        {/* Grade + Score — neutral bg, colored text by grade (HHS pattern) */}
         <div>
-          <span className={cn("inline-flex items-center gap-1 rounded px-2 py-0.5 border font-semibold", gradeClass)}>
-            <span className="text-[11px]">{item.grade}</span>
-            <span className="text-xs tabular-nums">{Math.round(item.score)}</span>
+          <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 bg-zinc-900 border border-zinc-700/60 font-semibold">
+            <span className={cn("text-[11px]", gradeTextClass)}>{item.grade}</span>
+            <span className="text-xs tabular-nums text-zinc-300">{Math.round(item.score)}</span>
           </span>
         </div>
 
