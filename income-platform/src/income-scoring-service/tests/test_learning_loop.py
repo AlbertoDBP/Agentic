@@ -65,6 +65,9 @@ def _make_entry(
     outcome_label="PENDING",
     entry_date=None,
     outcome_populated_at=None,
+    income_outcome_label=None,
+    durability_outcome_label=None,
+    technical_outcome_label=None,
     **kwargs,
 ):
     e = MagicMock(spec=ShadowPortfolioEntry)
@@ -79,6 +82,10 @@ def _make_entry(
     e.financial_durability_score = financial_durability_score
     e.technical_entry_score = technical_entry_score
     e.outcome_label = outcome_label
+    # Per-pillar labels default to matching the aggregate outcome_label
+    e.income_outcome_label = income_outcome_label if income_outcome_label is not None else outcome_label
+    e.durability_outcome_label = durability_outcome_label if durability_outcome_label is not None else outcome_label
+    e.technical_outcome_label = technical_outcome_label if technical_outcome_label is not None else outcome_label
     e.entry_date = entry_date or OLD
     e.exit_price = None
     e.exit_date = None
@@ -1461,3 +1468,79 @@ class TestPopulateIncomeDurabilityOutcomes:
             as_of=self.now,
         )
         assert e.durability_outcome_label == "PENDING"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 5: Weight tuner — per-pillar signal
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPerPillarWeightTuner:
+    def setup_method(self):
+        self.tuner = QuarterlyWeightTuner()
+        self.profile = {
+            "asset_class": "DIVIDEND_STOCK",
+            "version": 1,
+            "weight_yield": 40,
+            "weight_durability": 40,
+            "weight_technical": 20,
+            "yield_sub_weights": {},
+            "durability_sub_weights": {},
+            "technical_sub_weights": {},
+        }
+
+    def _make_outcome(self, income_label="NEUTRAL", dur_label="NEUTRAL", tech_label="NEUTRAL",
+                      vy=32.0, fd=32.0, te=16.0):
+        e = MagicMock(spec=ShadowPortfolioEntry)
+        e.income_outcome_label = income_label
+        e.durability_outcome_label = dur_label
+        e.technical_outcome_label = tech_label
+        e.valuation_yield_score = vy
+        e.financial_durability_score = fd
+        e.technical_entry_score = te
+        return e
+
+    def test_income_pillar_increases_when_yield_scores_predict_correct(self):
+        """High yield scores on CORRECT income outcomes → positive signal → increase weight_yield."""
+        outcomes = (
+            [self._make_outcome(income_label="CORRECT", vy=38.0)] * 8 +
+            [self._make_outcome(income_label="INCORRECT", vy=18.0)] * 5
+        )
+        proposed, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="income_durability")
+        assert skip is None
+        assert proposed["weight_yield"] > self.profile["weight_yield"]
+
+    def test_technical_pillar_decreases_when_technical_scores_predict_incorrectly(self):
+        """High technical scores on INCORRECT tech outcomes → negative signal → decrease weight."""
+        outcomes = (
+            [self._make_outcome(tech_label="CORRECT", te=8.0)] * 5 +
+            [self._make_outcome(tech_label="INCORRECT", te=18.0)] * 8
+        )
+        proposed, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="technical")
+        assert skip is None
+        assert proposed["weight_technical"] < self.profile["weight_technical"]
+
+    def test_skips_insufficient_pillar_samples(self):
+        """Fewer than MIN_SAMPLES per pillar → SKIPPED."""
+        outcomes = [self._make_outcome(income_label="CORRECT")] * 3  # < 10
+        _, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="income_durability")
+        assert skip is not None
+        assert SKIP_INSUFFICIENT in skip
+
+    def test_all_pillar_uses_all_labels(self):
+        """pillar='all' computes signal from all three label columns."""
+        outcomes = (
+            [self._make_outcome(income_label="CORRECT", vy=38.0, dur_label="CORRECT", fd=36.0, tech_label="CORRECT", te=18.0)] * 10 +
+            [self._make_outcome(income_label="INCORRECT", vy=18.0, dur_label="INCORRECT", fd=16.0, tech_label="INCORRECT", te=6.0)] * 10
+        )
+        proposed, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="all")
+        assert skip is None
+        assert proposed is not None
+
+    def test_no_signal_returns_skip(self):
+        """Balanced CORRECT/INCORRECT with equal scores → no signal → SKIP."""
+        outcomes = (
+            [self._make_outcome(income_label="CORRECT", vy=32.0)] * 10 +
+            [self._make_outcome(income_label="INCORRECT", vy=32.0)] * 10
+        )
+        _, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="income_durability")
+        assert skip == SKIP_NO_SIGNAL
