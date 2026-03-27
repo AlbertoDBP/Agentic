@@ -16,7 +16,7 @@ from sqlalchemy import desc
 from app.database import get_db
 from app.models.models import Analyst, AnalystRecommendation
 from app.models.schemas import (
-    AnalystCreate, AnalystResponse, AnalystListResponse,
+    AnalystCreate, AnalystUpdate, AnalystResponse, AnalystListResponse,
     RecommendationResponse,
 )
 
@@ -71,6 +71,53 @@ def add_analyst(
     db.refresh(analyst)
 
     logger.info(f"Added analyst: {analyst.display_name} (SA ID: {analyst.sa_publishing_id})")
+    return analyst
+
+
+@router.get("/lookup", tags=["Analysts"])
+def lookup_analyst_name(sa_id: str):
+    """
+    Look up the SA display name for a given SA publishing ID.
+    Makes a live API call to Seeking Alpha. Returns null display_name on failure.
+    """
+    from app.clients import seeking_alpha as sa_client
+    name = sa_client.fetch_author_name(sa_id)
+    return {"sa_id": sa_id, "display_name": name}
+
+
+@router.put("/{analyst_id}", response_model=AnalystResponse, tags=["Analysts"])
+def update_analyst(
+    analyst_id: int,
+    payload: AnalystUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update analyst display_name, sa_publishing_id, and/or is_active status."""
+    analyst = db.query(Analyst).filter(Analyst.id == analyst_id).first()
+    if not analyst:
+        raise HTTPException(status_code=404, detail=f"Analyst {analyst_id} not found")
+
+    if payload.display_name is not None:
+        analyst.display_name = payload.display_name
+    if payload.sa_publishing_id is not None:
+        conflict = (
+            db.query(Analyst)
+            .filter(Analyst.sa_publishing_id == payload.sa_publishing_id,
+                    Analyst.id != analyst_id)
+            .first()
+        )
+        if conflict:
+            raise HTTPException(
+                status_code=409,
+                detail=f"SA ID {payload.sa_publishing_id} already used by analyst {conflict.id}"
+            )
+        analyst.sa_publishing_id = payload.sa_publishing_id
+    if payload.is_active is not None:
+        analyst.is_active = payload.is_active
+
+    analyst.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(analyst)
+    logger.info(f"Updated analyst {analyst_id}: {analyst.display_name}")
     return analyst
 
 

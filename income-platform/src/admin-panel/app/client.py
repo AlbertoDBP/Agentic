@@ -58,6 +58,21 @@ async def agent_get(num: str, path: str) -> dict | list | None:
         return None
 
 
+async def agent_put(num: str, path: str, json: dict | None = None) -> dict | None:
+    """PUT to an agent endpoint with auth."""
+    url = f"{get_service_url(num)}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
+            resp = await client.put(url, headers=auth_headers(), json=json or {})
+            if resp.status_code < 300:
+                return resp.json()
+            logger.warning(f"PUT {url} → {resp.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"PUT {url} → {e}")
+        return None
+
+
 async def agent_post(num: str, path: str, json: dict | None = None) -> dict | None:
     """POST to an agent endpoint with auth."""
     url = f"{get_service_url(num)}{path}"

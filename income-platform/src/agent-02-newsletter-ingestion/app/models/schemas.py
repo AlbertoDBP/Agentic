@@ -60,6 +60,13 @@ class AnalystCreate(BaseModel):
     config: Optional[dict] = None
 
 
+class AnalystUpdate(BaseModel):
+    """Request body for PUT /analysts/{id} — update editable fields."""
+    display_name: Optional[str]     = Field(None, min_length=1, max_length=200)
+    sa_publishing_id: Optional[str] = Field(None, min_length=1, max_length=100)
+    is_active: Optional[bool]       = None
+
+
 class AnalystResponse(BaseModel):
     """Response for GET /analysts and GET /analysts/{id}."""
     id: int

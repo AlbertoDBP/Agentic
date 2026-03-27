@@ -161,6 +161,41 @@ def fetch_articles_by_author(
     return articles
 
 
+def fetch_author_name(sa_author_id: str) -> Optional[str]:
+    """
+    Attempt to retrieve the display name for an SA author ID.
+
+    Fetches one page of each income category and looks in the `included`
+    array for an entry with type="author" matching the given ID.
+    Returns None if not found or on error.
+    """
+    for category in ["dividends", "income-investing", "closed-end-funds", "reits"]:
+        try:
+            _rate_limit()
+            with httpx.Client(timeout=settings.sa_request_timeout) as client:
+                response = client.get(
+                    f"{_BASE_URL}/articles/v2/list",
+                    headers=_build_headers(),
+                    params={"category": category, "page": 1, "size": 20},
+                )
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            logger.warning(f"fetch_author_name({sa_author_id}) error on {category}: {e}")
+            continue
+
+        for entry in data.get("included", []):
+            if (entry.get("type") == "author"
+                    and str(entry.get("id", "")) == str(sa_author_id)):
+                name = entry.get("attributes", {}).get("name")
+                if name:
+                    logger.info(f"Resolved SA author {sa_author_id} → {name}")
+                    return name
+
+    logger.info(f"Could not resolve display name for SA author {sa_author_id}")
+    return None
+
+
 def fetch_article_detail(sa_article_id: str) -> Optional[dict]:
     """
     Fetch full article content (HTML) for a given article ID.

@@ -3,24 +3,60 @@
 {% block content %}
 <h1>Analysts</h1>
 
-<div style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem;">
+<div style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
   <form method="post" action="/analysts/harvest" style="display:inline">
     <button type="submit" class="btn-sm" onclick="return confirm('Trigger harvester for all analysts?')">Trigger Harvest</button>
   </form>
   <form method="post" action="/analysts/intelligence" style="display:inline">
     <button type="submit" class="btn-sm outline" onclick="return confirm('Trigger intelligence flow?')">Run Intelligence</button>
   </form>
+  <button type="button" class="btn-sm outline" onclick="toggleAddForm()">+ Add Analyst</button>
+</div>
+
+{# ── Add Analyst form (hidden by default) ── #}
+<div id="add-analyst-form" style="display:none; background: var(--bg-card, #1a1a2e); border: 1px solid var(--border, #333); border-radius: 6px; padding: 1rem; margin-bottom: 1.5rem;">
+  <h3 style="margin: 0 0 0.75rem;">Add New Analyst</h3>
+  <form method="post" action="/analysts/add">
+    <div style="display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 0.5rem; align-items: end;">
+      <div>
+        <label style="display:block; font-size:0.75rem; margin-bottom:0.25rem; color:#aaa;">SA Publishing ID</label>
+        <input id="add-sa-id" name="sa_publishing_id" type="text" placeholder="e.g. 96726" required
+               style="width:100%; padding:0.35rem 0.5rem; background:#111; border:1px solid #444; border-radius:4px; color:#eee; font-size:0.85rem;">
+      </div>
+      <div>
+        <label style="display:block; font-size:0.75rem; margin-bottom:0.25rem; color:#aaa;">Display Name</label>
+        <input id="add-display-name" name="display_name" type="text" placeholder="e.g. Rida Morwa" required
+               style="width:100%; padding:0.35rem 0.5rem; background:#111; border:1px solid #444; border-radius:4px; color:#eee; font-size:0.85rem;">
+      </div>
+      <div style="padding-bottom: 1px;">
+        <button type="button" class="btn-sm outline" onclick="lookupName()" title="Look up name from SA API">Lookup Name</button>
+      </div>
+      <div style="padding-bottom: 1px;">
+        <button type="submit" class="btn-sm">Add</button>
+        <button type="button" class="btn-sm outline" onclick="toggleAddForm()" style="margin-left:0.25rem;">Cancel</button>
+      </div>
+    </div>
+    <div id="lookup-status" style="font-size:0.75rem; color:#aaa; margin-top:0.35rem;"></div>
+  </form>
 </div>
 
 {% if analysts %}
 <table>
   <thead>
-    <tr><th>Name</th><th>Articles</th><th>Last Fetched</th><th>Status</th></tr>
+    <tr>
+      <th>Name</th>
+      <th>SA ID</th>
+      <th>Articles</th>
+      <th>Last Fetched</th>
+      <th>Status</th>
+      <th style="width:4rem;"></th>
+    </tr>
   </thead>
   <tbody>
     {% for a in analysts %}
-    <tr>
+    <tr id="row-{{ a.id }}">
       <td><strong>{{ a.display_name or a.name or "Unknown" }}</strong></td>
+      <td style="font-family: monospace; font-size:0.8rem; color:#aaa;">{{ a.sa_publishing_id or "—" }}</td>
       <td>{{ a.article_count or 0 }}</td>
       <td>{{ a.last_article_fetched_at[:19] | replace("T", " ") if a.last_article_fetched_at else "never" }}</td>
       <td>
@@ -29,6 +65,41 @@
         {% else %}
           <span class="badge badge-red">inactive</span>
         {% endif %}
+      </td>
+      <td>
+        <button type="button" class="btn-sm outline" style="padding:0.2rem 0.5rem; font-size:0.75rem;"
+                onclick="toggleEdit({{ a.id }})">Edit</button>
+      </td>
+    </tr>
+    {# ── Inline edit row (hidden by default) ── #}
+    <tr id="edit-{{ a.id }}" style="display:none; background: var(--bg-card, #1a1a2e);">
+      <td colspan="6" style="padding: 0.75rem 1rem;">
+        <form method="post" action="/analysts/{{ a.id }}/edit">
+          <div style="display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 0.5rem; align-items: end;">
+            <div>
+              <label style="display:block; font-size:0.75rem; margin-bottom:0.25rem; color:#aaa;">Display Name</label>
+              <input name="display_name" type="text" value="{{ a.display_name or '' }}"
+                     style="width:100%; padding:0.35rem 0.5rem; background:#111; border:1px solid #444; border-radius:4px; color:#eee; font-size:0.85rem;">
+            </div>
+            <div>
+              <label style="display:block; font-size:0.75rem; margin-bottom:0.25rem; color:#aaa;">SA Publishing ID</label>
+              <input name="sa_publishing_id" type="text" value="{{ a.sa_publishing_id or '' }}"
+                     style="width:100%; padding:0.35rem 0.5rem; background:#111; border:1px solid #444; border-radius:4px; color:#eee; font-size:0.85rem;">
+            </div>
+            <div>
+              <label style="display:block; font-size:0.75rem; margin-bottom:0.25rem; color:#aaa;">Status</label>
+              <select name="is_active"
+                      style="padding:0.35rem 0.5rem; background:#111; border:1px solid #444; border-radius:4px; color:#eee; font-size:0.85rem;">
+                <option value="true" {% if a.is_active %}selected{% endif %}>Active</option>
+                <option value="false" {% if not a.is_active %}selected{% endif %}>Inactive</option>
+              </select>
+            </div>
+            <div style="display:flex; gap:0.25rem; padding-bottom:1px;">
+              <button type="submit" class="btn-sm">Save</button>
+              <button type="button" class="btn-sm outline" onclick="toggleEdit({{ a.id }})">Cancel</button>
+            </div>
+          </div>
+        </form>
       </td>
     </tr>
     {% endfor %}
@@ -63,4 +134,38 @@
   </tbody>
 </table>
 {% endif %}
+
+<script>
+function toggleAddForm() {
+  const el = document.getElementById('add-analyst-form');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleEdit(id) {
+  const el = document.getElementById('edit-' + id);
+  el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
+}
+
+async function lookupName() {
+  const saId = document.getElementById('add-sa-id').value.trim();
+  const statusEl = document.getElementById('lookup-status');
+  if (!saId) {
+    statusEl.textContent = 'Enter an SA Publishing ID first.';
+    return;
+  }
+  statusEl.textContent = 'Looking up…';
+  try {
+    const resp = await fetch('/analysts/lookup?sa_id=' + encodeURIComponent(saId));
+    const data = await resp.json();
+    if (data.display_name) {
+      document.getElementById('add-display-name').value = data.display_name;
+      statusEl.textContent = 'Name filled in from SA API.';
+    } else {
+      statusEl.textContent = 'Name not found — enter manually.';
+    }
+  } catch {
+    statusEl.textContent = 'Lookup failed — enter name manually.';
+  }
+}
+</script>
 {% endblock %}
