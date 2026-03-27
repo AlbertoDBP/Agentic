@@ -1544,3 +1544,46 @@ class TestPerPillarWeightTuner:
         )
         _, skip = self.tuner.compute_adjustment(outcomes, self.profile, pillar="income_durability")
         assert skip == SKIP_NO_SIGNAL
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 6: Threshold trigger
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestThresholdTrigger:
+    def setup_method(self):
+        self.db = MagicMock()
+
+    def _make_outcome(self, income_label="NEUTRAL", tech_label="NEUTRAL"):
+        e = MagicMock(spec=ShadowPortfolioEntry)
+        e.income_outcome_label = income_label
+        e.technical_outcome_label = tech_label
+        return e
+
+    def test_triggers_when_incorrect_rate_exceeds_threshold(self):
+        from app.scoring.weight_tuner import should_trigger_early_review
+        # 15 INCORRECT out of 20 = 75% > 60%
+        outcomes = [self._make_outcome(income_label="INCORRECT")] * 15 + [self._make_outcome(income_label="CORRECT")] * 5
+        result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=60)
+        assert result is True
+
+    def test_does_not_trigger_when_rate_below_threshold(self):
+        from app.scoring.weight_tuner import should_trigger_early_review
+        # 10 INCORRECT out of 20 = 50% < 60%
+        outcomes = [self._make_outcome(income_label="INCORRECT")] * 10 + [self._make_outcome(income_label="CORRECT")] * 10
+        result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=60)
+        assert result is False
+
+    def test_does_not_trigger_below_min_outcomes(self):
+        from app.scoring.weight_tuner import should_trigger_early_review
+        # only 12 outcomes < 20 minimum
+        outcomes = [self._make_outcome(income_label="INCORRECT")] * 12
+        result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=60)
+        assert result is False
+
+    def test_does_not_trigger_within_gap_period(self):
+        from app.scoring.weight_tuner import should_trigger_early_review
+        # 15/20 incorrect (would trigger) but last review was 15 days ago (< 30 day gap)
+        outcomes = [self._make_outcome(income_label="INCORRECT")] * 15 + [self._make_outcome(income_label="CORRECT")] * 5
+        result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=15)
+        assert result is False

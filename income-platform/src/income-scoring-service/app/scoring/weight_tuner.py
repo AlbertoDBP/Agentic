@@ -57,6 +57,10 @@ MAX_DELTA_PER_REVIEW: int = 5  # max pts change per pillar per review cycle
 MIN_PILLAR_WEIGHT: int = 5     # floor for any single pillar
 MAX_PILLAR_WEIGHT: int = 90    # ceiling for any single pillar
 
+THRESHOLD_INCORRECT_RATE: float = 0.60
+THRESHOLD_MIN_OUTCOMES: int = 20
+MIN_REVIEW_GAP_DAYS: int = 30
+
 
 # ── Skip reasons (returned as string tokens) ──────────────────────────────────
 
@@ -371,6 +375,36 @@ class QuarterlyWeightTuner:
             logger.error("Weight review FAILED for %s: %s", ac, exc)
 
         return review
+
+
+def should_trigger_early_review(
+    outcomes: list[ShadowPortfolioEntry],
+    pillar: str,
+    last_review_days_ago: Optional[int] = None,
+) -> bool:
+    """
+    Return True if an early weight review should be triggered.
+
+    outcomes: list of ShadowPortfolioEntry with per-pillar labels populated
+    pillar: "technical" | "income_durability"
+    last_review_days_ago: days since last review for this asset_class+pillar (None = never reviewed)
+    """
+    # Enforce gap
+    if last_review_days_ago is not None and last_review_days_ago < MIN_REVIEW_GAP_DAYS:
+        return False
+
+    if pillar == "technical":
+        correct   = sum(1 for o in outcomes if o.technical_outcome_label == "CORRECT")
+        incorrect = sum(1 for o in outcomes if o.technical_outcome_label == "INCORRECT")
+    else:  # income_durability
+        correct   = sum(1 for o in outcomes if o.income_outcome_label == "CORRECT")
+        incorrect = sum(1 for o in outcomes if o.income_outcome_label == "INCORRECT")
+
+    total = correct + incorrect
+    if total < THRESHOLD_MIN_OUTCOMES:
+        return False
+
+    return incorrect / total > THRESHOLD_INCORRECT_RATE
 
 
 # Module-level singleton
