@@ -8,18 +8,18 @@ interface HhsBadgeProps {
   className?: string;
 }
 
-const STATUS_BG: Record<string, string> = {
-  STRONG:       "bg-green-950/70 border border-green-800/40 text-green-300",
-  GOOD:         "bg-lime-950/70  border border-lime-800/40  text-lime-300",
-  WATCH:        "bg-amber-950/70 border border-amber-800/40 text-amber-300",
-  CONCERN:      "bg-red-950/70   border border-red-800/40   text-red-300",
-  UNSAFE:       "bg-red-950/70   border border-red-800/40   text-red-300",
-  INSUFFICIENT: "bg-muted        border border-border        text-muted-foreground",
+const STATUS_STYLE: Record<string, string> = {
+  STRONG:       "bg-zinc-900 border border-zinc-700/60 text-green-400",
+  GOOD:         "bg-zinc-900 border border-zinc-700/60 text-lime-400",
+  WATCH:        "bg-zinc-900 border border-zinc-700/60 text-amber-400",
+  CONCERN:      "bg-zinc-900 border border-zinc-700/60 text-red-400",
+  UNSAFE:       "bg-zinc-900 border border-zinc-700/60 text-red-400",
+  INSUFFICIENT: "bg-zinc-900 border border-zinc-700/60 text-zinc-400",
 };
 
 export function HhsBadge({ status, score, showScore = true, className }: HhsBadgeProps) {
   if (!status) return <span className="text-muted-foreground text-xs">—</span>;
-  const colorClass = STATUS_BG[status] ?? "bg-muted text-muted-foreground";
+  const colorClass = STATUS_STYLE[status] ?? "bg-zinc-900 border border-zinc-700/60 text-zinc-400";
   return (
     <span className={cn(
       "inline-flex items-center gap-1 text-xs font-semibold px-1.5 py-0.5 rounded",

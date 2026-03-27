@@ -11,6 +11,8 @@ import { ResultsTable } from "@/components/scanner/results-table";
 import { ProposalModal } from "@/components/scanner/proposal-modal";
 import { usePortfolios } from "@/lib/hooks/use-portfolios";
 import type { ScanResult } from "@/lib/types";
+import { PageHelpPanel } from "@/components/page-help-panel";
+import { SCANNER_PAGE_HELP } from "@/lib/page-help-content";
 
 export default function ScannerPage() {
   // Input mode
@@ -118,6 +120,7 @@ export default function ScannerPage() {
           <h1 className="text-xl font-semibold">Scanner</h1>
         </div>
         <div className="flex items-center gap-2">
+          <PageHelpPanel content={SCANNER_PAGE_HELP} />
           <Button
             variant="outline"
             size="sm"

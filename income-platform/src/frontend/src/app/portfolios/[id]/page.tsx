@@ -8,12 +8,14 @@ import { KpiStrip } from "@/components/portfolio/kpi-strip";
 import { HhsBadge } from "@/components/portfolio/hhs-badge";
 import { HHS_HELP } from "@/lib/help-content";
 import { cn, formatCurrency } from "@/lib/utils";
-import { ASSET_CLASS_COLORS } from "@/lib/config";
+import { ASSET_CLASS_COLORS, API_BASE_URL } from "@/lib/config";
 import { PortfolioTab }   from "./tabs/portfolio-tab";
 import { MarketTab }      from "./tabs/market-tab";
 import { HealthTab }      from "./tabs/health-tab";
 import { SimulationContent } from "@/app/income-simulation/page";
 import { ProjectionContent } from "@/app/income-projection/page";
+import { PageHelpPanel } from "@/components/page-help-panel";
+import { PORTFOLIO_TAB_HELP } from "@/lib/page-help-content";
 
 const SECTOR_COLORS: Record<string, string> = {
   "Financial Services":     "#3b82f6",
@@ -91,8 +93,25 @@ export default function PortfolioPage() {
       ? (rawTab as Tab)
       : "portfolio";
   const [summaryOpen, setSummaryOpen] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const { data: summary, isLoading, error, refetch } = usePortfolioSummary(id);
+
+  const triggerRefresh = async () => {
+    if (!id || refreshing) return;
+    setRefreshing(true);
+    try {
+      await fetch(`${API_BASE_URL}/broker/portfolios/${id}/refresh`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${typeof window !== "undefined" ? (localStorage.getItem("token") ?? "") : ""}` },
+      });
+    } catch (e) {
+      console.error("Refresh failed", e);
+    } finally {
+      setRefreshing(false);
+      refetch();
+    }
+  };
 
   const setTab = (tab: Tab) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -149,9 +168,12 @@ export default function PortfolioPage() {
             {summary?.last_refresh && <span>Refreshed {new Date(summary.last_refresh).toLocaleDateString()}</span>}
           </div>
         </div>
-        <button onClick={() => refetch()} className="p-1.5 text-muted-foreground hover:text-foreground" aria-label="Refresh portfolio">
-          <RefreshCw className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <PageHelpPanel content={PORTFOLIO_TAB_HELP[activeTab] ?? PORTFOLIO_TAB_HELP.portfolio} />
+          <button onClick={triggerRefresh} disabled={refreshing} className="p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-50" title="Refresh market data + scores" aria-label="Refresh portfolio data">
+            <RefreshCw className={`h-4 w-4 transition-transform ${refreshing ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </div>
 
       {/* KPI strip */}
