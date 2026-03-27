@@ -112,6 +112,7 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
     tickers = [t.upper() for t in request.tickers]
 
     context_map: dict = {}  # analyst_context keyed by ticker
+    suggestions: list = []
 
     if request.source == "analyst_ideas":
         suggestions = fetch_active_suggestions(
@@ -291,6 +292,10 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
     }
     if request.source:
         filters_applied["source"] = request.source
+    if request.source == "analyst_ideas" and suggestions:
+        sourced_dates = [s["sourced_at"] for s in suggestions if s.get("sourced_at")]
+        if sourced_dates:
+            filters_applied["sourced_at"] = str(max(sourced_dates))
 
     items_json = [
         {

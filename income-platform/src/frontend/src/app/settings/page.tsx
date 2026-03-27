@@ -126,6 +126,7 @@ export default function SettingsPage() {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail ?? "Save failed");
+      flash();
     } catch (err) {
       setTtlError(err instanceof Error ? err.message : String(err));
     } finally {
