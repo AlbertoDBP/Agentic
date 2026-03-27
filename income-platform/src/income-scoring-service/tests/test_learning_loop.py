@@ -1165,3 +1165,18 @@ class TestLearningLoopAPI:
         resp = self._client.get("/learning-loop/reviews")
         assert resp.status_code == 200
         self._mock_db.query.return_value.order_by.return_value.limit.assert_called_with(20)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 2: Migration seed helper
+# ══════════════════════════════════════════════════════════════════════════════
+
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), "..", "scripts"))
+
+def test_benchmark_defaults_cover_all_valid_asset_classes():
+    """All asset classes in VALID_ASSET_CLASSES have a benchmark ticker."""
+    from migrate import BENCHMARK_DEFAULTS
+    from app.api.weights import VALID_ASSET_CLASSES
+    for ac in VALID_ASSET_CLASSES:
+        assert ac in BENCHMARK_DEFAULTS, f"{ac} missing from benchmark defaults"
