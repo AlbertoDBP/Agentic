@@ -165,7 +165,17 @@ export default function PortfolioPage() {
             {summary?.tax_status && <span className="bg-muted/80 rounded px-1.5 py-0.5 text-foreground/80">{summary.tax_status}</span>}
             {summary?.broker && <span className="bg-muted/80 rounded px-1.5 py-0.5 text-foreground/80">{summary.broker}</span>}
             {summary?.holding_count != null && <span>{summary.holding_count} holdings</span>}
-            {summary?.last_refresh && <span>Refreshed {new Date(summary.last_refresh).toLocaleDateString()}</span>}
+            {summary?.total_return != null && (
+              <span className={summary.total_return >= 0 ? "text-green-400 font-medium" : "text-red-400 font-medium"}>
+                {summary.total_return >= 0 ? "+" : ""}{summary.total_return.toFixed(1)}% return
+              </span>
+            )}
+            {summary?.agg_yoc != null && (
+              <span className="text-blue-400 font-medium">
+                {(summary.agg_yoc * 100).toFixed(2)}% YoC
+              </span>
+            )}
+            {summary?.last_refresh && <span>· {new Date(summary.last_refresh).toLocaleDateString()}</span>}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -186,11 +196,8 @@ export default function PortfolioPage() {
           onClick={() => setSummaryOpen(o => !o)}
         >
           <span>
-            {!summaryOpen && summary && (
-              <span className="text-foreground font-normal">
-                {summary.concentration_by_class?.[0] && `${summary.concentration_by_class[0].class} ${Number(summary.concentration_by_class[0].pct).toFixed(0)}%`}
-                {(summary?.unsafe_count ?? 0) > 0 && ` · ⚠ ${summary.unsafe_count} UNSAFE`}
-              </span>
+            {!summaryOpen && (summary?.unsafe_count ?? 0) > 0 && (
+              <span className="text-red-400 font-normal">⚠ {summary!.unsafe_count} UNSAFE</span>
             )}
             {summaryOpen && "Summary"}
           </span>

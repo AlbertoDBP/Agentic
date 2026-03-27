@@ -107,6 +107,9 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
     # NAA Yield (use gross yield as proxy; full NAA requires tax service)
     naa_yield = round(total_income / total_value, 4) if total_value > 0 else None
 
+    # Aggregate Yield on Cost = annual income / total cost basis
+    agg_yoc = round(total_income / total_cost, 4) if total_cost > 0 else None
+
     # HHI on position weights
     weights = [p.get("current_value", 0) / total_value for p in positions if total_value > 0]
     hhi = compute_hhi(weights)
@@ -142,6 +145,7 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
         "agg_hhs": agg_hhs,
         "naa_yield": naa_yield,
         "naa_yield_pre_tax": True,   # flag: using gross yield until tax service integrated
+        "agg_yoc": agg_yoc,
         "total_value": round(total_value, 2),
         "annual_income": round(total_income, 2),
         "total_return": total_return,
@@ -157,7 +161,7 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
 
 def _empty_aggregate() -> dict:
     return {
-        "agg_hhs": None, "naa_yield": None, "naa_yield_pre_tax": True,
+        "agg_hhs": None, "naa_yield": None, "naa_yield_pre_tax": True, "agg_yoc": None,
         "total_value": 0.0, "annual_income": 0.0, "total_return": None, "hhi": 0.0,
         "unsafe_count": 0, "gate_fail_count": 0, "holding_count": 0,
         "concentration_by_class": [], "concentration_by_sector": [],

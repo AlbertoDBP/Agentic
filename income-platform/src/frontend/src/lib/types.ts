@@ -301,6 +301,7 @@ export interface PortfolioListItem {
   annual_income: number;
   naa_yield?: number | null;
   naa_yield_pre_tax?: boolean;
+  agg_yoc?: number | null;
   agg_hhs?: number | null;
   total_return?: number | null;
   hhi?: number;

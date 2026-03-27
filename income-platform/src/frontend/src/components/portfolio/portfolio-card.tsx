@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { cn, formatCurrency, formatPercent } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import type { PortfolioListItem } from "@/lib/types";
 import { HhsBadge } from "./hhs-badge";
 import { ConcentrationBar } from "./concentration-bar";
@@ -39,9 +39,9 @@ export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
         {[
           { label: "Value",        value: formatCurrency(p.total_value), positive: null },
           { label: "Ann. Income",  value: formatCurrency(p.annual_income), positive: null },
-          { label: "Yield",        value: p.naa_yield != null ? formatPercent(p.naa_yield) : "—", positive: null },
+          { label: "NAA Yield",    value: p.naa_yield != null ? `${(p.naa_yield * 100).toFixed(2)}%` : "—", positive: null },
+          { label: "YoC",          value: p.agg_yoc != null ? `${(p.agg_yoc * 100).toFixed(2)}%` : "—", positive: null },
           { label: "Total Return", value: p.total_return != null ? `${p.total_return >= 0 ? "+" : ""}${p.total_return.toFixed(1)}%` : "—", positive: p.total_return != null ? p.total_return >= 0 : null },
-          { label: "Positions",    value: p.holding_count, positive: null },
           { label: "HHI",         value: p.hhi != null ? p.hhi.toFixed(3) : "—", positive: null },
         ].map((kpi, i) => (
           <div key={i} className="bg-card px-2.5 py-1.5">
