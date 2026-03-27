@@ -1653,3 +1653,56 @@ class TestLearningLoopAPIV3:
             )
         assert resp.status_code == 201
         assert resp.json()["pillar_reviewed"] == "technical"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 8: Weights API — benchmark_ticker
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestWeightsBenchmarkTicker:
+    def setup_method(self):
+        from app.main import app
+        from app.database import get_db
+        from app.auth import verify_token
+        from fastapi.testclient import TestClient
+
+        self._mock_db = MagicMock()
+        app.dependency_overrides[get_db] = lambda: self._mock_db
+        app.dependency_overrides[verify_token] = lambda: {"sub": "test-user"}
+        self.client = TestClient(app, raise_server_exceptions=False)
+        self.headers = {"Authorization": "Bearer " + _make_token()}
+
+    def teardown_method(self):
+        from app.main import app
+        from app.database import get_db
+        from app.auth import verify_token
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(verify_token, None)
+
+    def test_get_profile_includes_benchmark_ticker(self):
+        mock_profile = MagicMock(spec=ScoringWeightProfile)
+        mock_profile.id = uuid.uuid4()
+        mock_profile.asset_class = "DIVIDEND_STOCK"
+        mock_profile.version = 1
+        mock_profile.is_active = True
+        mock_profile.weight_yield = 40
+        mock_profile.weight_durability = 40
+        mock_profile.weight_technical = 20
+        mock_profile.yield_sub_weights = {}
+        mock_profile.durability_sub_weights = {}
+        mock_profile.technical_sub_weights = {}
+        mock_profile.benchmark_ticker = "DVY"
+        mock_profile.source = "MANUAL"
+        mock_profile.change_reason = None
+        mock_profile.created_by = None
+        mock_profile.created_at = datetime.now(timezone.utc)
+        mock_profile.activated_at = None
+        mock_profile.superseded_at = None
+        mock_profile.superseded_by_id = None
+
+        self._mock_db.query.return_value.filter.return_value.first.return_value = mock_profile
+
+        resp = self.client.get("/weights/DIVIDEND_STOCK", headers=self.headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["benchmark_ticker"] == "DVY"
