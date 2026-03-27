@@ -18,19 +18,6 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-# Default TTL in days by asset class
-_TTL_DAYS: dict[str, int] = {
-    "BDC": 45,
-    "MORTGAGE_REIT": 45,
-    "PREFERRED_STOCK": 45,
-    "DIVIDEND_STOCK": 60,
-    "EQUITY_REIT": 60,
-    "BOND": 30,
-    "CEF": 30,
-    "COVERED_CALL_ETF": 30,
-}
-_DEFAULT_TTL_DAYS = 45
-
 _BUY_LABELS = {"StrongBuy", "Buy", "STRONG_BUY", "BUY"}
 _SELL_LABELS = {"StrongSell", "Sell", "STRONG_SELL", "SELL"}
 
@@ -42,9 +29,19 @@ def should_write_suggestion(recommendation: Optional[str]) -> bool:
     return recommendation in (_BUY_LABELS | _SELL_LABELS)
 
 
-def compute_expires_at(sourced_at: datetime, asset_class: Optional[str]) -> datetime:
-    """Return expiry timestamp based on asset class TTL."""
-    ttl_days = _TTL_DAYS.get(asset_class or "", _DEFAULT_TTL_DAYS)
+def _get_ttl_days(db: Session, asset_class: str) -> int:
+    """Read TTL days for asset_class from DB. Falls back to _default row, then 45."""
+    row = db.execute(text(
+        "SELECT ttl_days FROM platform_shared.suggestion_ttl_config "
+        "WHERE asset_class = :ac OR asset_class = '_default' "
+        "ORDER BY CASE WHEN asset_class = :ac THEN 0 ELSE 1 END ASC LIMIT 1"
+    ), {"ac": asset_class}).fetchone()
+    return row.ttl_days if row else 45
+
+
+def compute_expires_at(db: Session, sourced_at: datetime, asset_class: Optional[str]) -> datetime:
+    """Return expiry timestamp based on configured TTL for asset class."""
+    ttl_days = _get_ttl_days(db, asset_class or "")
     return sourced_at + timedelta(days=ttl_days)
 
 
@@ -65,7 +62,7 @@ def upsert_suggestion(
     ON CONFLICT (analyst_id, ticker) WHERE is_active=TRUE:
       refresh staleness_weight, expires_at, framework_id, sentiment, price guidance.
     """
-    expires_at = compute_expires_at(sourced_at, asset_class)
+    expires_at = compute_expires_at(db, sourced_at, asset_class)
 
     db.execute(text("""
         INSERT INTO platform_shared.analyst_suggestions

@@ -113,6 +113,9 @@ app.include_router(kb_router.router, tags=["knowledge-base"])
 # from app.api.intelligence import router as intelligence_router
 # app.include_router(intelligence_router, prefix="/intelligence", tags=["Intelligence"])
 
+from app.api.suggestions import router as suggestions_router
+app.include_router(suggestions_router, prefix="/suggestions", tags=["Suggestions"], dependencies=[Depends(verify_token)])
+
 
 # ── Root ──────────────────────────────────────────────────────────────────────
 
