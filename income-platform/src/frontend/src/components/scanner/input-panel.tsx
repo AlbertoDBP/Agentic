@@ -23,6 +23,7 @@ interface InputPanelProps {
   selectedPortfolioId: string | null;
   onPortfolioChange: (id: string | null) => void;
   portfolios: PortfolioListItem[];
+  hideTabs?: boolean;
 }
 
 const TABS: { value: InputMode; label: string }[] = [
@@ -39,26 +40,29 @@ export function InputPanel({
   selectedPortfolioId,
   onPortfolioChange,
   portfolios,
+  hideTabs = false,
 }: InputPanelProps) {
   return (
     <div className="rounded-lg border border-border bg-card p-4 space-y-3">
       {/* Mode tabs */}
-      <div className="flex gap-1 rounded-md bg-muted p-1 w-fit">
-        {TABS.map((tab) => (
-          <button
-            key={tab.value}
-            onClick={() => onModeChange(tab.value)}
-            className={cn(
-              "px-3 py-1.5 rounded text-sm font-medium transition-colors",
-              mode === tab.value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {!hideTabs && (
+        <div className="flex gap-1 rounded-md bg-muted p-1 w-fit">
+          {TABS.map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => onModeChange(tab.value)}
+              className={cn(
+                "px-3 py-1.5 rounded text-sm font-medium transition-colors",
+                mode === tab.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Input area */}
       {mode === "manual" && (
