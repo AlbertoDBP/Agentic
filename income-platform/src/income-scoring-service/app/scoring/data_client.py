@@ -37,6 +37,7 @@ async def init_pool() -> None:
         ssl="require" if ssl_required else None,
         min_size=2,
         max_size=10,
+        statement_cache_size=0,  # required for pgbouncer transaction-mode pooling
     )
 
 
@@ -45,6 +46,24 @@ async def close_pool() -> None:
     if _pool:
         await _pool.close()
         _pool = None
+
+
+def _api_ticker(ticker: str) -> str:
+    """Normalise ticker for use in market-data-service URL path segments.
+
+    Preferred stocks stored as  AHL/PRD  must be converted to  AHL-PD
+    so the slash doesn't break FastAPI URL routing, and the symbol
+    matches the FMP convention ({BASE}-P{LETTER}).
+
+    Pattern:  {BASE}/PR{LETTER}  →  {BASE}-P{LETTER}
+    Examples: AHL/PRD → AHL-PD,  CIM/PRC → CIM-PC,  PRIF/PRL → PRIF-PL
+    All other tickers are returned unchanged.
+    """
+    import re
+    m = re.fullmatch(r"([A-Z0-9]+)/PR([A-Z])", ticker.upper())
+    if m:
+        return f"{m.group(1)}-P{m.group(2)}"
+    return ticker.upper()
 
 
 class MarketDataClient:
@@ -68,7 +87,7 @@ class MarketDataClient:
         Returns dict with pe_ratio, debt_to_equity, payout_ratio,
         free_cash_flow, market_cap, sector, earnings_growth, credit_rating.
         """
-        return await self._get(f"/stocks/{ticker}/fundamentals")
+        return await self._get(f"/stocks/{_api_ticker(ticker)}/fundamentals")
 
     async def get_dividend_history(self, ticker: str) -> list:
         """GET /stocks/{ticker}/dividends
@@ -76,7 +95,7 @@ class MarketDataClient:
         Returns list of dividend records (ex_date, payment_date, amount,
         frequency, yield_pct). Unwraps the StockDividendResponse envelope.
         """
-        result = await self._get(f"/stocks/{ticker}/dividends")
+        result = await self._get(f"/stocks/{_api_ticker(ticker)}/dividends")
         if isinstance(result, dict):
             return result.get("dividends") or []
         return []
@@ -90,7 +109,7 @@ class MarketDataClient:
         price_change_pct, period_days.
         """
         return await self._get(
-            f"/stocks/{ticker}/history/stats",
+            f"/stocks/{_api_ticker(ticker)}/history/stats",
             params={"start_date": start_date, "end_date": end_date},
         )
 
@@ -99,14 +118,14 @@ class MarketDataClient:
 
         Returns dict with aum, expense_ratio, covered_call, top_holdings.
         """
-        return await self._get(f"/stocks/{ticker}/etf")
+        return await self._get(f"/stocks/{_api_ticker(ticker)}/etf")
 
     async def get_current_price(self, ticker: str) -> dict:
         """GET /stocks/{ticker}/price
 
         Returns dict with symbol, price, volume, timestamp, source.
         """
-        return await self._get(f"/stocks/{ticker}/price")
+        return await self._get(f"/stocks/{_api_ticker(ticker)}/price")
 
     async def get_features(self, ticker: str) -> dict:
         """Query platform_shared.features_historical for the latest feature row.
