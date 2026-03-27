@@ -436,12 +436,12 @@ def _seed_weight_profiles(engine) -> None:
 
             conn.execute(text("""
                 INSERT INTO platform_shared.scoring_weight_profiles
-                    (asset_class, version, is_active,
+                    (id, asset_class, version, is_active,
                      weight_yield, weight_durability, weight_technical,
                      yield_sub_weights, durability_sub_weights, technical_sub_weights,
                      source, change_reason, created_by, created_at, activated_at)
                 VALUES
-                    (:ac, 1, true,
+                    (gen_random_uuid(), :ac, 1, true,
                      :wy, :wd, :wt,
                      CAST(:ysub AS jsonb), CAST(:dsub AS jsonb), CAST(:tsub AS jsonb),
                      'INITIAL_SEED', 'v2.0 initial seed weights', 'migration',
@@ -461,11 +461,11 @@ def _seed_weight_profiles(engine) -> None:
 
             conn.execute(text("""
                 INSERT INTO platform_shared.weight_change_audit
-                    (asset_class, old_profile_id, new_profile_id,
+                    (id, asset_class, old_profile_id, new_profile_id,
                      delta_weight_yield, delta_weight_durability, delta_weight_technical,
                      trigger_type, trigger_details, changed_at, changed_by)
                 VALUES
-                    (:ac, NULL, :pid,
+                    (gen_random_uuid(), :ac, NULL, :pid,
                      NULL, NULL, NULL,
                      'INITIAL_SEED',
                      CAST('{"source": "v2.0 migration"}' AS jsonb),
