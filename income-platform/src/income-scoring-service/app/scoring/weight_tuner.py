@@ -119,8 +119,6 @@ class QuarterlyWeightTuner:
         def _signal(correct_entries, incorrect_entries, score_fn, weight):
             if len(correct_entries) + len(incorrect_entries) < MIN_SAMPLES:
                 return None, f"{SKIP_INSUFFICIENT}:{len(correct_entries) + len(incorrect_entries)}"
-            if not correct_entries and not incorrect_entries:
-                return None, SKIP_INSUFFICIENT + ":0"
             cy = _mean([score_fn(e) / weight for e in correct_entries] if correct_entries else [0.5])
             iy = _mean([score_fn(e) / weight for e in incorrect_entries] if incorrect_entries else [0.5])
             return cy - iy, None

@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import ShadowPortfolioEntry
@@ -414,11 +415,17 @@ class ShadowPortfolioManager:
         Return completed (non-PENDING) entries for a given asset class.
         Optionally filtered to entries since a given date.
         """
+        resolved_states = ["CORRECT", "INCORRECT", "NEUTRAL"]
         q = (
             db.query(ShadowPortfolioEntry)
             .filter(
                 ShadowPortfolioEntry.asset_class == asset_class.upper(),
-                ShadowPortfolioEntry.outcome_label.in_(["CORRECT", "INCORRECT", "NEUTRAL"]),
+                or_(
+                    ShadowPortfolioEntry.outcome_label.in_(resolved_states),
+                    ShadowPortfolioEntry.technical_outcome_label.in_(resolved_states),
+                    ShadowPortfolioEntry.income_outcome_label.in_(resolved_states),
+                    ShadowPortfolioEntry.durability_outcome_label.in_(resolved_states),
+                )
             )
         )
         if since:
