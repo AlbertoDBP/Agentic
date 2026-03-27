@@ -16,12 +16,15 @@ interface Analyst {
 const ASSET_CLASSES = ["BDC", "mREIT", "REIT", "Preferred", "Stock", "CEF", "Bond"];
 
 const GRADE_COLORS: Record<string, string> = {
-  A: "bg-emerald-950 text-emerald-400 border-emerald-800",
-  B: "bg-emerald-950/60 text-emerald-500 border-emerald-900",
-  C: "bg-yellow-950 text-yellow-400 border-yellow-800",
-  D: "bg-stone-900 text-stone-400 border-stone-700",
-  F: "bg-red-950 text-red-400 border-red-900",
+  A: "bg-emerald-800 text-emerald-100 border-emerald-600",
+  B: "bg-emerald-900 text-emerald-300 border-emerald-700",
+  C: "bg-yellow-800 text-yellow-100 border-yellow-600",
+  D: "bg-stone-700 text-stone-200 border-stone-500",
+  F: "bg-red-900 text-red-200 border-red-700",
 };
+
+// Shared column template used by both header and rows
+const COL_TEMPLATE = "20px 24px 110px 80px 50px minmax(0,1fr) 100px 72px";
 
 interface AnalystIdeasTabProps {
   portfolios: PortfolioListItem[];
@@ -172,55 +175,80 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
       <div
         key={`${item.ticker}-${isHistoryRow}`}
         className={cn(
-          "grid items-center gap-0 px-3 py-2 border-b border-border/50 text-sm",
-          "grid-cols-[28px_32px_140px_72px_52px_140px_100px_80px]",
-          isBelow && "bg-amber-950/10 border-l-2 border-amber-600/40",
-          isHistoryRow && "opacity-60"
+          "grid items-center px-3 py-2 border-b border-border/50 text-sm",
+          isHistoryRow && "opacity-55"
         )}
+        style={{ gridTemplateColumns: COL_TEMPLATE, gap: "0 6px" }}
       >
+        {/* Checkbox */}
         <input
           type="checkbox"
           checked={selectedTickers.has(item.ticker)}
           onChange={() => handleToggleTicker(item.ticker)}
           className="accent-violet-500 w-3.5 h-3.5"
         />
-        <span className="text-muted-foreground text-xs">{item.passed_quality_gate ? item.rank : "—"}</span>
-        <div>
-          <div className="font-mono font-semibold text-[13px]">{item.ticker}</div>
-          <div className="text-[10px] text-muted-foreground">
-            {item.asset_class}
-            {isHistoryRow && <span className="ml-1 italic">archived</span>}
-            {isBelow && <span className="ml-1 text-amber-500">⚠ below gate</span>}
+
+        {/* Rank */}
+        <span className="text-muted-foreground text-xs tabular-nums">
+          {item.passed_quality_gate ? item.rank : "—"}
+        </span>
+
+        {/* Ticker + asset class + badges */}
+        <div className="min-w-0">
+          <div className="font-mono font-semibold text-[13px] leading-tight">
+            {item.ticker}
+          </div>
+          <div className="text-[10px] text-muted-foreground leading-tight flex flex-wrap items-center gap-x-1">
+            <span>{item.asset_class}</span>
+            {isHistoryRow && <span className="italic">archived</span>}
+            {isBelow && <span className="text-amber-400">⚠</span>}
           </div>
           {ctx?.is_proposed && (
             <span
-              className="inline-block mt-0.5 text-[9px] font-medium rounded-full px-1.5 py-0 bg-violet-900/40 text-violet-400 border border-violet-800/40"
+              className="inline-block text-[9px] font-medium rounded-full px-1.5 py-0 bg-violet-900/40 text-violet-400 border border-violet-800/40"
               title={ctx.proposed_at ? `Submitted ${new Date(ctx.proposed_at).toLocaleDateString()}` : "Proposed"}
             >
               PROPOSED
             </span>
           )}
         </div>
-        <span>
-          <span className={cn("text-[11px] font-medium rounded px-1.5 py-0.5 border", gradeClass)}>
-            {item.grade} · {Math.round(item.score)}
+
+        {/* Grade + Score — vivid badge, score prominent */}
+        <div>
+          <span className={cn("inline-flex items-center gap-1 rounded px-2 py-0.5 border font-semibold", gradeClass)}>
+            <span className="text-[11px]">{item.grade}</span>
+            <span className="text-xs tabular-nums">{Math.round(item.score)}</span>
           </span>
-        </span>
-        <span className={cn("text-xs font-medium", item.recommendation === "BUY" ? "text-emerald-400" : "text-red-400")}>
+        </div>
+
+        {/* Recommendation */}
+        <span className={cn(
+          "text-xs font-semibold",
+          item.recommendation === "BUY" ? "text-emerald-400" : "text-red-400"
+        )}>
           {item.recommendation}
         </span>
-        <div>
-          <div className="text-[11px] text-muted-foreground">{ctx?.analyst_name ?? "—"}</div>
-          <div className="text-[10px] text-violet-400/80">
-            {ctx?.staleness_weight != null ? ctx.staleness_weight.toFixed(2) : "—"}
+
+        {/* Analyst name + staleness */}
+        <div className="min-w-0 truncate">
+          <div className="text-[11px] text-foreground/80 truncate">{ctx?.analyst_name ?? "—"}</div>
+          <div className="text-[10px] text-violet-400/70">
+            {ctx?.staleness_weight != null ? `w ${ctx.staleness_weight.toFixed(2)}` : ""}
           </div>
         </div>
-        <span className="text-[11px] text-muted-foreground">
-          {item.recommendation === "BUY" && item.entry_exit?.entry_limit != null
-            ? `$${item.entry_exit.entry_limit.toFixed(2)}–${item.entry_exit.exit_limit != null ? item.entry_exit.exit_limit.toFixed(2) : "?"}`
+
+        {/* Entry zone */}
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          {item.entry_exit?.entry_limit != null
+            ? `$${item.entry_exit.entry_limit.toFixed(2)}`
             : "—"}
         </span>
-        <span className={cn("text-[11px]", item.recommendation === "SELL" ? "text-red-400" : "text-muted-foreground")}>
+
+        {/* Exit */}
+        <span className={cn(
+          "text-[11px] tabular-nums",
+          item.recommendation === "SELL" ? "text-red-400" : "text-muted-foreground"
+        )}>
           {item.entry_exit?.exit_limit != null ? `$${item.entry_exit.exit_limit.toFixed(2)}` : "—"}
         </span>
       </div>
@@ -351,14 +379,17 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
       {!loading && allItems.length > 0 && (
         <div className="rounded-lg border border-border overflow-hidden">
           {/* Header */}
-          <div className="grid grid-cols-[28px_32px_140px_72px_52px_140px_100px_80px] gap-0 px-3 py-2 bg-muted/20 border-b border-border text-[10px] text-muted-foreground uppercase tracking-wide">
+          <div
+            className="grid px-3 py-2 bg-muted/20 border-b border-border text-[10px] text-muted-foreground uppercase tracking-wide"
+            style={{ gridTemplateColumns: COL_TEMPLATE, gap: "0 6px" }}
+          >
             <span />
             <span>#</span>
             <span>Ticker</span>
-            <span>Score</span>
+            <span>Grade</span>
             <span>Rec</span>
             <span>Analyst</span>
-            <span>Entry zone</span>
+            <span>Entry</span>
             <span>Exit</span>
           </div>
 
