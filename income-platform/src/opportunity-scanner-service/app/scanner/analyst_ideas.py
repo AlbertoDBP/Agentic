@@ -98,16 +98,21 @@ def fetch_active_suggestions(
     return result
 
 
+def _to_float(v) -> float | None:
+    """Cast Decimal (or any numeric) to float for JSON serialization."""
+    return float(v) if v is not None else None
+
+
 def build_analyst_context(suggestion_row: dict) -> dict:
     """Build the analyst_context dict attached to each ScanItem."""
     return {
         "analyst_id":           suggestion_row.get("analyst_id"),
         "analyst_name":         suggestion_row.get("analyst_name"),
-        "analyst_accuracy":     suggestion_row.get("analyst_accuracy"),
-        "analyst_sector_alpha": suggestion_row.get("analyst_sector_alpha"),
+        "analyst_accuracy":     _to_float(suggestion_row.get("analyst_accuracy")),
+        "analyst_sector_alpha": _to_float(suggestion_row.get("analyst_sector_alpha")),
         "price_guidance_type":  suggestion_row.get("price_guidance_type"),
         "price_guidance_value": suggestion_row.get("price_guidance_value"),
-        "staleness_weight":     suggestion_row.get("staleness_weight"),
+        "staleness_weight":     _to_float(suggestion_row.get("staleness_weight")),
         "sourced_at":           str(suggestion_row["sourced_at"]) if suggestion_row.get("sourced_at") else None,
         "recommendation":       suggestion_row.get("recommendation"),
         "is_active":            bool(suggestion_row.get("is_active", True)),
