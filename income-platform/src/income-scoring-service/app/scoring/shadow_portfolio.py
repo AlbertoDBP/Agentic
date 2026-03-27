@@ -63,6 +63,10 @@ class ShadowPortfolioManager:
         durability_score_at_entry: Optional[float] = None,
         income_ttm_at_entry: Optional[float] = None,
     ) -> Optional[ShadowPortfolioEntry]:
+        """
+        Record a shadow portfolio entry if the recommendation is ACCUMULATE or AGGRESSIVE_BUY.
+        Returns None (and does not call db.add) for HOLD, SELL, or any other recommendation.
+        """
         if entry_recommendation not in ("AGGRESSIVE_BUY", "ACCUMULATE"):
             return None
 
@@ -127,13 +131,13 @@ class ShadowPortfolioManager:
             .all()
         )
 
-        updated = skipped = 0
+        updated = 0
 
         for entry in pending:
             exit_price = exit_prices.get(entry.ticker)
 
-            # Delisted: no exit price → INCORRECT
-            if exit_price is None:
+            # Delisted or zero price: no valid exit price → INCORRECT
+            if not exit_price or exit_price <= 0:
                 entry.technical_outcome_label = "INCORRECT"
                 entry.technical_outcome_at = now
                 updated += 1
@@ -187,7 +191,7 @@ class ShadowPortfolioManager:
             raise
 
         logger.info("Technical outcomes: %d updated, %d pending total", updated, len(pending))
-        return {"updated": updated, "skipped": skipped, "total_pending": len(pending)}
+        return {"updated": updated, "total_pending": len(pending)}
 
     def populate_outcomes_legacy(
         self,
