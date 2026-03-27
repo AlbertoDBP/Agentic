@@ -28,6 +28,7 @@ _DEFAULT_TIMEOUT = 30
 
 def _base(service: str) -> str:
     return {
+        "agent02": settings.agent02_url,
         "scanner": settings.agent07_url,
         "scenarios": settings.agent06_url,
         "tax": settings.agent05_url,
@@ -63,6 +64,13 @@ async def _proxy(
             elif method == "PATCH":
                 body = await request.body()
                 resp = await client.patch(
+                    url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    content=body,
+                )
+            elif method == "PUT":
+                body = await request.body()
+                resp = await client.put(
                     url,
                     headers={**headers, "Content-Type": "application/json"},
                     content=body,
@@ -257,3 +265,25 @@ async def scan_alerts(request: Request):
 @router.patch("/alerts/{alert_id}/resolve")
 async def resolve_alert(alert_id: str, request: Request):
     return await _proxy("PATCH", "alerts", f"/alerts/{alert_id}/resolve", request)
+
+
+@router.post("/scanner/scan/{scan_id}/propose")
+async def scanner_propose(scan_id: str, request: Request):
+    return await _proxy("POST", "scanner", f"/scan/{scan_id}/propose", request)
+
+
+# ─── Agent 02 — Newsletter Ingestion ─────────────────────────────────────────
+
+@router.get("/agent02/suggestions/analysts")
+async def proxy_suggestions_analysts(request: Request):
+    return await _proxy("GET", "agent02", "/suggestions/analysts", request)
+
+
+@router.get("/agent02/suggestions/ttl-config")
+async def proxy_ttl_config_get(request: Request):
+    return await _proxy("GET", "agent02", "/suggestions/ttl-config", request)
+
+
+@router.put("/agent02/suggestions/ttl-config")
+async def proxy_ttl_config_put(request: Request):
+    return await _proxy("PUT", "agent02", "/suggestions/ttl-config", request)

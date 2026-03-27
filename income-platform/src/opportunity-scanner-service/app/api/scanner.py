@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models import ProposalDraft, ScanResult
-from app.scanner.engine import run_scan
+from app.scanner.analyst_ideas import fetch_active_suggestions, build_analyst_context
+from app.scanner.engine import run_scan, tickers_from_analyst_suggestions
 from app.scanner.market_cache import apply_market_filters
 from app.scanner.portfolio_context import (
     PortfolioPosition,
@@ -52,6 +53,11 @@ class ScanRequest(BaseModel):
     portfolio_id: Optional[str] = Field(None, description="Portfolio UUID to scan against")
     portfolio_lens: Optional[str] = Field(None, description="gap | replacement | concentration | null")
     source: Optional[str] = Field(None, description="Scan origin: 'analyst_ideas' | None")
+
+    # Analyst Ideas specific filters (only used when source == "analyst_ideas")
+    analyst_ids: Optional[List[int]] = Field(None, description="Filter to specific analyst IDs. Empty = all analysts.")
+    min_staleness_weight: Optional[float] = Field(0.3, ge=0.0, le=1.0, description="Minimum staleness weight")
+    include_history: Optional[bool] = Field(False, description="If true, include non-active suggestions within TTL window")
 
     model_config = {"json_schema_extra": {
         "example": {
@@ -105,7 +111,27 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
     # ── Resolve ticker universe ──────────────────────────────────────────
     tickers = [t.upper() for t in request.tickers]
 
-    if request.use_universe:
+    context_map: dict = {}  # analyst_context keyed by ticker
+    suggestions: list = []
+
+    if request.source == "analyst_ideas":
+        suggestions = fetch_active_suggestions(
+            db,
+            min_staleness_weight=request.min_staleness_weight if request.min_staleness_weight is not None else 0.3,
+            asset_classes=request.asset_classes,
+            analyst_ids=request.analyst_ids,
+            include_history=bool(request.include_history),
+        )
+        if not suggestions:
+            import datetime as _dt
+            return ScanResponse(
+                scan_id="00000000-0000-0000-0000-000000000000",
+                total_scanned=0, total_passed=0, total_vetoed=0,
+                items=[], filters_applied={"source": "analyst_ideas"},
+                created_at=str(_dt.datetime.utcnow()),
+            )
+        tickers, context_map = tickers_from_analyst_suggestions(suggestions)
+    elif request.use_universe:
         rows = db.execute(
             text(
                 "SELECT symbol FROM platform_shared.securities "
@@ -243,6 +269,11 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
         score_cache=score_cache,
     )
 
+    # Attach analyst_context for analyst_ideas source
+    if request.source == "analyst_ideas" and context_map:
+        for item in result.items:
+            item.analyst_context = context_map.get(item.ticker)
+
     filters_applied = {
         "min_score": request.min_score,
         "min_yield": request.min_yield,
@@ -261,6 +292,10 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
     }
     if request.source:
         filters_applied["source"] = request.source
+    if request.source == "analyst_ideas" and suggestions:
+        sourced_dates = [s["sourced_at"] for s in suggestions if s.get("sourced_at")]
+        if sourced_dates:
+            filters_applied["sourced_at"] = str(max(sourced_dates))
 
     items_json = [
         {
@@ -398,6 +433,8 @@ def get_quote(symbol: str, db: Session = Depends(get_db)):
 class ProposeRequest(BaseModel):
     selected_tickers: list[str] = Field(..., min_length=1)
     target_portfolio_id: str = Field(..., description="UUID of target portfolio")
+    position_overrides: Optional[dict] = None
+    # { "ARCC": { "amount_usd": 3000, "target_price": 19.50 } }
 
 
 class ProposeDraftResponse(BaseModel):
@@ -436,14 +473,20 @@ def post_propose(scan_id: UUID, request: ProposeRequest, db: Session = Depends(g
         if item["ticker"].upper() not in selected:
             continue
         ee = item.get("entry_exit") or {}
-        tickers_payload.append({
+        ticker_dict = {
             "ticker": item["ticker"],
             "entry_limit": ee.get("entry_limit"),
             "exit_limit": ee.get("exit_limit"),
             "zone_status": ee.get("zone_status"),
             "score": item.get("score"),
             "asset_class": item.get("asset_class"),
-        })
+        }
+        # Merge position_overrides if provided
+        override = (request.position_overrides or {}).get(item["ticker"], {})
+        if override:
+            ticker_dict["amount_usd"] = override.get("amount_usd")
+            ticker_dict["target_price"] = override.get("target_price")
+        tickers_payload.append(ticker_dict)
         entry_limits[item["ticker"]] = ee.get("entry_limit")
 
     draft = ProposalDraft(

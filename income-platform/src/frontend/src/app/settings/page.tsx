@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import { Save, Plus, Trash2, Check, X, Pencil, Sun, Moon, RefreshCw, Cloud, Upload, Hand } from "lucide-react";
+import { Save, Plus, Trash2, Check, X, Pencil, Sun, Moon, Cloud, Upload } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 type SettingsTab = "global" | "portfolios" | "portfolio-config";
 
@@ -24,6 +25,13 @@ interface PortfolioConfig {
   rebalance_threshold: number;
   auto_execute_proposals: boolean;
 }
+
+interface TtlRow {
+  asset_class: string;
+  ttl_days: number;
+}
+
+const TTL_ASSET_CLASSES = ["_default", "BDC", "mREIT", "REIT", "Preferred", "Stock", "CEF", "Bond"];
 
 const DEFAULT_GLOBAL: GlobalSettings = {
   notification_email: "",
@@ -49,6 +57,11 @@ export default function SettingsPage() {
 
   // Global settings — load from localStorage
   const [global, setGlobal] = useState<GlobalSettings>(DEFAULT_GLOBAL);
+
+  // TTL config state
+  const [ttlConfig, setTtlConfig] = useState<TtlRow[]>([]);
+  const [ttlSaving, setTtlSaving] = useState(false);
+  const [ttlError, setTtlError] = useState<string | null>(null);
   useEffect(() => {
     try {
       const s = localStorage.getItem("globalSettings");
@@ -76,6 +89,50 @@ export default function SettingsPage() {
       else setConfig(DEFAULT_CONFIG);
     } catch { setConfig(DEFAULT_CONFIG); }
   }, [configPortfolioId]);
+
+  // Load TTL config
+  useEffect(() => {
+    fetch("/api/analyst-ideas/ttl-config")
+      .then((r) => r.json())
+      .then((data: TtlRow[]) => {
+        if (Array.isArray(data)) setTtlConfig(data);
+      })
+      .catch(() => {/* silently ignore */});
+  }, []);
+
+  const getTtlDays = (assetClass: string): string => {
+    const row = ttlConfig.find((r) => r.asset_class === assetClass);
+    return row ? String(row.ttl_days) : "";
+  };
+
+  const setTtlDays = (assetClass: string, value: string) => {
+    const days = parseInt(value, 10);
+    if (isNaN(days) || days < 1) return;
+    setTtlConfig((prev) => {
+      const exists = prev.find((r) => r.asset_class === assetClass);
+      if (exists) return prev.map((r) => r.asset_class === assetClass ? { ...r, ttl_days: days } : r);
+      return [...prev, { asset_class: assetClass, ttl_days: days }];
+    });
+  };
+
+  const saveTtlConfig = async () => {
+    setTtlSaving(true);
+    setTtlError(null);
+    try {
+      const resp = await fetch("/api/analyst-ideas/ttl-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ttlConfig),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail ?? "Save failed");
+      flash();
+    } catch (err) {
+      setTtlError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTtlSaving(false);
+    }
+  };
 
   const saveGlobal = () => {
     localStorage.setItem("globalSettings", JSON.stringify(global));
@@ -258,6 +315,42 @@ export default function SettingsPage() {
           >
             <Save className="h-4 w-4" /> Save Settings
           </button>
+
+          {/* Analyst Suggestion Expiry */}
+          <div className="mt-8 pt-6 border-t border-border">
+            <h3 className="text-sm font-semibold mb-1">Analyst Suggestion Expiry</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              How long analyst suggestions remain visible after ingestion.
+              Use <code className="bg-muted rounded px-1">_default</code> as the fallback for unspecified asset classes.
+            </p>
+            <div className="space-y-2 max-w-sm">
+              {TTL_ASSET_CLASSES.map((cls) => (
+                <div key={cls} className="flex items-center justify-between gap-4">
+                  <label className="text-xs text-muted-foreground w-28 shrink-0">
+                    {cls === "_default" ? "Default (days)" : cls}
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={getTtlDays(cls)}
+                    onChange={(e) => setTtlDays(cls, e.target.value)}
+                    placeholder="45"
+                    className="w-20 rounded border border-border bg-background px-2 py-1 text-sm text-right"
+                  />
+                </div>
+              ))}
+            </div>
+            {ttlError && <p className="text-xs text-red-400 mt-2">{ttlError}</p>}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={saveTtlConfig}
+              disabled={ttlSaving}
+              className="mt-4"
+            >
+              {ttlSaving ? "Saving…" : "Save TTL Config"}
+            </Button>
+          </div>
         </div>
       )}
 
