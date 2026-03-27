@@ -90,6 +90,9 @@ def extract_frameworks(
             ],
         )
         raw = response.content[0].text.strip()
+        # Strip markdown code fences if Claude wraps the JSON
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         parsed = json.loads(raw)
         if not isinstance(parsed, list):
             logger.warning(f"Article {article_sa_id}: Pass 2 returned non-list JSON")
