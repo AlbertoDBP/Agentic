@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import ShadowPortfolioEntry, WeightReviewRun
 from app.scoring.shadow_portfolio import shadow_portfolio_manager
-from app.scoring.weight_tuner import quarterly_weight_tuner
+from app.scoring.weight_tuner import quarterly_weight_tuner, should_trigger_early_review
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ class PopulateOutcomesResponse(BaseModel):
 class ReviewRequest(BaseModel):
     triggered_by: Optional[str] = None
     lookback_days: Optional[int] = None  # None = all completed outcomes
+    pillar: str = "all"   # "technical" | "income_durability" | "all"
 
 
 class ShadowEntryResponse(BaseModel):
@@ -89,6 +90,7 @@ class ReviewRunResponse(BaseModel):
     delta_technical: Optional[int]
     skip_reason: Optional[str]
     completed_at: Optional[datetime]
+    pillar_reviewed: Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -134,6 +136,7 @@ def _review_to_response(r: WeightReviewRun) -> ReviewRunResponse:
         delta_technical=r.delta_technical,
         skip_reason=r.skip_reason,
         completed_at=r.completed_at,
+        pillar_reviewed=r.pillar_reviewed,
     )
 
 
@@ -155,19 +158,105 @@ def list_shadow_portfolio(
     return [_entry_to_response(e) for e in q.limit(limit).all()]
 
 
-@router.post("/populate-outcomes", response_model=PopulateOutcomesResponse)
-def populate_outcomes(
-    req: PopulateOutcomesRequest,
+@router.post("/populate-outcomes", status_code=410)
+def populate_outcomes_deprecated():
+    """Deprecated. Use /populate-technical-outcomes or /populate-income-durability-outcomes."""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=410,
+        content={"detail": "Endpoint removed. Use /populate-technical-outcomes or /populate-income-durability-outcomes."},
+    )
+
+
+class PopulateTechnicalRequest(BaseModel):
+    exit_prices: dict[str, float]
+    benchmark_exit_prices: dict[str, float]
+    triggered_by: Optional[str] = None
+
+
+class PopulateTechnicalResponse(BaseModel):
+    updated: int
+    total_pending: int
+
+
+class PopulateIncomeDurabilityRequest(BaseModel):
+    ttm_dividends: dict[str, float]
+    current_durability_scores: dict[str, float]
+    weight_durability: float = 40.0
+    triggered_by: Optional[str] = None
+
+
+class PopulateIncomeDurabilityResponse(BaseModel):
+    income: dict
+    durability: dict
+
+
+@router.post("/populate-technical-outcomes", response_model=PopulateTechnicalResponse)
+def populate_technical_outcomes(
+    req: PopulateTechnicalRequest,
+    db: Session = Depends(get_db),
+):
+    """Populate technical_outcome_label for entries past T+60."""
+    result = shadow_portfolio_manager.populate_technical_outcomes(
+        db, req.exit_prices, req.benchmark_exit_prices
+    )
+    return PopulateTechnicalResponse(**result)
+
+
+@router.post("/populate-income-durability-outcomes", response_model=PopulateIncomeDurabilityResponse)
+def populate_income_durability_outcomes(
+    req: PopulateIncomeDurabilityRequest,
+    db: Session = Depends(get_db),
+):
+    """Populate income + durability outcome labels for entries past T+365."""
+    result = shadow_portfolio_manager.populate_income_durability_outcomes(
+        db,
+        req.ttm_dividends,
+        req.current_durability_scores,
+        weight_durability=req.weight_durability,
+    )
+    return PopulateIncomeDurabilityResponse(**result)
+
+
+class BacktestRequest(BaseModel):
+    triggered_by: Optional[str] = None
+    exit_prices: dict[str, float] = {}
+    benchmark_exit_prices: dict[str, float] = {}
+    ttm_dividends: dict[str, float] = {}
+    current_durability_scores: dict[str, float] = {}
+    weight_durability: float = 40.0
+
+
+@router.post("/backtest/{asset_class}", response_model=ReviewRunResponse, status_code=201)
+def run_backtest(
+    asset_class: str,
+    req: BacktestRequest,
     db: Session = Depends(get_db),
 ):
     """
-    Populate outcome labels for PENDING shadow portfolio entries past their hold period.
-
-    Provide exit_prices as a dict of {ticker: current_price}.
-    Only entries past their 90-day hold period are processed.
+    Retroactively populate per-pillar outcomes for all historical entries,
+    then immediately trigger apply_review(pillar='all').
     """
-    result = shadow_portfolio_manager.populate_outcomes(db, req.exit_prices)
-    return PopulateOutcomesResponse(**result)
+    ac = asset_class.upper()
+    if ac not in VALID_ASSET_CLASSES:
+        raise HTTPException(status_code=422, detail=f"Unknown asset class '{ac}'")
+
+    if req.exit_prices:
+        shadow_portfolio_manager.populate_technical_outcomes(db, req.exit_prices, req.benchmark_exit_prices)
+    if req.ttm_dividends:
+        shadow_portfolio_manager.populate_income_durability_outcomes(
+            db, req.ttm_dividends, req.current_durability_scores, weight_durability=req.weight_durability
+        )
+
+    outcomes = shadow_portfolio_manager.get_completed_outcomes(db, ac)
+    try:
+        review = quarterly_weight_tuner.apply_review(
+            db, ac, outcomes, triggered_by=req.triggered_by or "BACKTEST", pillar="all"
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Backtest review failed: {exc}")
+
+    return _review_to_response(review)
 
 
 @router.post("/review/{asset_class}", response_model=ReviewRunResponse, status_code=201)
@@ -199,7 +288,7 @@ def trigger_review(
 
     try:
         review = quarterly_weight_tuner.apply_review(
-            db, ac, outcomes, triggered_by=req.triggered_by
+            db, ac, outcomes, triggered_by=req.triggered_by, pillar=req.pillar
         )
     except Exception as exc:
         logger.error("Review trigger failed for %s: %s", ac, exc)

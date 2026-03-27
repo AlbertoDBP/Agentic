@@ -847,6 +847,7 @@ class TestLearningLoopAPI:
         r.delta_technical = -1
         r.skip_reason = None
         r.completed_at = NOW
+        r.pillar_reviewed = None
         return r
 
     # ── Auth guard ─────────────────────────────────────────────────────────────
@@ -949,65 +950,39 @@ class TestLearningLoopAPI:
 
     # ── POST /populate-outcomes ────────────────────────────────────────────────
 
-    def test_populate_outcomes_success(self):
-        with patch(
-            "app.api.learning_loop.shadow_portfolio_manager.populate_outcomes",
-            return_value={
-                "updated": 3,
-                "skipped_no_price": 1,
-                "skipped_no_entry_price": 0,
-                "total_pending": 4,
-            },
-        ):
-            resp = self._client.post(
-                "/learning-loop/populate-outcomes",
-                json={"exit_prices": {"AAPL": 175.0, "MSFT": 420.0}},
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["updated"] == 3
-        assert data["total_pending"] == 4
+    def test_populate_outcomes_deprecated_returns_410(self):
+        """Deprecated endpoint always returns 410 Gone."""
+        resp = self._client.post(
+            "/learning-loop/populate-outcomes",
+            json={"exit_prices": {"AAPL": 175.0, "MSFT": 420.0}},
+        )
+        assert resp.status_code == 410
+        assert "detail" in resp.json()
 
-    def test_populate_outcomes_empty_prices(self):
-        with patch(
-            "app.api.learning_loop.shadow_portfolio_manager.populate_outcomes",
-            return_value={
-                "updated": 0,
-                "skipped_no_price": 5,
-                "skipped_no_entry_price": 0,
-                "total_pending": 5,
-            },
-        ):
-            resp = self._client.post(
-                "/learning-loop/populate-outcomes",
-                json={"exit_prices": {}},
-            )
-        assert resp.status_code == 200
-        assert resp.json()["updated"] == 0
+    def test_populate_outcomes_empty_prices_deprecated(self):
+        """Deprecated endpoint returns 410 regardless of body."""
+        resp = self._client.post(
+            "/learning-loop/populate-outcomes",
+            json={"exit_prices": {}},
+        )
+        assert resp.status_code == 410
 
-    def test_populate_outcomes_response_shape(self):
-        with patch(
-            "app.api.learning_loop.shadow_portfolio_manager.populate_outcomes",
-            return_value={
-                "updated": 0,
-                "skipped_no_price": 0,
-                "skipped_no_entry_price": 0,
-                "total_pending": 0,
-            },
-        ):
-            resp = self._client.post(
-                "/learning-loop/populate-outcomes",
-                json={"exit_prices": {}},
-            )
-        keys = set(resp.json().keys())
-        assert keys == {"updated", "skipped_no_price", "skipped_no_entry_price", "total_pending"}
+    def test_populate_outcomes_response_shape_deprecated(self):
+        """Deprecated endpoint returns 410 with detail key."""
+        resp = self._client.post(
+            "/learning-loop/populate-outcomes",
+            json={"exit_prices": {}},
+        )
+        assert resp.status_code == 410
+        assert "detail" in resp.json()
 
-    def test_populate_outcomes_invalid_body(self):
+    def test_populate_outcomes_invalid_body_deprecated(self):
+        """Deprecated endpoint returns 410 even for invalid body."""
         resp = self._client.post(
             "/learning-loop/populate-outcomes",
             json={"not_exit_prices": {}},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 410
 
     # ── POST /review/{asset_class} ─────────────────────────────────────────────
 
@@ -1587,3 +1562,94 @@ class TestThresholdTrigger:
         outcomes = [self._make_outcome(income_label="INCORRECT")] * 15 + [self._make_outcome(income_label="CORRECT")] * 5
         result = should_trigger_early_review(outcomes, "income_durability", last_review_days_ago=15)
         assert result is False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 7: Learning Loop API v3 endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_token():
+    import jwt as pyjwt
+    secret = os.environ.get("JWT_SECRET", "test-secret-for-tests")
+    return pyjwt.encode({"sub": "test", "exp": 9999999999}, secret, algorithm="HS256")
+
+
+class TestLearningLoopAPIV3:
+    def setup_method(self):
+        from app.main import app
+        from fastapi.testclient import TestClient
+        self.client = TestClient(app)
+        self.headers = {"Authorization": "Bearer " + _make_token()}
+
+    def test_populate_technical_outcomes_returns_200(self):
+        with patch("app.api.learning_loop.shadow_portfolio_manager") as mock_mgr, \
+             patch("app.api.learning_loop.should_trigger_early_review", return_value=False):
+            mock_mgr.populate_technical_outcomes.return_value = {
+                "updated": 3, "total_pending": 3
+            }
+            resp = self.client.post(
+                "/learning-loop/populate-technical-outcomes",
+                json={"exit_prices": {"STWD": 25.0}, "benchmark_exit_prices": {"REM": 22.0}},
+                headers=self.headers,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["updated"] == 3
+
+    def test_populate_income_durability_returns_200(self):
+        with patch("app.api.learning_loop.shadow_portfolio_manager") as mock_mgr, \
+             patch("app.api.learning_loop.should_trigger_early_review", return_value=False):
+            mock_mgr.populate_income_durability_outcomes.return_value = {
+                "income": {"updated": 2, "skipped": 0, "total_pending": 2},
+                "durability": {"updated": 2, "skipped_awaiting_income": 0, "total_pending": 2},
+            }
+            resp = self.client.post(
+                "/learning-loop/populate-income-durability-outcomes",
+                json={"ttm_dividends": {"STWD": 1.85}, "current_durability_scores": {"STWD": 30.0}},
+                headers=self.headers,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["income"]["updated"] == 2
+
+    def test_old_populate_outcomes_returns_410(self):
+        resp = self.client.post(
+            "/learning-loop/populate-outcomes",
+            json={"exit_prices": {}},
+            headers=self.headers,
+        )
+        assert resp.status_code == 410
+
+    def test_review_accepts_pillar_param(self):
+        with patch("app.api.learning_loop.shadow_portfolio_manager") as mock_mgr, \
+             patch("app.api.learning_loop.quarterly_weight_tuner") as mock_tuner:
+            mock_mgr.get_completed_outcomes.return_value = []
+            review_mock = MagicMock()
+            review_mock.id = uuid.uuid4()
+            review_mock.asset_class = "DIVIDEND_STOCK"
+            review_mock.triggered_at = datetime.now(timezone.utc)
+            review_mock.triggered_by = "test"
+            review_mock.status = "SKIPPED"
+            review_mock.outcomes_analyzed = 0
+            review_mock.correct_count = 0
+            review_mock.incorrect_count = 0
+            review_mock.neutral_count = 0
+            review_mock.weight_yield_before = None
+            review_mock.weight_durability_before = None
+            review_mock.weight_technical_before = None
+            review_mock.weight_yield_after = None
+            review_mock.weight_durability_after = None
+            review_mock.weight_technical_after = None
+            review_mock.delta_yield = None
+            review_mock.delta_durability = None
+            review_mock.delta_technical = None
+            review_mock.skip_reason = "insufficient_samples:0"
+            review_mock.completed_at = None
+            review_mock.pillar_reviewed = "technical"
+            mock_tuner.apply_review.return_value = review_mock
+            resp = self.client.post(
+                "/learning-loop/review/DIVIDEND_STOCK",
+                json={"triggered_by": "test", "pillar": "technical"},
+                headers=self.headers,
+            )
+        assert resp.status_code == 201
+        assert resp.json()["pillar_reviewed"] == "technical"
