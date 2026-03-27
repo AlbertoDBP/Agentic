@@ -109,7 +109,7 @@ def build_analyst_context(suggestion_row: dict) -> dict:
         "analyst_id":           suggestion_row.get("analyst_id"),
         "analyst_name":         suggestion_row.get("analyst_name"),
         "analyst_accuracy":     _to_float(suggestion_row.get("analyst_accuracy")),
-        "analyst_sector_alpha": _to_float(suggestion_row.get("analyst_sector_alpha")),
+        "analyst_sector_alpha": suggestion_row.get("analyst_sector_alpha"),
         "price_guidance_type":  suggestion_row.get("price_guidance_type"),
         "price_guidance_value": suggestion_row.get("price_guidance_value"),
         "staleness_weight":     _to_float(suggestion_row.get("staleness_weight")),
