@@ -1180,3 +1180,155 @@ def test_benchmark_defaults_cover_all_valid_asset_classes():
     from app.api.weights import VALID_ASSET_CLASSES
     for ac in VALID_ASSET_CLASSES:
         assert ac in BENCHMARK_DEFAULTS, f"{ac} missing from benchmark defaults"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 3: ShadowPortfolioManager v3 — entry recording
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestShadowPortfolioManagerV3Entry:
+    def setup_method(self):
+        self.mgr = ShadowPortfolioManager()
+        self.db = MagicMock()
+
+    def _base_kwargs(self):
+        return dict(
+            income_score_id=uuid.uuid4(),
+            ticker="STWD",
+            asset_class="MORTGAGE_REIT",
+            entry_score=82.0,
+            entry_grade="A",
+            entry_recommendation="ACCUMULATE",
+            valuation_yield_score=32.0,
+            financial_durability_score=28.0,
+            technical_entry_score=18.0,
+            entry_price=25.0,
+            # v3.0 new params
+            benchmark_ticker="REM",
+            benchmark_entry_price=22.50,
+            durability_score_at_entry=28.0,
+            income_ttm_at_entry=1.80,
+        )
+
+    def test_records_entry_with_v3_fields(self):
+        entry = self.mgr.maybe_record_entry(self.db, **self._base_kwargs())
+        assert entry is not None
+        self.db.add.assert_called_once()
+        added = self.db.add.call_args[0][0]
+        assert added.benchmark_ticker == "REM"
+        assert added.benchmark_entry_price == 22.50
+        assert added.durability_score_at_entry == 28.0
+        assert added.income_ttm_at_entry == 1.80
+        assert added.hold_period_days == 365  # longest hold period
+
+    def test_does_not_record_hold_or_sell(self):
+        kw = self._base_kwargs()
+        kw["entry_recommendation"] = "HOLD"
+        entry = self.mgr.maybe_record_entry(self.db, **kw)
+        assert entry is None
+        self.db.add.assert_not_called()
+
+    def test_v3_params_default_to_none(self):
+        """Callers that don't pass v3 params still work (backward compat)."""
+        kw = self._base_kwargs()
+        del kw["benchmark_ticker"]
+        del kw["benchmark_entry_price"]
+        del kw["durability_score_at_entry"]
+        del kw["income_ttm_at_entry"]
+        entry = self.mgr.maybe_record_entry(self.db, **kw)
+        assert entry is not None
+        added = self.db.add.call_args[0][0]
+        assert added.benchmark_ticker is None
+        assert added.income_ttm_at_entry is None
+
+
+class TestPopulateTechnicalOutcomes:
+    def setup_method(self):
+        self.mgr = ShadowPortfolioManager()
+        self.db = MagicMock()
+        self.now = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+    def _make_pending_tech(self, ticker="STWD", entry_price=25.0, benchmark_entry_price=22.0, entry_days_ago=70):
+        e = MagicMock(spec=ShadowPortfolioEntry)
+        e.ticker = ticker
+        e.entry_price = entry_price
+        e.benchmark_entry_price = benchmark_entry_price
+        e.benchmark_ticker = "REM"
+        e.technical_outcome_label = "PENDING"
+        e.entry_date = self.now - timedelta(days=entry_days_ago)
+        return e
+
+    def _query_returns(self, entries):
+        self.db.query.return_value.filter.return_value.filter.return_value.all.return_value = entries
+
+    def test_correct_alpha(self):
+        e = self._make_pending_tech(entry_price=25.0, benchmark_entry_price=22.0)
+        self._query_returns([e])
+        # ticker +8%, benchmark +2% → alpha = +6% → CORRECT
+        result = self.mgr.populate_technical_outcomes(
+            self.db,
+            exit_prices={"STWD": 27.0},
+            benchmark_exit_prices={"REM": 22.44},
+            as_of=self.now,
+        )
+        assert e.technical_outcome_label == "CORRECT"
+        assert result["updated"] == 1
+
+    def test_incorrect_alpha(self):
+        e = self._make_pending_tech(entry_price=25.0, benchmark_entry_price=22.0)
+        self._query_returns([e])
+        # ticker -6%, benchmark +1% → alpha = -7% → INCORRECT
+        result = self.mgr.populate_technical_outcomes(
+            self.db,
+            exit_prices={"STWD": 23.5},
+            benchmark_exit_prices={"REM": 22.22},
+            as_of=self.now,
+        )
+        assert e.technical_outcome_label == "INCORRECT"
+
+    def test_neutral_alpha_within_band(self):
+        e = self._make_pending_tech(entry_price=25.0, benchmark_entry_price=22.0)
+        self._query_returns([e])
+        # ticker +1%, benchmark +0% → alpha = +1% → NEUTRAL (< 3%)
+        result = self.mgr.populate_technical_outcomes(
+            self.db,
+            exit_prices={"STWD": 25.25},
+            benchmark_exit_prices={"REM": 22.0},
+            as_of=self.now,
+        )
+        assert e.technical_outcome_label == "NEUTRAL"
+
+    def test_no_entry_price_sets_neutral(self):
+        e = self._make_pending_tech()
+        e.entry_price = None
+        self._query_returns([e])
+        self.mgr.populate_technical_outcomes(
+            self.db, exit_prices={"STWD": 27.0}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
+        )
+        assert e.technical_outcome_label == "NEUTRAL"
+
+    def test_missing_benchmark_entry_price_sets_neutral(self):
+        e = self._make_pending_tech()
+        e.benchmark_entry_price = None
+        self._query_returns([e])
+        self.mgr.populate_technical_outcomes(
+            self.db, exit_prices={"STWD": 27.0}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
+        )
+        assert e.technical_outcome_label == "NEUTRAL"
+
+    def test_delisted_ticker_sets_incorrect(self):
+        e = self._make_pending_tech()
+        self._query_returns([e])
+        # exit price not in dict → delisted
+        self.mgr.populate_technical_outcomes(
+            self.db, exit_prices={}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
+        )
+        assert e.technical_outcome_label == "INCORRECT"
+
+    def test_skips_entries_within_hold_period(self):
+        e = self._make_pending_tech(entry_days_ago=30)  # 30 < 60 day hold
+        self._query_returns([])  # query filters them out
+        result = self.mgr.populate_technical_outcomes(
+            self.db, exit_prices={"STWD": 27.0}, benchmark_exit_prices={"REM": 22.5}, as_of=self.now
+        )
+        assert result["updated"] == 0

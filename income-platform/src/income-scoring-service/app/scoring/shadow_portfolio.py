@@ -26,7 +26,14 @@ logger = logging.getLogger(__name__)
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 
-HOLD_PERIOD_DAYS: int = 90
+TECHNICAL_HOLD_DAYS: int = 60
+INCOME_DURABILITY_HOLD_DAYS: int = 365
+TECHNICAL_CORRECT_ALPHA: float = 3.0
+TECHNICAL_INCORRECT_ALPHA: float = -3.0
+
+# Keep for backward compat
+HOLD_PERIOD_DAYS: int = INCOME_DURABILITY_HOLD_DAYS
+
 CORRECT_THRESHOLD: float = 5.0    # % return → CORRECT
 INCORRECT_THRESHOLD: float = -5.0  # % return → INCORRECT
 MIN_ENTRY_SCORE: float = 70.0     # only ACCUMULATE+ (score ≥ 70) recorded
@@ -50,14 +57,12 @@ class ShadowPortfolioManager:
         technical_entry_score: float,
         weight_profile_id=None,
         entry_price: Optional[float] = None,
+        # v3.0 per-pillar capture
+        benchmark_ticker: Optional[str] = None,
+        benchmark_entry_price: Optional[float] = None,
+        durability_score_at_entry: Optional[float] = None,
+        income_ttm_at_entry: Optional[float] = None,
     ) -> Optional[ShadowPortfolioEntry]:
-        """
-        Record a shadow portfolio entry if the recommendation qualifies.
-
-        Only AGGRESSIVE_BUY and ACCUMULATE are recorded — these are bullish
-        calls the weight profile was responsible for. Returns the created entry
-        or None if the recommendation doesn't qualify.
-        """
         if entry_recommendation not in ("AGGRESSIVE_BUY", "ACCUMULATE"):
             return None
 
@@ -74,23 +79,117 @@ class ShadowPortfolioManager:
             technical_entry_score=technical_entry_score,
             entry_price=entry_price,
             entry_date=datetime.now(timezone.utc),
-            hold_period_days=HOLD_PERIOD_DAYS,
+            hold_period_days=INCOME_DURABILITY_HOLD_DAYS,
             outcome_label="PENDING",
+            # v3.0
+            benchmark_ticker=benchmark_ticker,
+            benchmark_entry_price=benchmark_entry_price,
+            durability_score_at_entry=durability_score_at_entry,
+            income_ttm_at_entry=income_ttm_at_entry,
+            technical_outcome_label="PENDING",
+            income_outcome_label="PENDING",
+            durability_outcome_label="PENDING",
         )
         try:
             db.add(entry)
             db.flush()
             logger.debug(
-                "Shadow portfolio entry recorded for %s (%s, score=%.1f)",
+                "Shadow entry recorded for %s (%s, score=%.1f)",
                 ticker, entry_recommendation, entry_score,
             )
             return entry
         except Exception as exc:
-            logger.warning("Failed to record shadow portfolio entry for %s: %s", ticker, exc)
+            logger.warning("Failed to record shadow entry for %s: %s", ticker, exc)
             db.rollback()
             return None
 
-    def populate_outcomes(
+    def populate_technical_outcomes(
+        self,
+        db: Session,
+        exit_prices: dict[str, float],
+        benchmark_exit_prices: dict[str, float],
+        *,
+        as_of: Optional[datetime] = None,
+    ) -> dict:
+        """
+        Populate technical_outcome_label for PENDING entries past T+60.
+
+        exit_prices: {ticker: current_price}
+        benchmark_exit_prices: {benchmark_ticker: current_price}
+        """
+        now = as_of or datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=TECHNICAL_HOLD_DAYS)
+
+        pending = (
+            db.query(ShadowPortfolioEntry)
+            .filter(ShadowPortfolioEntry.technical_outcome_label == "PENDING")
+            .filter(ShadowPortfolioEntry.entry_date <= cutoff)
+            .all()
+        )
+
+        updated = skipped = 0
+
+        for entry in pending:
+            exit_price = exit_prices.get(entry.ticker)
+
+            # Delisted: no exit price → INCORRECT
+            if exit_price is None:
+                entry.technical_outcome_label = "INCORRECT"
+                entry.technical_outcome_at = now
+                updated += 1
+                continue
+
+            # Missing entry data → NEUTRAL
+            if not entry.entry_price or entry.entry_price <= 0:
+                entry.technical_outcome_label = "NEUTRAL"
+                entry.technical_outcome_at = now
+                updated += 1
+                continue
+
+            if not entry.benchmark_entry_price or entry.benchmark_entry_price <= 0:
+                entry.technical_outcome_label = "NEUTRAL"
+                entry.technical_outcome_at = now
+                updated += 1
+                continue
+
+            bm_exit = benchmark_exit_prices.get(entry.benchmark_ticker or "")
+            if bm_exit is None or bm_exit <= 0:
+                entry.technical_outcome_label = "NEUTRAL"
+                entry.technical_outcome_at = now
+                updated += 1
+                continue
+
+            ticker_return = (exit_price - entry.entry_price) / entry.entry_price * 100.0
+            bm_return = (bm_exit - entry.benchmark_entry_price) / entry.benchmark_entry_price * 100.0
+            alpha = round(ticker_return - bm_return, 4)
+
+            entry.technical_exit_price = exit_price
+            entry.benchmark_exit_price = bm_exit
+            entry.technical_return_pct = round(ticker_return, 4)
+            entry.technical_benchmark_return_pct = round(bm_return, 4)
+            entry.technical_alpha_pct = alpha
+            entry.technical_outcome_at = now
+
+            if alpha >= TECHNICAL_CORRECT_ALPHA:
+                entry.technical_outcome_label = "CORRECT"
+            elif alpha <= TECHNICAL_INCORRECT_ALPHA:
+                entry.technical_outcome_label = "INCORRECT"
+            else:
+                entry.technical_outcome_label = "NEUTRAL"
+
+            updated += 1
+
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.error("populate_technical_outcomes commit failed: %s", exc)
+            raise
+
+        logger.info("Technical outcomes: %d updated, %d pending total", updated, len(pending))
+        return {"updated": updated, "skipped": skipped, "total_pending": len(pending)}
+
+    def populate_outcomes_legacy(
         self,
         db: Session,
         exit_prices: dict[str, float],
@@ -169,6 +268,10 @@ class ShadowPortfolioManager:
             "skipped_no_entry_price": skipped_no_entry_price,
             "total_pending": len(pending),
         }
+
+    # Backward-compat alias: existing call sites use populate_outcomes until Task 7
+    def populate_outcomes(self, *args, **kwargs):
+        return self.populate_outcomes_legacy(*args, **kwargs)
 
     def get_pending_past_hold(self, db: Session, as_of: Optional[datetime] = None) -> list:
         """Return PENDING entries whose hold period has elapsed."""
