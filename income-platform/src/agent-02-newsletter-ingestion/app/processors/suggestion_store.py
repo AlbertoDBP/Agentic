@@ -75,7 +75,7 @@ def upsert_suggestion(
              :recommendation, :sentiment_score, :price_guidance_type,
              CAST(:price_guidance_value AS JSONB), 1.0, TRUE,
              :sourced_at, :expires_at)
-        ON CONFLICT ON CONSTRAINT uix_analyst_suggestions_active
+        ON CONFLICT (analyst_id, ticker) WHERE is_active = TRUE
         DO UPDATE SET
             article_framework_id = EXCLUDED.article_framework_id,
             recommendation       = EXCLUDED.recommendation,
