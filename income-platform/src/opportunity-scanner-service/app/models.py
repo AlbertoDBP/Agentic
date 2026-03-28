@@ -58,9 +58,10 @@ class ProposalDraft(Base):
         ForeignKey("platform_shared.scan_results.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # FK to platform_shared.portfolios exists at DB level; omitted here because
+    # the portfolios ORM model lives in another service's metadata.
     target_portfolio_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("platform_shared.portfolios.id"),
         nullable=False,
     )
     tickers: Mapped[list] = mapped_column(JSONB, nullable=False)       # [{ticker, entry_limit, exit_limit}]
