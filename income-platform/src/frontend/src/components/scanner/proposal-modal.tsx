@@ -46,6 +46,8 @@ export function ProposalModal({
   const selectedItems: ScanItem[] = (scanResult?.items ?? []).filter(
     (i) => selectedTickers.has(i.ticker)
   );
+  // Only show portfolios with holdings — filters out empty/test accounts
+  const activePortfolios = portfolios.filter((p) => p.holding_count > 0);
 
   const handleSubmit = async () => {
     if (!targetPortfolioId || !scanResult) return;
@@ -106,8 +108,10 @@ export function ProposalModal({
                 <SelectValue placeholder="Select target portfolio..." />
               </SelectTrigger>
               <SelectContent>
-                {portfolios.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                {activePortfolios.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}{p.broker ? ` · ${p.broker}` : ""}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>

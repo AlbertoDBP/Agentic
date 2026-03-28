@@ -50,6 +50,8 @@ export function AnalystIdeasDrawer({
     [scanResult, selectedTickers]
   );
 
+  // Only show portfolios that have holdings — empty/test accounts are not valid proposal targets
+  const activePortfolios = portfolios.filter((p) => p.holding_count > 0);
   const selectedPortfolio = portfolios.find((p) => p.id === targetPortfolioId);
   const cashBalance: number | null = (selectedPortfolio as any)?.cash_balance ?? null;
 
@@ -115,8 +117,10 @@ export function AnalystIdeasDrawer({
                 <SelectValue placeholder="Select target portfolio..." />
               </SelectTrigger>
               <SelectContent>
-                {portfolios.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                {activePortfolios.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}{p.broker ? ` · ${p.broker}` : ""}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
