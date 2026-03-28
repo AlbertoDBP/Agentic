@@ -18,7 +18,7 @@ const GRADE_COLORS: Record<string, string> = {
   F: "bg-red-100 text-red-700",
 };
 
-function ScorePill({ score, grade }: { score: number; grade: string }) {
+export function ScorePill({ score, grade }: { score: number; grade: string }) {
   const color = GRADE_COLORS[grade] ?? "bg-gray-100 text-gray-700";
   return (
     <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums", color)}>

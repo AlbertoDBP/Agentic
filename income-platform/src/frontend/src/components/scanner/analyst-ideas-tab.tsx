@@ -2,9 +2,13 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { ChevronDown, ChevronRight, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { AnalystIdeasDrawer } from "@/components/analyst-ideas-drawer";
+import { ScorePill } from "./results-table";
+import { EntryExitBadge, EntryExitExpandedRow } from "./entry-exit-badge";
 import type { ScanResult, ScanItem, PortfolioListItem } from "@/lib/types";
 
 interface Analyst {
@@ -15,18 +19,15 @@ interface Analyst {
 
 const ASSET_CLASSES = ["BDC", "mREIT", "REIT", "Preferred", "Stock", "CEF", "Bond"];
 
-// Same neutral bg for all grades, colored text — consistent with HHS badge
-const GRADE_TEXT: Record<string, string> = {
-  A: "text-emerald-400",
-  B: "text-lime-400",
-  C: "text-amber-400",
-  D: "text-orange-400",
-  F: "text-red-400",
+// Analyst-sourced recommendation colors (newsletter call, not income score)
+const ANALYST_REC_COLOR: Record<string, string> = {
+  Buy:          "text-emerald-600",
+  BUY:          "text-emerald-600",
+  Sell:         "text-red-500",
+  SELL:         "text-red-500",
+  Hold:         "text-amber-500",
+  HOLD:         "text-amber-500",
 };
-
-// Shared column template used by both header and rows
-// checkbox | rank | ticker | grade+score | rec | analyst | entry | exit
-const COL_TEMPLATE = "20px 24px 100px 72px 92px minmax(0,1fr) 80px 68px";
 
 interface AnalystIdeasTabProps {
   portfolios: PortfolioListItem[];
@@ -34,32 +35,28 @@ interface AnalystIdeasTabProps {
 }
 
 export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps) {
-  // Filter state
   const [analysts, setAnalysts] = useState<Analyst[]>([]);
   const [selectedAnalystIds, setSelectedAnalystIds] = useState<number[]>([]);
   const [selectedAssetClasses, setSelectedAssetClasses] = useState<string[]>([]);
   const [minStaleness, setMinStaleness] = useState(0.3);
   const [showHistory, setShowHistory] = useState(false);
+  const [showVetoed, setShowVetoed] = useState(false);
 
-  // Scan state
   const [result, setResult] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Selection + drawer
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load analyst list once on mount
   useEffect(() => {
     fetch("/api/analyst-ideas/analysts")
       .then((r) => r.json())
       .then((data: Analyst[]) => setAnalysts(Array.isArray(data) ? data : []))
-      .catch(() => {
-        console.warn("Could not load analyst list — filter will show all analysts");
-      });
+      .catch(() => {});
   }, []);
 
   const runScan = useCallback(async (overrides?: {
@@ -101,13 +98,11 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
     }
   }, [selectedAnalystIds, selectedAssetClasses, minStaleness, showHistory]);
 
-  // Auto-scan on mount
   useEffect(() => {
     runScan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Debounced re-scan on filter changes
   const debouncedScan = useCallback((overrides?: Parameters<typeof runScan>[0]) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => runScan(overrides), 400);
@@ -141,8 +136,8 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
     runScan({ history: next });
   };
 
-  const handleToggleTicker = (ticker: string) => {
-    setSelectedTickers((prev) => {
+  const toggleExpand = (ticker: string) => {
+    setExpandedRows((prev) => {
       const next = new Set(prev);
       next.has(ticker) ? next.delete(ticker) : next.add(ticker);
       return next;
@@ -156,12 +151,11 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
     runScan({ analystIds: [], assetClasses: [], staleness: 0.3 });
   };
 
-  // Split active vs history items
   const allItems = result?.items ?? [];
   const activeItems = allItems.filter((i) => i.analyst_context?.is_active !== false);
   const historyItems = allItems.filter((i) => i.analyst_context?.is_active === false);
-  const passedCount = allItems.filter((i) => i.passed_quality_gate).length;
-  const belowGateCount = allItems.filter((i) => !i.passed_quality_gate).length;
+  const passed = activeItems.filter((i) => !i.veto_flag);
+  const vetoed = activeItems.filter((i) => i.veto_flag);
   const sourced_at: string | null = (result?.filters_applied as Record<string, unknown>)?.sourced_at as string ?? null;
 
   const belowGateSelected = [...selectedTickers].some(
@@ -170,106 +164,107 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
 
   const renderRow = (item: ScanItem, isHistoryRow = false) => {
     const ctx = item.analyst_context;
-    const isBelow = !item.passed_quality_gate;
-    const gradeKey = item.grade?.[0] ?? "F";
-    const gradeTextClass = GRADE_TEXT[gradeKey] ?? GRADE_TEXT.F;
+    const expanded = expandedRows.has(item.ticker);
+    const selected = selectedTickers.has(item.ticker);
+    const analystRecColor = ANALYST_REC_COLOR[ctx?.recommendation ?? ""] ?? "text-muted-foreground";
 
     return (
-      <div
-        key={`${item.ticker}-${isHistoryRow}`}
-        className={cn(
-          "grid items-center px-3 py-2 border-b border-border/50 text-sm",
-          isHistoryRow && "opacity-55"
-        )}
-        style={{ gridTemplateColumns: COL_TEMPLATE, gap: "0 6px" }}
-      >
-        {/* Checkbox */}
-        <input
-          type="checkbox"
-          checked={selectedTickers.has(item.ticker)}
-          onChange={() => handleToggleTicker(item.ticker)}
-          className="accent-violet-500 w-3.5 h-3.5"
-        />
-
-        {/* Rank */}
-        <span className="text-muted-foreground text-xs tabular-nums">
-          {item.passed_quality_gate ? item.rank : "—"}
-        </span>
-
-        {/* Ticker + asset class + badges */}
-        <div className="min-w-0">
-          <div className="font-mono font-semibold text-[13px] leading-tight">
-            {item.ticker}
-          </div>
-          <div className="text-[10px] text-muted-foreground leading-tight flex flex-wrap items-center gap-x-1">
-            <span>{item.asset_class}</span>
-            {isHistoryRow && <span className="italic">archived</span>}
-            {isBelow && <span className="text-amber-400">⚠</span>}
-          </div>
-          {ctx?.is_proposed && (
-            <span
-              className="inline-block text-[9px] font-medium rounded-full px-1.5 py-0 bg-violet-900/40 text-violet-400 border border-violet-800/40"
-              title={ctx.proposed_at ? `Submitted ${new Date(ctx.proposed_at).toLocaleDateString()}` : "Proposed"}
-            >
-              PROPOSED
-            </span>
+      <>
+        <tr
+          key={`${item.ticker}-${isHistoryRow}`}
+          className={cn(
+            "border-b border-border hover:bg-muted/30 transition-colors",
+            selected && "bg-primary/5",
+            isHistoryRow && "opacity-55"
           )}
-        </div>
-
-        {/* Grade + Score — neutral bg, colored text by grade (HHS pattern) */}
-        <div>
-          <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 bg-zinc-900 border border-zinc-700/60 font-semibold">
-            <span className={cn("text-[11px]", gradeTextClass)}>{item.grade}</span>
-            <span className="text-xs tabular-nums text-zinc-300">{Math.round(item.score)}</span>
-          </span>
-        </div>
-
-        {/* Recommendation */}
-        <span className={cn(
-          "text-xs font-semibold",
-          item.recommendation === "BUY" ? "text-emerald-400" : "text-red-400"
-        )}>
-          {item.recommendation}
-        </span>
-
-        {/* Analyst name + staleness */}
-        <div className="min-w-0 truncate">
-          <div className="text-[11px] text-foreground/80 truncate">{ctx?.analyst_name ?? "—"}</div>
-          <div className="text-[10px] text-violet-400/70">
-            {ctx?.staleness_weight != null ? `w ${ctx.staleness_weight.toFixed(2)}` : ""}
-          </div>
-        </div>
-
-        {/* Entry zone */}
-        <span className="text-[11px] text-muted-foreground tabular-nums">
-          {item.entry_exit?.entry_limit != null
-            ? `$${item.entry_exit.entry_limit.toFixed(2)}`
-            : "—"}
-        </span>
-
-        {/* Exit */}
-        <span className={cn(
-          "text-[11px] tabular-nums",
-          item.recommendation === "SELL" ? "text-red-400" : "text-muted-foreground"
-        )}>
-          {item.entry_exit?.exit_limit != null ? `$${item.entry_exit.exit_limit.toFixed(2)}` : "—"}
-        </span>
-      </div>
+        >
+          <td className="px-3 py-2.5 w-8">
+            <Checkbox
+              checked={selected}
+              onCheckedChange={() => setSelectedTickers((prev) => {
+                const next = new Set(prev);
+                next.has(item.ticker) ? next.delete(item.ticker) : next.add(item.ticker);
+                return next;
+              })}
+            />
+          </td>
+          <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">
+            {item.passed_quality_gate ? item.rank : "—"}
+          </td>
+          <td className="px-3 py-2.5">
+            <div>
+              <span className="font-mono font-semibold text-sm">{item.ticker}</span>
+              {ctx?.is_proposed && (
+                <span
+                  className="ml-1.5 inline-block text-[9px] font-medium rounded-full px-1.5 py-0 bg-violet-900/40 text-violet-400 border border-violet-800/40"
+                  title={ctx.proposed_at ? `Submitted ${new Date(ctx.proposed_at).toLocaleDateString()}` : "Proposed"}
+                >
+                  PROPOSED
+                </span>
+              )}
+            </div>
+          </td>
+          <td className="px-3 py-2.5 text-xs text-muted-foreground">
+            {item.asset_class.replace(/_/g, " ")}
+          </td>
+          <td className="px-3 py-2.5">
+            <ScorePill score={item.score} grade={item.grade} />
+          </td>
+          <td className="px-3 py-2.5 text-xs">
+            {item.recommendation.replace(/_/g, " ")}
+          </td>
+          <td className="px-3 py-2.5 text-xs tabular-nums">
+            {item.entry_exit ? <EntryExitBadge entryExit={item.entry_exit} /> : "—"}
+          </td>
+          <td className="px-3 py-2.5 text-xs tabular-nums font-medium">
+            {item.entry_exit?.current_price != null ? `$${item.entry_exit.current_price.toFixed(2)}` : "—"}
+          </td>
+          <td className="px-3 py-2.5 text-xs tabular-nums">
+            {item.entry_exit?.exit_limit != null ? `$${item.entry_exit.exit_limit.toFixed(2)}` : "—"}
+          </td>
+          <td className="px-3 py-2.5 text-xs tabular-nums">
+            {item.chowder_number != null ? item.chowder_number.toFixed(1) : "—"}
+          </td>
+          {/* Analyst column — extra vs Full Universe */}
+          <td className="px-3 py-2.5">
+            <div className="text-xs text-foreground/80">{ctx?.analyst_name ?? "—"}</div>
+            {ctx?.recommendation && (
+              <div className={cn("text-[10px] font-medium", analystRecColor)}>
+                {ctx.recommendation}
+              </div>
+            )}
+          </td>
+          <td className="px-3 py-2.5">
+            {item.veto_flag && <ShieldAlert className="h-4 w-4 text-red-500" />}
+          </td>
+          <td className="px-3 py-2.5 w-6">
+            {item.entry_exit && (
+              <button onClick={() => toggleExpand(item.ticker)} className="text-muted-foreground hover:text-foreground">
+                {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </button>
+            )}
+          </td>
+        </tr>
+        {expanded && item.entry_exit && (
+          <tr className="bg-muted/20 border-b border-border">
+            <td colSpan={13} className="px-6 py-2">
+              <EntryExitExpandedRow entryExit={item.entry_exit} />
+            </td>
+          </tr>
+        )}
+      </>
     );
   };
 
   return (
-    <div className="space-y-0">
+    <div className="space-y-4">
       {/* Filter panel */}
-      <div className="rounded-lg border border-border bg-card p-4 space-y-3 mb-4">
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
         <div className="grid grid-cols-3 gap-4">
-          {/* Analysts multi-select */}
           <div>
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-2">Analysts</label>
             <div className="flex flex-wrap gap-1.5">
-              {analysts.length === 0 && (
-                <span className="text-xs text-muted-foreground">All analysts</span>
-              )}
+              {analysts.length === 0 && <span className="text-xs text-muted-foreground">All analysts</span>}
               {analysts.map((a) => (
                 <button
                   key={a.id}
@@ -287,7 +282,6 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
             </div>
           </div>
 
-          {/* Asset class badges */}
           <div>
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-2">Asset Classes</label>
             <div className="flex flex-wrap gap-1.5">
@@ -308,7 +302,6 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
             </div>
           </div>
 
-          {/* Staleness slider */}
           <div>
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-2">
               Min Staleness <span className="text-violet-400 font-semibold">{minStaleness.toFixed(2)}</span>
@@ -322,29 +315,34 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
               onChange={handleStalenessChange}
               className="w-full mt-2 accent-violet-500"
             />
-            <p className="text-[10px] text-muted-foreground mt-1">How fresh and reliable (0 = any, 1 = only very recent high-accuracy ideas)</p>
+            <p className="text-[10px] text-muted-foreground mt-1">0 = any, 1 = only very recent high-accuracy ideas</p>
           </div>
         </div>
       </div>
 
       {/* Error */}
       {error && (
-        <div className="rounded-md bg-red-950/30 border border-red-800/40 px-4 py-2 text-sm text-red-400 mb-3">
+        <div className="rounded-md bg-red-950/30 border border-red-800/40 px-4 py-2 text-sm text-red-400">
           {error}
         </div>
       )}
 
-      {/* Stats bar + history toggle */}
-      {result && !loading && (
-        <div className="flex items-center justify-between px-1 py-1.5 mb-2">
-          <div className="text-xs text-muted-foreground flex gap-3">
-            <span>{allItems.length} analyst ideas</span>
-            <span className="text-emerald-400">{passedCount} passed quality gate</span>
-            {belowGateCount > 0 && (
-              <span className="text-amber-400">{belowGateCount} below gate — selectable at your risk</span>
-            )}
-            {sourced_at && (
-              <span className="ml-auto">Last ingestion: {new Date(sourced_at).toLocaleDateString()}</span>
+      {/* Results table */}
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        {/* Stats bar */}
+        <div className="px-4 py-2 border-b border-border bg-muted/30 flex items-center justify-between gap-4 text-xs text-muted-foreground">
+          <div className="flex gap-4">
+            {loading ? (
+              <span>Loading…</span>
+            ) : result ? (
+              <>
+                <span>{allItems.length} analyst ideas</span>
+                <span className="text-emerald-600 font-medium">{passed.length} passed</span>
+                {vetoed.length > 0 && <span className="text-red-500">{vetoed.length} vetoed</span>}
+                {sourced_at && <span>Last ingestion: {new Date(sourced_at).toLocaleDateString()}</span>}
+              </>
+            ) : (
+              <span>—</span>
             )}
           </div>
           <button
@@ -359,61 +357,94 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
             {showHistory ? "Hide history" : "Show history"}
           </button>
         </div>
-      )}
 
-      {/* Loading state */}
-      {loading && (
-        <div className="py-12 text-center text-sm text-muted-foreground">
-          Loading analyst ideas…
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/20 text-xs text-muted-foreground">
+                <th className="px-3 py-2 text-left w-8" />
+                <th className="px-3 py-2 text-left">#</th>
+                <th className="px-3 py-2 text-left">Ticker</th>
+                <th className="px-3 py-2 text-left">Class</th>
+                <th className="px-3 py-2 text-left">Score</th>
+                <th className="px-3 py-2 text-left">Rec</th>
+                <th className="px-3 py-2 text-left">Entry $</th>
+                <th className="px-3 py-2 text-left">Current $</th>
+                <th className="px-3 py-2 text-left">Exit $</th>
+                <th className="px-3 py-2 text-left">Chowder</th>
+                <th className="px-3 py-2 text-left">Analyst</th>
+                <th className="px-3 py-2 text-left" />
+                <th className="px-3 py-2 w-6" />
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr>
+                  <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                    Loading analyst ideas…
+                  </td>
+                </tr>
+              )}
+
+              {!loading && !result && (
+                <tr>
+                  <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                    Run a scan to see results.
+                  </td>
+                </tr>
+              )}
+
+              {!loading && result && allItems.length === 0 && (
+                <tr>
+                  <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                    No active analyst ideas match your filters.{" "}
+                    <button onClick={clearFilters} className="underline text-violet-400 hover:text-violet-300">
+                      Clear filters
+                    </button>
+                  </td>
+                </tr>
+              )}
+
+              {/* Passed rows */}
+              {!loading && passed.map((item) => renderRow(item, false))}
+
+              {/* Vetoed section */}
+              {!loading && vetoed.length > 0 && (
+                <>
+                  <tr className="border-b border-border bg-muted/10">
+                    <td colSpan={13} className="px-4 py-2">
+                      <button
+                        onClick={() => setShowVetoed(!showVetoed)}
+                        className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                      >
+                        {showVetoed ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                        Show vetoed ({vetoed.length}) — below quality gate, selectable at your risk
+                      </button>
+                    </td>
+                  </tr>
+                  {showVetoed && vetoed.map((item) => renderRow(item, false))}
+                </>
+              )}
+
+              {/* History section */}
+              {!loading && showHistory && historyItems.length > 0 && (
+                <>
+                  <tr className="border-b border-border bg-muted/10">
+                    <td colSpan={13} className="px-4 py-1.5 text-[10px] text-muted-foreground/60 italic text-center">
+                      — Previous suggestions (within expiry window) —
+                    </td>
+                  </tr>
+                  {historyItems.map((item) => renderRow(item, true))}
+                </>
+              )}
+            </tbody>
+          </table>
         </div>
-      )}
-
-      {/* Empty state */}
-      {!loading && result && allItems.length === 0 && (
-        <div className="py-12 text-center text-sm text-muted-foreground">
-          No active analyst ideas match your filters. Agent 02 ingests newsletters bi-weekly.{" "}
-          <button onClick={clearFilters} className="underline text-violet-400 hover:text-violet-300">
-            Clear filters
-          </button>
-        </div>
-      )}
-
-      {/* Results table */}
-      {!loading && allItems.length > 0 && (
-        <div className="rounded-lg border border-border overflow-hidden">
-          {/* Header */}
-          <div
-            className="grid px-3 py-2 bg-muted/20 border-b border-border text-[10px] text-muted-foreground uppercase tracking-wide"
-            style={{ gridTemplateColumns: COL_TEMPLATE, gap: "0 6px" }}
-          >
-            <span />
-            <span>#</span>
-            <span>Ticker</span>
-            <span>Grade</span>
-            <span>Rec</span>
-            <span>Analyst</span>
-            <span>Entry</span>
-            <span>Exit</span>
-          </div>
-
-          {/* Active rows */}
-          {activeItems.map((item) => renderRow(item, false))}
-
-          {/* History rows (when toggle is on) */}
-          {showHistory && historyItems.length > 0 && (
-            <>
-              <div className="px-3 py-1.5 text-[10px] text-muted-foreground/60 italic border-y border-border/50 bg-muted/10 text-center">
-                — Previous suggestions (within expiry window) —
-              </div>
-              {historyItems.map((item) => renderRow(item, true))}
-            </>
-          )}
-        </div>
-      )}
+      </div>
 
       {/* Action bar */}
-      {!loading && allItems.length > 0 && (
-        <div className="flex items-center gap-3 px-1 py-3 border-t border-border mt-0">
+      {allItems.length > 0 && (
+        <div className="flex items-center gap-3 px-1 py-2">
           <span className="text-xs text-muted-foreground">{selectedTickers.size} selected</span>
           <Button
             size="sm"
@@ -425,13 +456,12 @@ export function AnalystIdeasTab({ portfolios, onSuccess }: AnalystIdeasTabProps)
           </Button>
           {belowGateSelected && (
             <span className="text-xs text-amber-400">
-              ⚠ {[...selectedTickers].filter((t) => allItems.find((i) => i.ticker === t && !i.passed_quality_gate)).length} below quality gate — included at your risk
+              ⚠ {[...selectedTickers].filter((t) => allItems.find((i) => i.ticker === t && !i.passed_quality_gate)).length} below quality gate
             </span>
           )}
         </div>
       )}
 
-      {/* Proposal drawer */}
       <AnalystIdeasDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
