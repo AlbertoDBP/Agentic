@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
-NAV_ELIGIBLE_CLASSES = {"BDC", "MORTGAGE_REIT"}
+NAV_ELIGIBLE_CLASSES = {"BDC", "MORTGAGE_REIT", "CEF", "PREFERRED_STOCK"}
 
 
 class ZoneStatus(str, Enum):
@@ -80,17 +80,24 @@ def compute_entry_exit(
 
     if price is not None and dividend_yield is not None:
         annual_dividend = price * (dividend_yield / 100.0)
-        yield_entry_target = dividend_yield * 1.15   # proxy for historical high yield
-        yield_exit_target  = dividend_yield * 0.85   # proxy for historical low yield
+        # 5% yield premium — entry when yield is modestly above current level.
+        # (Formerly 15%, which anchored entry to ≈87% of current price regardless
+        # of whether the yield was historically cheap. Without yield_5yr_avg in the
+        # cache this formula reduces to price/multiplier, so a smaller multiplier
+        # produces more realistic targets.)
+        yield_entry_target = dividend_yield * 1.05
+        yield_exit_target  = dividend_yield * 0.90   # exit when yield compresses 10%
 
     # ── Entry signals ────────────────────────────────────────────────────────
     technical_entry: Optional[float] = None
-    if support_level is not None or sma_200 is not None:
-        candidates = []
-        if support_level is not None:
+    if sma_200 is not None:
+        # SMA-200 is the preferred technical entry: buy just above the 200-day trend.
+        # 52-week low alone is NOT used as technical support — it is the annual floor,
+        # not a meaningful support level, and anchors entry too conservatively.
+        candidates = [sma_200 * 1.01]
+        if support_level is not None and support_level > sma_200 * 0.90:
+            # Only add support if it is meaningfully above SMA-200 (not the 52wk low)
             candidates.append(support_level)
-        if sma_200 is not None:
-            candidates.append(sma_200 * 1.01)
         technical_entry = max(candidates)
 
     yield_entry: Optional[float] = None
@@ -102,19 +109,18 @@ def compute_entry_exit(
         nav_entry = nav_value * 0.95
 
     entry_signals = [s for s in [technical_entry, yield_entry, nav_entry] if s is not None]
-    entry_limit = min(entry_signals) if entry_signals else None
-    # Round entry_limit before computing pct_from_entry for consistency
-    entry_limit = round(entry_limit, 2) if entry_limit is not None else None
+    # Use average of available signals rather than the most conservative (min).
+    # min() systematically excluded good-value tickers by requiring ALL signals to agree.
+    entry_limit = round(sum(entry_signals) / len(entry_signals), 2) if entry_signals else None
 
     # ── Exit signals ─────────────────────────────────────────────────────────
     technical_exit: Optional[float] = None
-    if resistance_level is not None or week_52_high is not None:
-        candidates = []
-        if resistance_level is not None:
-            candidates.append(resistance_level)
-        if week_52_high is not None:
-            candidates.append(week_52_high * 0.95)
-        technical_exit = min(candidates)
+    if resistance_level is not None and sma_200 is not None:
+        # Only use resistance when we also have SMA-200 context; 52-week high alone
+        # tends to be reached right at the top and fires exit too early.
+        technical_exit = min(resistance_level, week_52_high * 0.95) if week_52_high else resistance_level
+    elif week_52_high is not None and sma_200 is not None:
+        technical_exit = week_52_high * 0.95
 
     yield_exit: Optional[float] = None
     if annual_dividend is not None and yield_exit_target is not None and yield_exit_target > 0:
@@ -125,9 +131,7 @@ def compute_entry_exit(
         nav_exit = nav_value * 1.05
 
     exit_signals = [s for s in [technical_exit, yield_exit, nav_exit] if s is not None]
-    exit_limit = min(exit_signals) if exit_signals else None
-    # Round exit_limit for consistency
-    exit_limit = round(exit_limit, 2) if exit_limit is not None else None
+    exit_limit = round(sum(exit_signals) / len(exit_signals), 2) if exit_signals else None
 
     # ── Zone status ──────────────────────────────────────────────────────────
     pct_from_entry: Optional[float] = None
