@@ -48,7 +48,7 @@ export const PORTFOLIO_TAB_HELP: Record<string, PageHelpContent> = {
     sections: [
       {
         title: "What you're seeing",
-        body: "The Health tab surfaces the HHS scoring breakdown for every position. Columns show the two sub-pillars (Income and Durability), the Income Entry Score (IES, when available), quality gate status, and factor-level details. Click a row to expand the full factor breakdown.",
+        body: "The Health tab surfaces the HHS scoring breakdown for every position. Columns show the two sub-pillars (Income and Durability), the Income Entry Score (IES, when available), data gate status, and factor-level details. Click a row to expand the full factor breakdown.\n\nThese scores answer 'how healthy is this holding?' — not 'should I buy more?' A high HHS or IES means the position is healthy and income-efficient. To evaluate whether to add shares, run the ticker through the Scanner — a healthy holding can still be below the Scanner's buy threshold if the price is elevated.",
       },
       {
         title: "Income Pillar (INC)",
@@ -60,11 +60,11 @@ export const PORTFOLIO_TAB_HELP: Record<string, PageHelpContent> = {
       },
       {
         title: "Income Entry Score (IES)",
-        body: "IES (0–100) answers: 'Is now a good time to add or initiate this position?' It only calculates when HHS > 50 and no UNSAFE flag is present.\n\nValuation component (60%): yield vs. 5-year own average, Chowder Number, payout ratio.\nTechnical component (40%): RSI, price vs. 50/200-day SMAs, proximity to technical support.\n\nA high IES does not override a low HHS — health must come first.",
+        body: "IES (0–100) answers: 'Is the income entry point attractive for this holding?' It only calculates when HHS > 50 and no UNSAFE flag is present.\n\nValuation component (60%): yield vs. 5-year own average, Chowder Number, payout ratio.\nTechnical component (40%): RSI, price vs. 50/200-day SMAs, proximity to technical support.\n\nImportant: a high IES means the holding's income metrics look attractive relative to its history — it is not a buy signal. Use the Scanner to evaluate whether to add shares. A high IES on a healthy holding (HHS > 70) is a prompt to run a Scanner check, not a reason to buy directly.",
       },
       {
-        title: "Quality Gate",
-        body: "Before a score is assigned, the Quality Gate verifies minimum criteria are met:\n• PASS — all required data present, score is reliable\n• INSUFFICIENT_DATA — gate ran but key data was missing; score is provisional\n• FAIL — minimum criteria not met (e.g., fewer than 3 years of dividend history for a REIT)\n\nGate-failed holdings show '—' for HHS and are excluded from the Aggregate HHS.",
+        title: "Data Gate",
+        body: "Before a score is assigned, the Data Gate verifies minimum data quality:\n• PASS — all required data present, score is reliable\n• INSUFFICIENT_DATA — gate ran but key data was missing; score is provisional\n• FAIL — minimum criteria not met (e.g., fewer than 3 years of dividend history for a REIT)\n\nGate-failed holdings show '—' for HHS and are excluded from the Aggregate HHS.\n\nNote: the Scanner has a separate Buy Threshold (score ≥ 70). A holding can pass this Data Gate and still be vetoed in the Scanner if its buy attractiveness score is below 70.",
       },
       {
         title: "Factor breakdown (detail panel)",
@@ -142,8 +142,12 @@ export const SCANNER_PAGE_HELP: PageHelpContent = {
   subtitle: "Score and rank income securities against quality and attractiveness criteria.",
   sections: [
     {
+      title: "Scanner score vs. Portfolio Health (HHS/IES)",
+      body: "These are different signals answering different questions — do not confuse them:\n\n• HHS (Holding Health Score) — 'Is this holding healthy enough to keep?' Measures income quality and financial durability of an existing position.\n\n• IES (Income Entry Score) — 'Is the income entry point attractive for an existing position?' A portfolio monitoring signal, not a buy signal.\n\n• Scanner Score — 'Is now a good time to buy?' Weighted attractiveness score across Yield, Durability, and Technical entry timing. A score < 70 is vetoed regardless of HHS.\n\nExample: a holding with HHS 71 and IES 88 (healthy, income efficient) can still be vetoed in the Scanner if the stock is trading 35% above its technical entry level — holding is worth keeping, but adding more shares is not yet attractive.",
+    },
+    {
       title: "How scoring works",
-      body: "Each ticker is evaluated across two dimensions:\n\n1. Quality Gate — verifies minimum criteria: dividend track record, asset classification, and data completeness. Gate must PASS before a score is assigned.\n\n2. Income Score (0–100) — composite of: Valuation & Yield (40 pts), Financial Durability (40 pts), and Technical Entry (20 pts).\n\nGrade bands: A+ ≥ 90 · A ≥ 80 · B ≥ 70 · C ≥ 60 · D ≥ 50 · F < 50.",
+      body: "Each ticker is evaluated across two dimensions:\n\n1. Data Gate — verifies minimum criteria: dividend track record, asset classification, and data completeness. Gate must PASS before a score is assigned.\n\n2. Income Score (0–100) — composite of: Valuation & Yield (40 pts), Financial Durability (40 pts), and Technical Entry (20 pts).\n\n3. Buy Threshold — score ≥ 70 to pass. Tickers below 70 are flagged as vetoed (shown with a shield icon). This threshold is separate from the Data Gate above.\n\nGrade bands: A+ ≥ 90 · A ≥ 80 · B ≥ 70 · C ≥ 60 · D ≥ 50 · F < 50.",
     },
     {
       title: "Input modes",
