@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,7 @@ export function ProposalModal({
   defaultPortfolioId,
   onSuccess,
 }: ProposalModalProps) {
+  const router = useRouter();
   const [targetPortfolioId, setTargetPortfolioId] = useState<string>(defaultPortfolioId ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +56,8 @@ export function ProposalModal({
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch("/api/scanner/propose", {
+      // Step 1: Create the proposal draft in Agent 07
+      const draftResp = await fetch("/api/scanner/propose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -63,10 +66,26 @@ export function ProposalModal({
           target_portfolio_id: targetPortfolioId,
         }),
       });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail ?? "Failed to create proposal");
-      onSuccess(data.proposal_id);
+      const draftData = await draftResp.json();
+      if (!draftResp.ok) throw new Error(draftData.detail ?? "Failed to create proposal draft");
+
+      // Step 2: Generate full proposals in Agent 12 for each selected ticker
+      const tickers = [...selectedTickers];
+      await fetch("/api/proposals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tickers,
+          portfolio_id: targetPortfolioId,
+          scan_id: scanResult.scan_id,
+          trigger_mode: "on_demand",
+        }),
+      });
+      // Ignore generate errors — draft was created; partial proposals may still be useful
+
+      onSuccess(draftData.proposal_id);
       onClose();
+      router.push("/proposals");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

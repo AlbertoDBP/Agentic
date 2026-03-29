@@ -1,11 +1,12 @@
 """
-Admin Panel — JSON proxy routes for Agent 05 (Tax), 06 (Scenario), 07 (Scanner).
+Admin Panel — JSON proxy routes for Agent 05 (Tax), 06 (Scenario), 07 (Scanner), 12 (Proposal).
 The Next.js frontend calls these endpoints; the admin panel forwards with auth.
 
 Routes:
   /api/scanner/*   → Agent 07 (port 8007)
   /api/scenarios/* → Agent 06 (port 8006)
   /api/tax/*       → Agent 05 (port 8005)
+  /api/proposals/* → Agent 12 (port 8012)
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ def _base(service: str) -> str:
         "broker": settings.broker_url,
         "scoring": settings.agent03_url,
         "alerts": settings.agent11_url,
+        "proposals": settings.agent12_url,
     }[service]
 
 
@@ -287,3 +289,25 @@ async def proxy_ttl_config_get(request: Request):
 @router.put("/agent02/suggestions/ttl-config")
 async def proxy_ttl_config_put(request: Request):
     return await _proxy("PUT", "agent02", "/suggestions/ttl-config", request)
+
+
+# ─── Agent 12 — Proposals ─────────────────────────────────────────────────────
+
+@router.get("/proposals")
+async def proposals_list(request: Request):
+    return await _proxy("GET", "proposals", "/proposals", request)
+
+
+@router.post("/proposals/generate")
+async def proposals_generate(request: Request):
+    return await _proxy("POST", "proposals", "/proposals/generate", request, timeout=60)
+
+
+@router.post("/proposals/{proposal_id}/execute")
+async def proposals_execute(proposal_id: str, request: Request):
+    return await _proxy("POST", "proposals", f"/proposals/{proposal_id}/execute", request)
+
+
+@router.post("/proposals/{proposal_id}/reject")
+async def proposals_reject_proxy(proposal_id: str, request: Request):
+    return await _proxy("POST", "proposals", f"/proposals/{proposal_id}/reject", request)
