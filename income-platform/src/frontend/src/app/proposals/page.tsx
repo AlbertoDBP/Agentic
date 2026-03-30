@@ -3,8 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Check, X, Clock, RefreshCw, AlertTriangle, Loader2, TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TickerBadge } from "@/components/ticker-badge";
-import { ScorePill } from "@/components/score-pill";
 import { formatDateTime } from "@/lib/utils";
 
 // ── Types matching Agent 12 ProposalResponse ────────────────────────────────
@@ -212,9 +210,9 @@ export default function ProposalsPage() {
               )}
             >
               <div className="flex items-center justify-between">
-                <TickerBadge ticker={p.ticker} />
+                <span className="font-mono font-semibold">{p.ticker}</span>
                 {p.platform_score != null && (
-                  <ScorePill score={p.platform_score} />
+                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary">{p.platform_score.toFixed(0)}</span>
                 )}
               </div>
               <div className="mt-1 flex items-center justify-between">
