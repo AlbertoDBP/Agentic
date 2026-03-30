@@ -121,10 +121,13 @@ async def fetch_all(
     """Fetch Agent 02 signal then concurrently fetch 03/04/05.
 
     Returns (signal, score, entry_price, tax_placement).
-    Raises if Agent 02 fails (fatal).
+    Agent 02 is non-fatal — returns {} when no analyst signal exists (e.g. scanner-originated tickers).
     """
-    # Agent 02 is fatal — raise immediately on failure
-    signal = await fetch_agent02_signal(ticker)
+    try:
+        signal = await fetch_agent02_signal(ticker)
+    except Exception as exc:
+        logger.warning("Agent 02 signal unavailable for %s (platform-only proposal): %s", ticker, exc)
+        signal = {}
 
     # Agents 03/04/05 are non-fatal — run concurrently
     score, entry_price, tax = await asyncio.gather(

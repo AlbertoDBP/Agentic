@@ -71,7 +71,7 @@ export function ProposalModal({
 
       // Step 2: Generate full proposals in Agent 12 for each selected ticker
       const tickers = [...selectedTickers];
-      await fetch("/api/proposals", {
+      const genResp = await fetch("/api/proposals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -81,7 +81,10 @@ export function ProposalModal({
           trigger_mode: "on_demand",
         }),
       });
-      // Ignore generate errors — draft was created; partial proposals may still be useful
+      if (!genResp.ok) {
+        const genData = await genResp.json().catch(() => ({}));
+        throw new Error(genData.detail ?? `Proposal generation failed (${genResp.status})`);
+      }
 
       onSuccess(draftData.proposal_id);
       onClose();

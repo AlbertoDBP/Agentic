@@ -78,13 +78,14 @@ export function InputPanel({
       {mode === "portfolio" && (
         <Select value={selectedPortfolioId ?? ""} onValueChange={onPortfolioChange}>
           <SelectTrigger className="w-full">
-            <SelectValue>
-              {(value: string | null) => {
-                if (!value) return <span className="text-muted-foreground">Select a portfolio to scan...</span>;
-                const p = portfolios.find((p) => p.id === value);
-                return p ? `${p.name} (${p.holding_count} positions)` : value;
-              }}
-            </SelectValue>
+            {selectedPortfolioId ? (
+              <span className="flex items-center gap-2 text-sm">
+                <span className="text-green-500">✓</span>
+                <span>{portfolios.find((p) => p.id === selectedPortfolioId)?.name ?? "Portfolio"} selected</span>
+              </span>
+            ) : (
+              <SelectValue placeholder="Select a portfolio to scan..." />
+            )}
           </SelectTrigger>
           <SelectContent>
             {portfolios.map((p) => (

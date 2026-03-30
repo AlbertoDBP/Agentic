@@ -98,12 +98,9 @@ async def run_proposal(
     """
     ticker = ticker.upper().strip()
 
-    try:
-        signal, score, entry_price, tax = await data_fetcher.fetch_all(
-            ticker, portfolio_id=portfolio_id
-        )
-    except Exception as exc:
-        raise ProposalError(f"Agent 02 signal unavailable for {ticker}: {exc}") from exc
+    signal, score, entry_price, tax = await data_fetcher.fetch_all(
+        ticker, portfolio_id=portfolio_id
+    )
 
     # --- Analyst lens ---
     rec = _extract_recommendation(signal)
