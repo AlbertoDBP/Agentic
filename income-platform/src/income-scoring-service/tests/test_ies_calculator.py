@@ -47,3 +47,9 @@ def test_gate_blocked_response_is_machine_readable():
     assert isinstance(result, IESResult)
     assert result.ies_score is None
     assert result.hhs_score_at_evaluation == 30.0
+
+def test_blocked_at_exact_threshold():
+    # HHS exactly 50 → blocked (gate is HHS > 50, so 50 is not > 50)
+    result = IESCalculator().evaluate(_hhs(score=50.0), None, None)
+    assert result.status == IESStatus.GATE_BLOCKED
+    assert result.reason == "HHS_BELOW_THRESHOLD"
