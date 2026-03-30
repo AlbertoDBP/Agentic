@@ -582,9 +582,10 @@ def sync_fill(req: SyncFillRequest, db: Session = Depends(get_db)):
     """Upsert a position after a confirmed broker fill.
 
     For new positions: inserts with req.filled_qty, req.avg_fill_price.
-    For existing positions: adds shares and recomputes weighted-average cost basis atomically.
+    For existing positions: adds shares and recomputes weighted-average cost basis
+    atomically in SQL to prevent race conditions from concurrent fill events.
     """
-    # Read existing position row for (portfolio_id, ticker, status='ACTIVE')
+    # Check if position already exists (for is_new_position flag in response)
     existing = db.execute(text("""
         SELECT quantity, avg_cost_basis
         FROM platform_shared.positions
@@ -592,45 +593,56 @@ def sync_fill(req: SyncFillRequest, db: Session = Depends(get_db)):
         LIMIT 1
     """), {"pid": req.portfolio_id, "sym": req.ticker.upper()}).fetchone()
 
-    if existing and existing[0]:
-        old_qty = float(existing[0])
-        old_cost = float(existing[1] or 0)
-        new_qty = old_qty + req.filled_qty
-        new_avg_cost = (old_qty * old_cost + req.filled_qty * req.avg_fill_price) / new_qty
-        is_new = False
-    else:
-        new_qty = req.filled_qty
-        new_avg_cost = req.avg_fill_price
-        is_new = True
+    is_new = existing is None or not existing[0]
 
+    # Atomic upsert: compute new weighted average in SQL to prevent race conditions
     db.execute(text("""
         INSERT INTO platform_shared.positions
             (id, portfolio_id, symbol, status, quantity, avg_cost_basis, total_cost_basis,
              created_at, updated_at)
         VALUES
-            (:id, :pid, :sym, 'ACTIVE', :qty, :avg_cb, :total_cb, NOW(), NOW())
+            (:id, :pid, :sym, 'ACTIVE', :filled_qty, :avg_fill_price,
+             :filled_qty * :avg_fill_price, NOW(), NOW())
         ON CONFLICT (portfolio_id, symbol, status)
         DO UPDATE SET
-            quantity         = :qty,
-            avg_cost_basis   = :avg_cb,
-            total_cost_basis = :total_cb,
-            updated_at       = NOW()
+            quantity = platform_shared.positions.quantity + :filled_qty,
+            avg_cost_basis = (
+                platform_shared.positions.quantity * COALESCE(platform_shared.positions.avg_cost_basis, 0)
+                + :filled_qty * :avg_fill_price
+            ) / NULLIF(platform_shared.positions.quantity + :filled_qty, 0),
+            total_cost_basis = (platform_shared.positions.quantity + :filled_qty) * (
+                (
+                    platform_shared.positions.quantity * COALESCE(platform_shared.positions.avg_cost_basis, 0)
+                    + :filled_qty * :avg_fill_price
+                ) / NULLIF(platform_shared.positions.quantity + :filled_qty, 0)
+            ),
+            updated_at = NOW()
     """), {
         "id": str(uuid4()),
         "pid": req.portfolio_id,
         "sym": req.ticker.upper(),
-        "qty": new_qty,
-        "avg_cb": round(new_avg_cost, 6),
-        "total_cb": round(new_qty * new_avg_cost, 2),
+        "filled_qty": req.filled_qty,
+        "avg_fill_price": req.avg_fill_price,
     })
     db.commit()
+
+    # Read back the updated row for accurate response values
+    updated = db.execute(text("""
+        SELECT quantity, avg_cost_basis
+        FROM platform_shared.positions
+        WHERE portfolio_id = :pid AND symbol = :sym AND status = 'ACTIVE'
+        LIMIT 1
+    """), {"pid": req.portfolio_id, "sym": req.ticker.upper()}).fetchone()
+
+    total_shares = float(updated[0]) if updated else req.filled_qty
+    new_avg_cost = float(updated[1]) if updated and updated[1] else req.avg_fill_price
 
     return {
         "portfolio_id": req.portfolio_id,
         "ticker": req.ticker.upper(),
         "filled_qty": req.filled_qty,
         "avg_fill_price": req.avg_fill_price,
-        "total_shares": new_qty,
+        "total_shares": total_shares,
         "new_avg_cost": round(new_avg_cost, 4),
         "is_new_position": is_new,
     }

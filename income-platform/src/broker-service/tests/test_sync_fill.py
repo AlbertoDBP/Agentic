@@ -49,8 +49,8 @@ def test_sync_fill_new_position(client_with_mock_db):
     """A brand-new position is created with the fill data."""
     client, mock_db = client_with_mock_db
 
-    # fetchone returns None → new position
-    mock_db.execute.return_value.fetchone.return_value = None
+    # First fetchone → None (new position), second fetchone → read-back after upsert
+    mock_db.execute.return_value.fetchone.side_effect = [None, (20.0, 18.42)]
 
     resp = client.post("/broker/positions/sync-fill", json={
         "portfolio_id": "a1b2c3d4-0000-0000-0000-000000000001",
@@ -75,7 +75,8 @@ def test_sync_fill_new_position(client_with_mock_db):
 def test_sync_fill_new_position_optional_fields_absent(client_with_mock_db):
     """Endpoint works without optional proposal_id / order_id / broker_ref."""
     client, mock_db = client_with_mock_db
-    mock_db.execute.return_value.fetchone.return_value = None
+    # First fetchone → None (new position), second fetchone → read-back after upsert
+    mock_db.execute.return_value.fetchone.side_effect = [None, (5.0, 25.00)]
 
     resp = client.post("/broker/positions/sync-fill", json={
         "portfolio_id": "a1b2c3d4-0000-0000-0000-000000000003",
@@ -95,8 +96,9 @@ def test_sync_fill_weighted_average(client_with_mock_db):
     """Existing position gets weighted-average cost basis update."""
     client, mock_db = client_with_mock_db
 
-    # Existing: 10 shares at $18.00
-    mock_db.execute.return_value.fetchone.return_value = (10.0, 18.00)
+    # First fetchone → existing row, second fetchone → read-back after SQL upsert
+    # SQL computes: (10*18.00 + 10*19.00) / 20 = 18.50
+    mock_db.execute.return_value.fetchone.side_effect = [(10.0, 18.00), (20.0, 18.50)]
 
     resp = client.post("/broker/positions/sync-fill", json={
         "portfolio_id": "a1b2c3d4-0000-0000-0000-000000000002",
@@ -119,7 +121,7 @@ def test_sync_fill_weighted_average(client_with_mock_db):
 def test_sync_fill_ticker_uppercased(client_with_mock_db):
     """Ticker is stored and returned uppercase regardless of input case."""
     client, mock_db = client_with_mock_db
-    mock_db.execute.return_value.fetchone.return_value = None
+    mock_db.execute.return_value.fetchone.side_effect = [None, (5.0, 18.00)]
 
     resp = client.post("/broker/positions/sync-fill", json={
         "portfolio_id": "a1b2c3d4-0000-0000-0000-000000000004",
