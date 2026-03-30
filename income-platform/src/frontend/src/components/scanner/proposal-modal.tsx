@@ -127,7 +127,11 @@ export function ProposalModal({
             <Label className="text-sm">Target Portfolio <span className="text-red-500">*</span></Label>
             <Select value={targetPortfolioId} onValueChange={(v) => setTargetPortfolioId(v ?? "")}>
               <SelectTrigger>
-                <SelectValue placeholder="Select target portfolio..." />
+                {targetPortfolioId ? (
+                  <span className="text-sm">{portfolios.find((p) => p.id === targetPortfolioId)?.name ?? "Portfolio"}</span>
+                ) : (
+                  <SelectValue placeholder="Select target portfolio..." />
+                )}
               </SelectTrigger>
               <SelectContent>
                 {activePortfolios.map((p) => (
