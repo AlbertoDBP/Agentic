@@ -99,9 +99,9 @@ def _aggregate_agent09(db: Session) -> list[AlertData]:
     """Aggregate PROJECTION_DATA_GAP alerts from Agent 09 income_projections."""
     sql = text(
         """
-        SELECT portfolio_id, positions_missing_data, total_projected_annual, created_at
+        SELECT portfolio_id, positions_missing_data, total_projected_annual, computed_at
         FROM platform_shared.income_projections
-        WHERE positions_missing_data > 0 AND created_at >= NOW() - INTERVAL '7 days'
+        WHERE positions_missing_data > 0 AND computed_at >= NOW() - INTERVAL '7 days'
         """
     )
     rows = db.execute(sql).fetchall()
@@ -118,7 +118,7 @@ def _aggregate_agent09(db: Session) -> list[AlertData]:
                     "portfolio_id": str(row.portfolio_id),
                     "positions_missing_data": row.positions_missing_data,
                     "total_projected_annual": float(row.total_projected_annual) if row.total_projected_annual is not None else None,
-                    "created_at": str(row.created_at),
+                    "computed_at": str(row.computed_at),
                 },
             )
         )
