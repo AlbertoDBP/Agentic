@@ -1,85 +1,107 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Check, X, Clock, RefreshCw, AlertTriangle, Loader2, TrendingUp, TrendingDown } from "lucide-react";
+import { RefreshCw, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatDateTime } from "@/lib/utils";
+import { usePortfolio } from "@/lib/portfolio-context";
+import { ExecutionPanel } from "@/components/proposals/execution-panel";
+import { OrderStatusPanel } from "@/components/proposals/order-status-panel";
+import type {
+  ProposalWithPortfolio,
+  OrderParams,
+  LiveOrder,
+  PaperOrder,
+  BrokerOrderStatus,
+} from "@/lib/types";
 
-// ── Types matching Agent 12 ProposalResponse ────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Proposal {
   id: number;
   ticker: string;
-  analyst_signal_id: number | null;
-  analyst_id: number | null;
+  portfolio_id: string | null;
   platform_score: number | null;
   platform_alignment: string | null;
-  veto_flags: Record<string, unknown> | string[] | null;
-  divergence_notes: string | null;
   analyst_recommendation: string | null;
-  analyst_sentiment: number | null;
-  analyst_thesis_summary: string | null;
   analyst_yield_estimate: number | null;
-  analyst_safety_grade: string | null;
   platform_yield_estimate: number | null;
-  platform_safety_result: Record<string, unknown> | null;
-  platform_income_grade: string | null;
   entry_price_low: number | null;
   entry_price_high: number | null;
   position_size_pct: number | null;
   recommended_account: string | null;
+  analyst_thesis_summary: string | null;
+  analyst_safety_grade: string | null;
+  platform_income_grade: string | null;
   sizing_rationale: string | null;
+  divergence_notes: string | null;
+  veto_flags: Record<string, unknown> | null;
   status: string;
-  trigger_mode: string | null;
-  override_rationale: string | null;
-  user_acknowledged_veto: boolean;
-  decided_at: string | null;
-  expires_at: string | null;
   created_at: string | null;
-  updated_at: string | null;
-  entry_method: string | null;
 }
 
-// ── Status helpers ────────────────────────────────────────────────────────────
+type Phase = "setup" | "status";
 
-const PENDING_STATUSES = new Set(["pending", "PENDING"]);
-const ACCEPTED_STATUSES = new Set(["executed_aligned", "executed_override"]);
-const REJECTED_STATUSES = new Set(["rejected", "expired"]);
-
-type Tab = "PENDING" | "ACCEPTED" | "REJECTED";
-
-function tabMatch(status: string, tab: Tab): boolean {
-  if (tab === "PENDING") return PENDING_STATUSES.has(status);
-  if (tab === "ACCEPTED") return ACCEPTED_STATUSES.has(status);
-  if (tab === "REJECTED") return REJECTED_STATUSES.has(status);
-  return false;
-}
-
-function alignmentColor(alignment: string | null): string {
-  if (!alignment) return "text-muted-foreground";
+function alignmentDot(alignment: string | null): string {
+  if (!alignment) return "bg-muted-foreground";
   const a = alignment.toLowerCase();
-  if (a === "aligned") return "text-income";
-  if (a === "partial") return "text-amber-400";
-  if (a === "vetoed") return "text-loss";
-  if (a === "divergent") return "text-amber-500";
-  return "text-muted-foreground";
+  if (a === "aligned") return "bg-emerald-400";
+  if (a === "partial" || a === "divergent") return "bg-amber-400";
+  if (a === "vetoed") return "bg-red-400";
+  return "bg-muted-foreground";
+}
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+// ── Portfolio grouping helper ─────────────────────────────────────────────────
+
+function groupByPortfolio(proposals: Proposal[]) {
+  const map = new Map<string, Proposal[]>();
+  for (const p of proposals) {
+    const key = p.portfolio_id ?? "unassigned";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(p);
+  }
+  return Array.from(map.entries()).map(([portfolioId, items]) => ({
+    portfolioId,
+    proposals: items,
+  }));
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ProposalsPage() {
+  const { portfolios } = usePortfolio();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("PENDING");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [actioning, setActioning] = useState<number | null>(null);
 
+  // Selection
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [focusedPortfolioId, setFocusedPortfolioId] = useState<string | null>(null);
+
+  // Phase
+  const [phase, setPhase] = useState<Phase>("setup");
+  const [submitting, setSubmitting] = useState(false);
+
+  // Order tracking (Phase 2)
+  const [liveOrders, setLiveOrders] = useState<LiveOrder[]>([]);
+  const [paperOrders, setPaperOrders] = useState<PaperOrder[]>([]);
+  const [submittedAt, setSubmittedAt] = useState<Date | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+
+  // Load proposals
   const fetchProposals = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch("/api/proposals?limit=200");
+      const resp = await fetch("/api/proposals?limit=200&status=pending");
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       setProposals(Array.isArray(data) ? data : []);
@@ -90,322 +112,421 @@ export default function ProposalsPage() {
     }
   }, []);
 
-  useEffect(() => { fetchProposals(); }, [fetchProposals]);
-
-  const filtered = proposals.filter((p) => tabMatch(p.status, tab));
-  const selected = proposals.find((p) => p.id === selectedId) ?? filtered[0] ?? null;
-
-  // Auto-select first when switching tabs
   useEffect(() => {
-    if (filtered.length > 0 && !filtered.find((p) => p.id === selectedId)) {
-      setSelectedId(filtered[0].id);
-    }
-  }, [tab, filtered, selectedId]);
+    fetchProposals();
+  }, [fetchProposals]);
 
-  const counts: Record<Tab, number> = {
-    PENDING:  proposals.filter((p) => tabMatch(p.status, "PENDING")).length,
-    ACCEPTED: proposals.filter((p) => tabMatch(p.status, "ACCEPTED")).length,
-    REJECTED: proposals.filter((p) => tabMatch(p.status, "REJECTED")).length,
+  // Group pending proposals by portfolio
+  const pendingProposals = proposals.filter((p) => p.status === "pending");
+  const portfolioGroups = groupByPortfolio(pendingProposals);
+
+  // Auto-focus first portfolio with proposals
+  useEffect(() => {
+    if (!focusedPortfolioId && portfolioGroups.length > 0) {
+      setFocusedPortfolioId(portfolioGroups[0].portfolioId);
+    }
+  }, [portfolioGroups.length, focusedPortfolioId]);
+
+  const focusedPortfolio = portfolios.find((p) => p.id === focusedPortfolioId) ?? null;
+  const focusedGroup = portfolioGroups.find((g) => g.portfolioId === focusedPortfolioId);
+
+  // Auto-select all proposals in focused portfolio on focus change
+  useEffect(() => {
+    if (focusedGroup) {
+      setSelectedIds(new Set(focusedGroup.proposals.map((p) => p.id)));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedPortfolioId]);
+
+  const focusedProposals = (focusedGroup?.proposals ?? []).filter((p) =>
+    selectedIds.has(p.id)
+  );
+
+  // ── Submit handler ──
+
+  const handleSubmit = async (params: Record<number, OrderParams>) => {
+    if (!focusedPortfolio || focusedProposals.length === 0) return;
+    setSubmitting(true);
+
+    const isBrokerConnected = !!focusedPortfolio.broker;
+    const newLiveOrders: LiveOrder[] = [];
+    const newPaperOrders: PaperOrder[] = [];
+
+    for (const proposal of focusedProposals) {
+      const p = params[proposal.id];
+      if (!p?.shares || p.shares <= 0) continue;
+
+      if (!isBrokerConnected) {
+        newPaperOrders.push({
+          proposal_id: proposal.id,
+          ticker: proposal.ticker,
+          portfolio_id: focusedPortfolio.id,
+          qty: p.shares,
+          order_type: p.order_type,
+          limit_price: p.limit_price,
+          time_in_force: p.time_in_force,
+          portfolio_name: focusedPortfolio.name,
+          executed: false,
+        });
+        await fetch(`/api/proposals/${proposal.id}/execute`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_acknowledged_veto: false }),
+        }).catch(() => null);
+        continue;
+      }
+
+      try {
+        const resp = await fetch("/broker/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            broker: focusedPortfolio.broker,
+            portfolio_id: focusedPortfolio.id,
+            symbol: proposal.ticker,
+            side: "buy",
+            qty: p.shares,
+            order_type: p.order_type,
+            limit_price: p.order_type !== "market" ? p.limit_price : undefined,
+            time_in_force: p.time_in_force,
+            proposal_id: String(proposal.id),
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          console.error(`Order failed for ${proposal.ticker}:`, data.detail);
+          continue;
+        }
+
+        await fetch(`/api/proposals/${proposal.id}/execute`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_acknowledged_veto: false }),
+        }).catch(() => null);
+
+        newLiveOrders.push({
+          proposal_id: proposal.id,
+          ticker: proposal.ticker,
+          portfolio_id: focusedPortfolio.id,
+          order_id: data.order_id,
+          broker: (data.broker ?? focusedPortfolio.broker) as string,
+          status: (data.status ?? "pending") as BrokerOrderStatus,
+          qty: p.shares,
+          filled_qty: data.filled_qty ?? 0,
+          avg_fill_price: data.filled_avg_price ?? null,
+          limit_price: p.limit_price,
+          filled_at: null,
+          submitted_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error(`Order error for ${proposal.ticker}:`, err);
+      }
+    }
+
+    setLiveOrders(newLiveOrders);
+    setPaperOrders(newPaperOrders);
+    setSubmittedAt(new Date());
+    setSubmitting(false);
+    setPhase("status");
   };
 
-  // ── Actions ──
+  // ── Sync-fill helper ──
 
-  const executeProposal = async (proposal: Proposal) => {
-    setActioning(proposal.id);
-    try {
-      const resp = await fetch(`/api/proposals/${proposal.id}/execute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_acknowledged_veto: false }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail ?? "Execute failed");
-      setProposals((prev) => prev.map((p) => p.id === proposal.id ? data : p));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActioning(null);
+  const syncFill = useCallback(async (order: LiveOrder) => {
+    if (!order.avg_fill_price || !order.filled_at) return;
+    await fetch("/broker/positions/sync-fill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        portfolio_id: order.portfolio_id,
+        ticker: order.ticker,
+        filled_qty: order.filled_qty,
+        avg_fill_price: order.avg_fill_price,
+        filled_at: order.filled_at,
+        proposal_id: String(order.proposal_id),
+        order_id: order.order_id,
+      }),
+    });
+    await fetch(`/api/proposals/${order.proposal_id}/fill-confirmed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filled_qty: order.filled_qty,
+        avg_fill_price: order.avg_fill_price,
+        filled_at: order.filled_at,
+        status: order.status === "filled" ? "filled" : "partially_filled",
+      }),
+    });
+  }, []);
+
+  // ── Polling / refresh ──
+
+  const refreshOrders = useCallback(async () => {
+    const updated = await Promise.all(
+      liveOrders.map(async (o) => {
+        if (o.status === "filled" || o.status === "cancelled") return o;
+        try {
+          const resp = await fetch(`/broker/orders/${o.order_id}?broker=${o.broker}`);
+          if (!resp.ok) return o;
+          const data = await resp.json();
+          const newStatus: BrokerOrderStatus = data.status ?? o.status;
+          const updatedOrder: LiveOrder = {
+            ...o,
+            status: newStatus,
+            filled_qty: data.filled_qty ?? o.filled_qty,
+            avg_fill_price: data.filled_avg_price ?? o.avg_fill_price,
+            filled_at: data.filled_at ?? o.filled_at,
+          };
+
+          // Trigger sync-fill only for newly-filled shares
+          const prevFilledQty = o.filled_qty ?? 0;
+          const newFilledQty = data.filled_qty ?? 0;
+          if (
+            (newStatus === "filled" || newStatus === "partially_filled") &&
+            newFilledQty > prevFilledQty
+          ) {
+            await syncFill({
+              ...updatedOrder,
+              filled_qty: newFilledQty - prevFilledQty,
+              avg_fill_price: data.filled_avg_price,
+            }).catch(() => null);
+          }
+
+          return updatedOrder;
+        } catch {
+          return o;
+        }
+      })
+    );
+    setLiveOrders(updated);
+    setLastRefreshedAt(new Date());
+  }, [liveOrders, syncFill]);
+
+  // ── Cancel handlers ──
+
+  const handleCancelOrder = async (orderId: string, broker: string) => {
+    const resp = await fetch(`/broker/orders/${orderId}?broker=${broker}`, {
+      method: "DELETE",
+    }).catch(() => null);
+    if (resp?.ok) {
+      const order = liveOrders.find((o) => o.order_id === orderId);
+      if (order && order.filled_qty > 0) {
+        await syncFill({ ...order, status: "partially_filled" }).catch(() => null);
+      }
+      setLiveOrders((prev) =>
+        prev.map((o) => (o.order_id === orderId ? { ...o, status: "cancelled" } : o))
+      );
+      const proposal = liveOrders.find((o) => o.order_id === orderId);
+      if (proposal) {
+        await fetch(`/api/proposals/${proposal.proposal_id}/fill-confirmed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filled_qty: 0,
+            avg_fill_price: 0,
+            filled_at: new Date().toISOString(),
+            status: "cancelled",
+          }),
+        }).catch(() => null);
+      }
     }
   };
 
-  const rejectProposal = async (proposal: Proposal) => {
-    setActioning(proposal.id);
-    try {
-      const resp = await fetch(`/api/proposals/${proposal.id}/reject`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail ?? "Reject failed");
-      setProposals((prev) => prev.map((p) => p.id === proposal.id ? data : p));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActioning(null);
-    }
+  // ── Paper order mark-executed ──
+
+  const handleMarkPaperExecuted = async (
+    proposalId: number,
+    fillPrice: number,
+    fillDate: string
+  ) => {
+    const order = paperOrders.find((o) => o.proposal_id === proposalId);
+    if (!order) return;
+    await fetch("/broker/positions/sync-fill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        portfolio_id: order.portfolio_id,
+        ticker: order.ticker,
+        filled_qty: order.qty,
+        avg_fill_price: fillPrice,
+        filled_at: `${fillDate}T00:00:00Z`,
+        proposal_id: String(proposalId),
+      }),
+    }).catch(() => null);
+    await fetch(`/api/proposals/${proposalId}/fill-confirmed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filled_qty: order.qty,
+        avg_fill_price: fillPrice,
+        filled_at: `${fillDate}T00:00:00Z`,
+        status: "filled",
+      }),
+    }).catch(() => null);
+    setPaperOrders((prev) =>
+      prev.map((o) => (o.proposal_id === proposalId ? { ...o, executed: true } : o))
+    );
   };
 
   // ── Render ──
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] gap-4 p-6 max-w-7xl mx-auto">
-      {/* Left: proposal list */}
-      <div className="flex w-72 shrink-0 flex-col gap-3">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold">Proposals</h1>
+    <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
+      {/* Left: proposal list grouped by portfolio */}
+      <div className="w-72 shrink-0 border-r border-border flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <h1 className="text-sm font-semibold">Proposals</h1>
           <button
             onClick={fetchProposals}
-            className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary"
+            className="p-1 rounded text-muted-foreground hover:text-foreground"
             title="Refresh"
           >
-            <RefreshCw className="h-4 w-4" />
+            <RefreshCw className="h-3.5 w-3.5" />
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex rounded-lg border border-border bg-secondary/30 p-0.5 text-sm">
-          {(["PENDING", "ACCEPTED", "REJECTED"] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={cn(
-                "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                tab === t
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.charAt(0) + t.slice(1).toLowerCase()} {counts[t] > 0 && `(${counts[t]})`}
-            </button>
-          ))}
-        </div>
-
-        {/* List */}
-        <div className="flex-1 overflow-y-auto space-y-1.5">
+        <div className="flex-1 overflow-y-auto py-2">
           {loading && (
-            <div className="flex items-center justify-center py-8 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading…
+            <div className="flex items-center justify-center py-8 text-muted-foreground text-xs">
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> Loading…
             </div>
           )}
           {!loading && error && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
-          )}
-          {!loading && !error && filtered.length === 0 && (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              No {tab.toLowerCase()} proposals.<br />
-              Run a scan and click <strong>Propose</strong> to create one.
+            <div className="mx-3 rounded border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+              {error}
             </div>
           )}
-          {filtered.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setSelectedId(p.id)}
-              className={cn(
-                "w-full rounded-lg border border-border p-3 text-left transition-colors",
-                selected?.id === p.id
-                  ? "bg-primary/10 border-primary/40"
-                  : "bg-card hover:bg-secondary/50"
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-mono font-semibold">{p.ticker}</span>
-                {p.platform_score != null && (
-                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary">{p.platform_score.toFixed(0)}</span>
-                )}
+          {!loading && !error && portfolioGroups.length === 0 && (
+            <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+              No pending proposals.
+              <br />
+              Run a scan and generate proposals to see them here.
+            </div>
+          )}
+
+          {portfolioGroups.map((group) => {
+            const port = portfolios.find((p) => p.id === group.portfolioId);
+            const isFocused = group.portfolioId === focusedPortfolioId;
+            return (
+              <div key={group.portfolioId} className="mb-2">
+                <div
+                  className="flex items-center justify-between px-4 py-1.5 cursor-pointer"
+                  onClick={() => setFocusedPortfolioId(group.portfolioId)}
+                >
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {port?.name ?? "Unassigned"}
+                  </span>
+                  {port?.cash_balance != null && (
+                    <span className="text-[10px] text-emerald-400">
+                      $
+                      {port.cash_balance.toLocaleString("en-US", {
+                        maximumFractionDigits: 0,
+                      })}
+                    </span>
+                  )}
+                </div>
+                {group.proposals.map((p) => {
+                  const checked = selectedIds.has(p.id);
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => {
+                        setFocusedPortfolioId(group.portfolioId);
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.id)) next.delete(p.id);
+                          else next.add(p.id);
+                          return next;
+                        });
+                      }}
+                      className={cn(
+                        "flex items-start gap-2.5 px-4 py-2.5 cursor-pointer border-l-2 transition-colors",
+                        isFocused && checked
+                          ? "bg-violet-950/20 border-l-violet-500"
+                          : "border-l-transparent hover:bg-muted/20"
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "mt-1 h-3.5 w-3.5 shrink-0 rounded border flex items-center justify-center",
+                          checked ? "bg-violet-600 border-violet-600" : "border-border"
+                        )}
+                      >
+                        {checked && (
+                          <span className="text-[8px] text-white font-bold">✓</span>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono font-semibold text-sm">{p.ticker}</span>
+                          {p.platform_score != null && (
+                            <span className="text-[10px] font-medium text-violet-400">
+                              {p.platform_score.toFixed(0)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <div
+                            className={cn(
+                              "h-1.5 w-1.5 rounded-full",
+                              alignmentDot(p.platform_alignment)
+                            )}
+                          />
+                          <span className="text-[10px] text-muted-foreground">
+                            {p.platform_alignment ?? "—"} · {fmtDate(p.created_at)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="mt-1 flex items-center justify-between">
-                <span className={cn("text-xs font-medium", alignmentColor(p.platform_alignment))}>
-                  {p.platform_alignment ?? "—"}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {p.created_at ? formatDateTime(p.created_at) : ""}
-                </span>
-              </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      {/* Right: detail panel */}
-      <div className="flex-1 overflow-y-auto rounded-xl border border-border bg-card p-6">
-        {!selected ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            Select a proposal to review
-          </div>
-        ) : (
-          <ProposalDetail
-            proposal={selected}
-            actioning={actioning === selected.id}
-            onExecute={() => executeProposal(selected)}
-            onReject={() => rejectProposal(selected)}
+      {/* Right: execution panel or order status */}
+      <div className="flex-1 overflow-hidden">
+        {phase === "setup" ? (
+          focusedPortfolio && focusedProposals.length > 0 ? (
+            <ExecutionPanel
+              proposals={focusedProposals as ProposalWithPortfolio[]}
+              portfolio={focusedPortfolio}
+              onSubmit={handleSubmit}
+              onRejectAll={async () => {
+                await Promise.all(
+                  focusedProposals.map((p) =>
+                    fetch(`/api/proposals/${p.id}/reject`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({}),
+                    }).catch(() => null)
+                  )
+                );
+                fetchProposals();
+              }}
+              isBrokerConnected={!!focusedPortfolio.broker}
+              loading={submitting}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+              Select proposals from the left to begin
+            </div>
+          )
+        ) : submittedAt ? (
+          <OrderStatusPanel
+            liveOrders={liveOrders}
+            paperOrders={paperOrders}
+            submittedAt={submittedAt}
+            onRefresh={refreshOrders}
+            onCancelOrder={handleCancelOrder}
+            onCancelRest={handleCancelOrder}
+            onMarkPaperExecuted={handleMarkPaperExecuted}
+            lastRefreshedAt={lastRefreshedAt}
           />
-        )}
+        ) : null}
       </div>
-    </div>
-  );
-}
-
-// ── Detail Panel ─────────────────────────────────────────────────────────────
-
-function ProposalDetail({
-  proposal: p,
-  actioning,
-  onExecute,
-  onReject,
-}: {
-  proposal: Proposal;
-  actioning: boolean;
-  onExecute: () => void;
-  onReject: () => void;
-}) {
-  const isPending = PENDING_STATUSES.has(p.status);
-  const isVetoed = p.platform_alignment?.toLowerCase() === "vetoed";
-
-  return (
-    <div className="space-y-5">
-      {/* Ticker + status row */}
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-lg font-bold">{p.ticker}</span>
-            <span className={cn("text-sm font-semibold", alignmentColor(p.platform_alignment))}>
-              {p.platform_alignment ?? "—"}
-            </span>
-            {isVetoed && (
-              <span className="flex items-center gap-1 text-xs text-loss">
-                <AlertTriangle className="h-3 w-3" /> Vetoed
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Created {p.created_at ? formatDateTime(p.created_at) : "—"}
-            {p.trigger_mode && ` · ${p.trigger_mode}`}
-          </p>
-        </div>
-
-        {/* Actions */}
-        {isPending && (
-          <div className="flex gap-2">
-            <button
-              onClick={onReject}
-              disabled={actioning}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground hover:border-loss hover:text-loss disabled:opacity-40"
-            >
-              {actioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-              Reject
-            </button>
-            <button
-              onClick={onExecute}
-              disabled={actioning || isVetoed}
-              title={isVetoed ? "Proposal is vetoed — cannot execute" : undefined}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
-            >
-              {actioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              Accept
-            </button>
-          </div>
-        )}
-        {!isPending && (
-          <span className={cn(
-            "rounded-full px-3 py-1 text-xs font-semibold",
-            ACCEPTED_STATUSES.has(p.status) ? "bg-income/20 text-income" : "bg-muted text-muted-foreground"
-          )}>
-            {p.status.replace("_", " ").toUpperCase()}
-          </span>
-        )}
-      </div>
-
-      {/* Scores row */}
-      <div className="grid grid-cols-3 gap-3">
-        <MetricCard label="Platform Score" value={p.platform_score != null ? p.platform_score.toFixed(1) : "—"} />
-        <MetricCard label="Platform Grade" value={p.platform_income_grade ?? "—"} />
-        <MetricCard
-          label="Analyst Rec"
-          value={p.analyst_recommendation ?? "—"}
-          valueClass={p.analyst_recommendation?.includes("BUY") ? "text-income" : undefined}
-        />
-      </div>
-
-      {/* Entry pricing */}
-      {(p.entry_price_low != null || p.entry_price_high != null) && (
-        <Section title="Entry Pricing">
-          <div className="grid grid-cols-2 gap-3">
-            <MetricCard label="Entry Low" value={p.entry_price_low != null ? `$${p.entry_price_low.toFixed(2)}` : "—"} />
-            <MetricCard label="Entry High" value={p.entry_price_high != null ? `$${p.entry_price_high.toFixed(2)}` : "—"} />
-          </div>
-          {p.recommended_account && (
-            <p className="text-sm text-muted-foreground">
-              Recommended account: <span className="font-medium text-foreground">{p.recommended_account}</span>
-            </p>
-          )}
-          {p.sizing_rationale && (
-            <p className="text-sm text-muted-foreground">{p.sizing_rationale}</p>
-          )}
-        </Section>
-      )}
-
-      {/* Yield estimates */}
-      {(p.analyst_yield_estimate != null || p.platform_yield_estimate != null) && (
-        <Section title="Yield Estimates">
-          <div className="grid grid-cols-2 gap-3">
-            <MetricCard label="Analyst Yield" value={p.analyst_yield_estimate != null ? `${p.analyst_yield_estimate.toFixed(2)}%` : "—"} />
-            <MetricCard label="Platform Yield" value={p.platform_yield_estimate != null ? `${p.platform_yield_estimate.toFixed(2)}%` : "—"} />
-          </div>
-        </Section>
-      )}
-
-      {/* Analyst thesis */}
-      {p.analyst_thesis_summary && (
-        <Section title="Analyst Thesis">
-          <p className="text-sm leading-relaxed text-muted-foreground">{p.analyst_thesis_summary}</p>
-          {p.analyst_safety_grade && (
-            <p className="text-xs text-muted-foreground mt-1">
-              Safety Grade: <span className="font-medium text-foreground">{p.analyst_safety_grade}</span>
-            </p>
-          )}
-        </Section>
-      )}
-
-      {/* Veto / divergence notes */}
-      {(p.veto_flags || p.divergence_notes) && (
-        <Section title="Platform Notes">
-          {p.divergence_notes && (
-            <p className="text-sm text-muted-foreground">{p.divergence_notes}</p>
-          )}
-          {p.veto_flags && (
-            <div className="rounded-md border border-loss/30 bg-loss/10 p-3 text-xs text-loss">
-              {JSON.stringify(p.veto_flags)}
-            </div>
-          )}
-        </Section>
-      )}
-
-      {/* Override rationale (if accepted via override) */}
-      {p.override_rationale && (
-        <Section title="Override Rationale">
-          <p className="text-sm text-muted-foreground">{p.override_rationale}</p>
-        </Section>
-      )}
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
-      {children}
-    </div>
-  );
-}
-
-function MetricCard({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-secondary/30 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={cn("mt-1 text-base font-semibold", valueClass)}>{value}</p>
     </div>
   );
 }
