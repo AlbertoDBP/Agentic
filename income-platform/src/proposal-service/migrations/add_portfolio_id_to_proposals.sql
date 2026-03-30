@@ -1,0 +1,2 @@
+ALTER TABLE proposals
+ADD COLUMN IF NOT EXISTS portfolio_id TEXT NULL;

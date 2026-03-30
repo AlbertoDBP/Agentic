@@ -452,7 +452,7 @@ def fill_confirmed(
     """
     proposal = _get_proposal_or_404(db, proposal_id)
 
-    if proposal.status not in ("executed_aligned", "partially_filled"):
+    if proposal.status not in ("executed_aligned", "executed_override", "partially_filled"):
         raise HTTPException(
             status_code=409,
             detail=f"Cannot confirm fill on proposal with status '{proposal.status}'",
