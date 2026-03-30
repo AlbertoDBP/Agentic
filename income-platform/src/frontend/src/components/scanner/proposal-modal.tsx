@@ -48,8 +48,8 @@ export function ProposalModal({
   const selectedItems: ScanItem[] = (scanResult?.items ?? []).filter(
     (i) => selectedTickers.has(i.ticker)
   );
-  // Only show portfolios with holdings — filters out empty/test accounts
-  const activePortfolios = portfolios.filter((p) => p.holding_count > 0);
+  // Show all portfolios — a proposal can target any portfolio, including new ones
+  const activePortfolios = portfolios;
 
   const handleSubmit = async () => {
     if (!targetPortfolioId || !scanResult) return;
