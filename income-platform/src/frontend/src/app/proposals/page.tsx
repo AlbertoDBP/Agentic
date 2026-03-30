@@ -269,7 +269,7 @@ function ProposalDetail({
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <TickerBadge ticker={p.ticker} large />
+            <span className="font-mono text-lg font-bold">{p.ticker}</span>
             <span className={cn("text-sm font-semibold", alignmentColor(p.platform_alignment))}>
               {p.platform_alignment ?? "—"}
             </span>
