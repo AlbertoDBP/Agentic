@@ -278,6 +278,9 @@ export default function AssetDetailPage() {
             <Row label="Net Debt / EBITDA"
               value={asset.net_debt_ebitda != null ? `${asset.net_debt_ebitda.toFixed(1)}×` : null}
               valueClass={asset.net_debt_ebitda != null ? (asset.net_debt_ebitda <= 2 ? "text-income" : asset.net_debt_ebitda <= 4 ? "text-yellow-400" : "text-red-400") : ""} />
+            <Row label="Debt / Equity"
+              value={asset.debt_to_equity != null ? `${asset.debt_to_equity.toFixed(2)}×` : null}
+              valueClass={asset.debt_to_equity != null ? (asset.debt_to_equity < 0.5 ? "text-income" : asset.debt_to_equity < 1.5 ? "text-yellow-400" : "text-red-400") : ""} />
             <Row label="Beta"
               value={asset.beta != null ? asset.beta.toFixed(2) : null} />
           </dl>

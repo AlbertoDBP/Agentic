@@ -294,6 +294,36 @@ async def _fmp_etf_info(symbol: str, client: httpx.AsyncClient) -> dict:
         return {}
 
 
+async def _fmp_credit_rating(symbol: str, client: httpx.AsyncClient) -> Optional[str]:
+    """
+    Fetch credit rating from FMP /stable/rating.
+    Returns a rating string (e.g. "A-", "BBB+") or None.
+    FMP returns its own scoring-model rating, not agency ratings, but uses standard letter grades.
+    """
+    try:
+        resp = await client.get(
+            f"{settings.fmp_base_url}/rating",
+            params={"symbol": symbol, "apikey": settings.fmp_api_key},
+            timeout=settings.fmp_request_timeout,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if not isinstance(data, list) or not data:
+            return None
+        entry = data[0]
+        # Prefer ratingDetailsMoodysRating (agency), fall back to FMP model rating
+        return (
+            entry.get("ratingDetailsMoodysRating")
+            or entry.get("ratingAgencyMoodyRating")
+            or entry.get("rating")
+            or None
+        )
+    except Exception as exc:
+        logger.debug("FMP rating %s failed: %s", symbol, exc)
+        return None
+
+
 async def _fmp_dividend_calendar(symbol: str, client: httpx.AsyncClient) -> dict:
     """
     Fetch FMP /stable/dividends for one symbol.
@@ -365,6 +395,11 @@ async def _fmp_dividend_calendar(symbol: str, client: httpx.AsyncClient) -> dict
                     break
         result["consecutive_growth_yrs"] = consec if consec > 0 else None
 
+        # Average annual dividend over last 5 years (raw $ per year; caller divides by price)
+        cutoff_5y = today.year - 5
+        recent_5y = {y: v for y, v in by_year.items() if y >= cutoff_5y and v > 0}
+        result["avg_annual_div_5y"] = round(sum(recent_5y.values()) / len(recent_5y), 6) if recent_5y else None
+
         return result
     except Exception as exc:
         logger.debug("FMP dividends %s failed: %s", symbol, exc)
@@ -382,20 +417,22 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
     async def _one(sym: str):
         async with sem:
             async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
-                km, div, etf, tech, ttm = await asyncio.gather(
+                km, div, etf, tech, ttm, cr = await asyncio.gather(
                     _fmp_key_metrics(sym, client),
                     _fmp_dividend_calendar(sym, client),
                     _fmp_etf_info(sym, client),
                     _fmp_technical_indicators(sym, client),
                     _fmp_key_metrics_ttm(sym, client),
+                    _fmp_credit_rating(sym, client),
                     return_exceptions=True,
                 )
-                # Normalize exceptions to empty dicts
+                # Normalize exceptions to empty dicts / None
                 if isinstance(km, Exception):   km = {}
                 if isinstance(div, Exception):  div = {}
                 if isinstance(etf, Exception):  etf = {}
                 if isinstance(tech, Exception): tech = {}
                 if isinstance(ttm, Exception):  ttm = {}
+                if isinstance(cr, Exception):   cr = None
 
                 merged: dict = {}
 
@@ -415,7 +452,12 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
                     merged["net_debt_ebitda"]      = _safe_float(
                         km.get("netDebtToEBITDA") or km.get("debtToEbitda")
                     )
+                    merged["debt_to_equity"]       = _safe_float(km.get("debtToEquityRatio"))
                     pass  # tangible_asset_value comes from ttm block below
+
+                # credit rating from FMP rating endpoint
+                if cr is not None:
+                    merged["credit_rating"] = cr
 
                 # /dividends: dates + CAGRs + consecutive growth
                 if div:
@@ -493,16 +535,18 @@ async def fetch_and_upsert(
     if not tickers:
         return 0
 
-    # Ensure fmp_sector column exists (idempotent – runs quickly if column already present)
-    try:
-        db.execute(text(
-            "ALTER TABLE platform_shared.market_data_cache "
-            "ADD COLUMN IF NOT EXISTS fmp_sector TEXT"
-        ))
-        db.commit()
-    except Exception as _col_err:
-        db.rollback()
-        logger.debug("fmp_sector column ensure: %s", _col_err)
+    # Ensure optional columns exist (idempotent)
+    for _col_ddl in (
+        "ADD COLUMN IF NOT EXISTS fmp_sector TEXT",
+        "ADD COLUMN IF NOT EXISTS fmp_industry TEXT",
+        "ADD COLUMN IF NOT EXISTS debt_to_equity FLOAT",
+    ):
+        try:
+            db.execute(text(f"ALTER TABLE platform_shared.market_data_cache {_col_ddl}"))
+            db.commit()
+        except Exception as _col_err:
+            db.rollback()
+            logger.debug("column ensure (%s): %s", _col_ddl, _col_err)
 
     # Separate CUSIPs from regular tickers
     cusip_tickers = [t for t in tickers if _is_cusip(t)]
@@ -561,6 +605,14 @@ async def fetch_and_upsert(
             div_yield = round((last_div / price_val) * 100, 4)
         else:
             div_yield = None
+
+        # yield_5yr_avg: avg annual dividend (last 5y) ÷ current price
+        avg_annual_div_5y = s.get("avg_annual_div_5y")
+        yield_5yr_avg = (
+            round(avg_annual_div_5y / price_val * 100, 4)
+            if avg_annual_div_5y and price_val and price_val > 0
+            else None
+        )
 
         # chowder_number = yield_ttm + 5Y div CAGR
         div_cagr_5y = s.get("div_cagr_5y")
@@ -640,11 +692,13 @@ async def fetch_and_upsert(
                         -- new fields
                         sma_50, sma_200, rsi_14d,
                         support_level, resistance_level,
+                        yield_5yr_avg,
                         div_cagr_3yr, div_cagr_10yr, consecutive_growth_yrs,
                         buyback_yield, coverage_metric_type,
                         interest_coverage_ratio, net_debt_ebitda,
                         free_cash_flow_yield, return_on_equity,
-                        fmp_sector,
+                        credit_rating, debt_to_equity,
+                        fmp_sector, fmp_industry,
                         is_tracked, track_reason,
                         snapshot_date, fetched_at
                     ) VALUES (
@@ -656,11 +710,13 @@ async def fetch_and_upsert(
                         :nav_value, :nav_discount_pct,
                         :sma_50, :sma_200, :rsi_14d,
                         :support_level, :resistance_level,
+                        :yield_5yr_avg,
                         :div_cagr_3yr, :div_cagr_10yr, :consecutive_growth_yrs,
                         :buyback_yield, :coverage_metric_type,
                         :interest_coverage_ratio, :net_debt_ebitda,
                         :free_cash_flow_yield, :return_on_equity,
-                        :fmp_sector,
+                        :credit_rating, :debt_to_equity,
+                        :fmp_sector, :fmp_industry,
                         TRUE, :track_reason,
                         :snapshot_date, :fetched_at
                     )
@@ -696,7 +752,11 @@ async def fetch_and_upsert(
                         net_debt_ebitda          = COALESCE(EXCLUDED.net_debt_ebitda,   platform_shared.market_data_cache.net_debt_ebitda),
                         free_cash_flow_yield     = COALESCE(EXCLUDED.free_cash_flow_yield, platform_shared.market_data_cache.free_cash_flow_yield),
                         return_on_equity         = COALESCE(EXCLUDED.return_on_equity,  platform_shared.market_data_cache.return_on_equity),
+                        yield_5yr_avg            = COALESCE(EXCLUDED.yield_5yr_avg,     platform_shared.market_data_cache.yield_5yr_avg),
+                        credit_rating            = COALESCE(EXCLUDED.credit_rating,     platform_shared.market_data_cache.credit_rating),
+                        debt_to_equity           = COALESCE(EXCLUDED.debt_to_equity,    platform_shared.market_data_cache.debt_to_equity),
                         fmp_sector               = COALESCE(EXCLUDED.fmp_sector,        platform_shared.market_data_cache.fmp_sector),
+                        fmp_industry             = COALESCE(EXCLUDED.fmp_industry,      platform_shared.market_data_cache.fmp_industry),
                         is_tracked               = TRUE,
                         track_reason             = EXCLUDED.track_reason,
                         snapshot_date            = EXCLUDED.snapshot_date,
@@ -729,6 +789,7 @@ async def fetch_and_upsert(
                     "rsi_14d": s.get("rsi_14d"),
                     "support_level": support_level,
                     "resistance_level": resistance_level,
+                    "yield_5yr_avg": yield_5yr_avg,
                     "div_cagr_3yr": s.get("div_cagr_3yr"),
                     "div_cagr_10yr": s.get("div_cagr_10yr"),
                     "consecutive_growth_yrs": s.get("consecutive_growth_yrs"),
@@ -738,7 +799,10 @@ async def fetch_and_upsert(
                     "net_debt_ebitda": s.get("net_debt_ebitda"),
                     "free_cash_flow_yield": s.get("free_cash_flow_yield"),
                     "return_on_equity": s.get("return_on_equity"),
-                    "fmp_sector": "Fixed Income" if _is_cusip(sym) else p.get("sector") or None,
+                    "credit_rating": s.get("credit_rating"),
+                    "debt_to_equity": s.get("debt_to_equity"),
+                    "fmp_sector":   "Fixed Income" if _is_cusip(sym) else p.get("sector")   or None,
+                    "fmp_industry": "Corporate Bond" if _is_cusip(sym) else p.get("industry") or None,
                     "track_reason": track_reason,
                     "snapshot_date": today,
                     "fetched_at": now,

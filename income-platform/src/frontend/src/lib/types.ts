@@ -184,6 +184,7 @@ export interface Asset {
   credit_rating?: string | null;
   interest_coverage_ratio?: number | null;
   net_debt_ebitda?: number | null;
+  debt_to_equity?: number | null;
   coverage_metric_type?: string | null;
   coverage_ratio?: number | null;
   leverage_pct?: number | null;

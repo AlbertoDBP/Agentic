@@ -1835,6 +1835,7 @@ def get_asset_detail(symbol: str):
                     m.credit_rating,
                     m.free_cash_flow_yield,
                     m.return_on_equity,
+                    m.debt_to_equity,
                     -- Analyst (v2)
                     m.analyst_price_target,
                     m.next_earnings_date,
@@ -1859,7 +1860,7 @@ def get_asset_detail(symbol: str):
                 "sma_50", "sma_200", "rsi_14d", "support_level", "resistance_level",
                 "yield_5yr_avg", "div_cagr_3yr", "div_cagr_10yr", "buyback_yield",
                 "interest_coverage_ratio", "net_debt_ebitda", "free_cash_flow_yield",
-                "return_on_equity", "analyst_price_target", "insider_ownership_pct",
+                "return_on_equity", "debt_to_equity", "analyst_price_target", "insider_ownership_pct",
                 "expense_ratio", "management_fee", "tax_qualified_pct", "tax_ordinary_pct",
                 "tax_roc_pct",
             ):
