@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.auth import verify_token
@@ -19,6 +20,67 @@ from app.proposal_engine.engine import ProposalError, ProposalResult, run_propos
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/proposals", tags=["proposals"])
+
+
+# ---------------------------------------------------------------------------
+# Enrichment helpers
+# ---------------------------------------------------------------------------
+
+def _compute_zone(
+    current_price: Optional[float],
+    entry_low: Optional[float],
+    entry_high: Optional[float],
+) -> tuple[str, Optional[float]]:
+    """Classify current price relative to the proposal entry range."""
+    if current_price is None or entry_low is None:
+        return "UNKNOWN", None
+    pct = (current_price - entry_low) / entry_low
+    if current_price < entry_low:
+        status = "BELOW_ENTRY"
+    elif current_price <= (entry_high or entry_low):
+        status = "IN_ZONE"
+    else:
+        status = "ABOVE_ENTRY"
+    return status, round(pct, 4)
+
+
+def _enrich_proposals(db: Session, tickers: list[str]) -> dict[str, dict]:
+    """
+    Batch-fetch market price and latest score sub-components for a list of tickers.
+    Returns dict keyed by ticker. Missing tickers get no entry (caller treats as None).
+    Uses LEFT JOIN so missing market data or scores return NULL rows gracefully.
+    """
+    if not tickers:
+        return {}
+    placeholders = ", ".join(f":t{i}" for i in range(len(tickers)))
+    params = {f"t{i}": t for i, t in enumerate(tickers)}
+    try:
+        rows = db.execute(text(f"""
+            SELECT
+                m.symbol AS ticker,
+                m.price            AS current_price,
+                m.week52_high,
+                m.week52_low,
+                m.nav_value,
+                m.nav_discount_pct,
+                s.valuation_yield_score,
+                s.financial_durability_score,
+                s.technical_entry_score
+            FROM platform_shared.market_data_cache m
+            LEFT JOIN LATERAL (
+                SELECT valuation_yield_score, financial_durability_score, technical_entry_score
+                FROM platform_shared.income_scores
+                WHERE ticker = m.symbol
+                ORDER BY scored_at DESC
+                LIMIT 1
+            ) s ON true
+            WHERE m.symbol IN ({placeholders})
+        """), params).mappings().all()
+    except OperationalError:
+        # Gracefully degrade when market data tables are unavailable (e.g. test env)
+        logger.debug("_enrich_proposals: market data tables unavailable; skipping enrichment")
+        return {}
+    return {row["ticker"]: dict(row) for row in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +174,17 @@ class ProposalResponse(BaseModel):
     created_at: Optional[str]
     updated_at: Optional[str]
     entry_method: Optional[str] = None
+    # Market enrichment (from market_data_cache + income_scores)
+    current_price: Optional[float] = None
+    zone_status: Optional[str] = None
+    pct_from_entry: Optional[float] = None
+    valuation_yield_score: Optional[float] = None
+    financial_durability_score: Optional[float] = None
+    technical_entry_score: Optional[float] = None
+    week52_high: Optional[float] = None
+    week52_low: Optional[float] = None
+    nav_value: Optional[float] = None
+    nav_discount_pct: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -121,8 +194,17 @@ class ProposalResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _proposal_to_response(p: Proposal) -> ProposalResponse:
+def _proposal_to_response(p: Proposal, enrichment: Optional[dict] = None) -> ProposalResponse:
     """Convert ORM Proposal to ProposalResponse."""
+    enc = enrichment or {}
+    current_price = enc.get("current_price")
+    if current_price is not None:
+        current_price = float(current_price)
+    zone_status, pct_from_entry = _compute_zone(
+        current_price,
+        float(p.entry_price_low) if p.entry_price_low is not None else None,
+        float(p.entry_price_high) if p.entry_price_high is not None else None,
+    )
     return ProposalResponse(
         id=p.id,
         ticker=p.ticker,
@@ -150,12 +232,22 @@ def _proposal_to_response(p: Proposal) -> ProposalResponse:
         trigger_ref_id=p.trigger_ref_id,
         portfolio_id=p.portfolio_id,
         override_rationale=p.override_rationale,
-        user_acknowledged_veto=p.user_acknowledged_veto,
+        user_acknowledged_veto=bool(p.user_acknowledged_veto) if p.user_acknowledged_veto is not None else False,
         reviewed_by=p.reviewed_by,
         decided_at=p.decided_at.isoformat() if p.decided_at else None,
         expires_at=p.expires_at.isoformat() if p.expires_at else None,
         created_at=p.created_at.isoformat() if p.created_at else None,
         updated_at=p.updated_at.isoformat() if p.updated_at else None,
+        current_price=current_price,
+        zone_status=zone_status,
+        pct_from_entry=pct_from_entry,
+        valuation_yield_score=float(enc["valuation_yield_score"]) if enc.get("valuation_yield_score") is not None else None,
+        financial_durability_score=float(enc["financial_durability_score"]) if enc.get("financial_durability_score") is not None else None,
+        technical_entry_score=float(enc["technical_entry_score"]) if enc.get("technical_entry_score") is not None else None,
+        week52_high=float(enc["week52_high"]) if enc.get("week52_high") is not None else None,
+        week52_low=float(enc["week52_low"]) if enc.get("week52_low") is not None else None,
+        nav_value=float(enc["nav_value"]) if enc.get("nav_value") is not None else None,
+        nav_discount_pct=float(enc["nav_discount_pct"]) if enc.get("nav_discount_pct") is not None else None,
     )
 
 
@@ -282,7 +374,8 @@ def list_proposals(
     if analyst_id is not None:
         query = query.filter(Proposal.analyst_id == analyst_id)
     proposals = query.order_by(Proposal.created_at.desc()).limit(limit).all()
-    return [_proposal_to_response(p) for p in proposals]
+    enrichments = _enrich_proposals(db, [p.ticker for p in proposals])
+    return [_proposal_to_response(p, enrichment=enrichments.get(p.ticker)) for p in proposals]
 
 
 @router.get("/{proposal_id}")
@@ -293,7 +386,8 @@ def get_proposal(
 ) -> ProposalResponse:
     """Get full proposal detail by ID."""
     proposal = _get_proposal_or_404(db, proposal_id)
-    return _proposal_to_response(proposal)
+    enc = _enrich_proposals(db, [proposal.ticker])
+    return _proposal_to_response(proposal, enrichment=enc.get(proposal.ticker))
 
 
 @router.post("/{proposal_id}/execute")

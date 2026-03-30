@@ -1,5 +1,20 @@
 """Test configuration and shared fixtures for proposal-service."""
 import os
+import sys
+import pathlib
+
+# Make the tests/ directory importable as a package root so test files can do
+# `from conftest import TestingSessionLocal, Proposal as TestProposal`.
+_tests_dir = str(pathlib.Path(__file__).parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
+
+# Ensure this module is accessible as 'conftest' in sys.modules so that
+# `from conftest import X` inside test functions resolves to THIS module.
+import importlib
+_this_module = importlib.util.spec_from_file_location("conftest", __file__)
+if "conftest" not in sys.modules:
+    sys.modules["conftest"] = sys.modules.get(__name__, sys.modules.get("conftest"))
 
 os.environ.setdefault("JWT_SECRET", "test-secret-for-tests")
 os.environ.setdefault("DATABASE_URL", "sqlite://")
