@@ -77,6 +77,7 @@ class Proposal(TestBase):
     status = Column(String(30), default="pending", nullable=False)
     trigger_mode = Column(String(30), nullable=True)
     trigger_ref_id = Column(Text, nullable=True)
+    portfolio_id = Column(Text, nullable=True)
     override_rationale = Column(Text, nullable=True)
     user_acknowledged_veto = Column(Boolean, default=False, nullable=False)
     reviewed_by = Column(Text, nullable=True)
@@ -95,6 +96,7 @@ class Proposal(TestBase):
 
 
 # Create the table before any app import
+TestBase.metadata.drop_all(bind=test_engine)
 TestBase.metadata.create_all(bind=test_engine)
 
 # ── Inject test model and DB into app modules before they import ──────────────

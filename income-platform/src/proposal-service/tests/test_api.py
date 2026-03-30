@@ -523,3 +523,21 @@ class TestRejectProposal:
         pid = self._create_proposal(client, auth_headers)
         resp = client.post(f"/proposals/{pid}/reject", headers=auth_headers)
         assert resp.json()["decided_at"] is not None
+
+
+def test_generate_proposal_persists_portfolio_id(client, auth_headers, monkeypatch):
+    """portfolio_id passed to /generate is stored on the proposal row."""
+    from unittest.mock import AsyncMock, patch
+    from tests.conftest import make_signal, make_score, make_entry_price, make_tax_placement
+
+    with patch("app.proposal_engine.data_fetcher.fetch_all", new=AsyncMock(
+        return_value=(make_signal(), make_score(), make_entry_price(), make_tax_placement())
+    )):
+        resp = client.post(
+            "/proposals/generate",
+            json={"ticker": "O", "portfolio_id": "a1b2c3d4-0000-0000-0000-000000000001"},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["portfolio_id"] == "a1b2c3d4-0000-0000-0000-000000000001"

@@ -88,6 +88,7 @@ class ProposalResponse(BaseModel):
     status: str
     trigger_mode: Optional[str]
     trigger_ref_id: Optional[str]
+    portfolio_id: Optional[str] = None
     override_rationale: Optional[str]
     user_acknowledged_veto: bool
     reviewed_by: Optional[str]
@@ -132,6 +133,7 @@ def _proposal_to_response(p: Proposal) -> ProposalResponse:
         status=p.status,
         trigger_mode=p.trigger_mode,
         trigger_ref_id=p.trigger_ref_id,
+        portfolio_id=p.portfolio_id,
         override_rationale=p.override_rationale,
         user_acknowledged_veto=p.user_acknowledged_veto,
         reviewed_by=p.reviewed_by,
@@ -142,7 +144,7 @@ def _proposal_to_response(p: Proposal) -> ProposalResponse:
     )
 
 
-def _persist_proposal(db: Session, result: ProposalResult) -> Proposal:
+def _persist_proposal(db: Session, result: ProposalResult, portfolio_id: Optional[str] = None) -> Proposal:
     """Write a ProposalResult to the DB and return the ORM object."""
     now = datetime.now(timezone.utc)
     proposal = Proposal(
@@ -169,6 +171,7 @@ def _persist_proposal(db: Session, result: ProposalResult) -> Proposal:
         status=result.status,
         trigger_mode=result.trigger_mode,
         trigger_ref_id=result.trigger_ref_id,
+        portfolio_id=portfolio_id,
         expires_at=result.expires_at,
         created_at=now,
         updated_at=now,
@@ -232,7 +235,7 @@ async def generate_proposal(
             logger.error("Proposal generation failed for %s: %s", ticker, exc)
             continue
 
-        proposal = _persist_proposal(db, result)
+        proposal = _persist_proposal(db, result, portfolio_id=body.portfolio_id)
         resp = _proposal_to_response(proposal)
         # Attach entry_method from engine result (not stored in DB)
         resp.entry_method = result.entry_method
@@ -414,5 +417,5 @@ async def re_evaluate_proposal(
     db.commit()
 
     # Persist new proposal
-    new_proposal = _persist_proposal(db, result)
+    new_proposal = _persist_proposal(db, result, portfolio_id=old.portfolio_id)
     return _proposal_to_response(new_proposal)
