@@ -287,6 +287,46 @@ class ScoringWeightProfile(Base):
         )
 
 
+# ── HHS Weight Profiles ───────────────────────────────────────────────────────
+
+class HHSWeightProfile(Base):
+    """
+    HHS pillar weight profiles — Income vs Durability split per asset class.
+
+    Separate from ScoringWeightProfile (which owns Agent-03 40/40/20 weights)
+    to preserve the wrapper-only contract. See architecture doc.
+
+    income_weight + durability_weight must always equal 100.
+    durability_weight stored for query convenience; always = 100 - income_weight.
+
+    Phase 1: read from hhs_weights.py defaults. Phase 3: DB-backed loader added.
+    """
+    __tablename__ = "hhs_weight_profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_class = Column(String(50), nullable=False, index=True)
+    risk_profile = Column(String(20), nullable=False, default="moderate")
+    version = Column(Integer, nullable=False, default=1)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    income_weight = Column(SmallInteger, nullable=False)
+    durability_weight = Column(SmallInteger, nullable=False)  # = 100 - income_weight
+    unsafe_threshold = Column(SmallInteger, nullable=False, default=20)
+
+    source = Column(String(30), nullable=False, default="MANUAL")
+    change_reason = Column(Text, nullable=True)
+    created_by = Column(String(100), nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    activated_at = Column(DateTime, nullable=True)
+    superseded_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_hhs_wp_asset_class", "asset_class", "risk_profile", "is_active"),
+        {"schema": "platform_shared"},  # REQUIRED — all tables use platform_shared schema
+    )
+
+
 # ── v2.0: Weight Change Audit ─────────────────────────────────────────────────
 
 class WeightChangeAudit(Base):

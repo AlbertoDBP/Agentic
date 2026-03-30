@@ -307,6 +307,30 @@ def run_migration(drop_first: bool = False):
             )
         """))
 
+        # HHS Weight Profiles — always schema-qualified as platform_shared
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS platform_shared.hhs_weight_profiles (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                asset_class VARCHAR(50) NOT NULL,
+                risk_profile VARCHAR(20) NOT NULL DEFAULT 'moderate',
+                version INTEGER NOT NULL DEFAULT 1,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                income_weight SMALLINT NOT NULL,
+                durability_weight SMALLINT NOT NULL,
+                unsafe_threshold SMALLINT NOT NULL DEFAULT 20,
+                source VARCHAR(30) NOT NULL DEFAULT 'MANUAL',
+                change_reason TEXT,
+                created_by VARCHAR(100),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                activated_at TIMESTAMPTZ,
+                superseded_at TIMESTAMPTZ
+            )
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_hhs_wp_asset_class
+            ON platform_shared.hhs_weight_profiles (asset_class, risk_profile, is_active)
+        """))
+
         conn.commit()
 
     # ── ADD columns to income_scores if upgrading from v1.0/v2.0-early ────────
