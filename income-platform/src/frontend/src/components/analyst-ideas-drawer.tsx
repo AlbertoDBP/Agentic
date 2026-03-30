@@ -50,8 +50,7 @@ export function AnalystIdeasDrawer({
     [scanResult, selectedTickers]
   );
 
-  // Only show portfolios that have holdings — empty/test accounts are not valid proposal targets
-  const activePortfolios = portfolios.filter((p) => p.holding_count > 0);
+  const activePortfolios = portfolios;
   const selectedPortfolio = portfolios.find((p) => p.id === targetPortfolioId);
   const cashBalance: number | null = (selectedPortfolio as any)?.cash_balance ?? null;
 
