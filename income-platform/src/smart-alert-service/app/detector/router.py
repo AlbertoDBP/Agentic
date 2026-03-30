@@ -85,7 +85,7 @@ def process_alerts(db: Session, detected: list[AlertData]) -> ScanResult:
                          first_seen_at, details, notified, created_at, updated_at)
                     VALUES
                         (:symbol, :source_agent, :alert_type, :severity, 'PENDING',
-                         :now, :details::jsonb, false, :now, :now)
+                         :now, CAST(:details AS jsonb), false, :now, :now)
                     """
                 ),
                 {
