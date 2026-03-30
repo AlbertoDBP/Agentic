@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,7 @@ export function AnalystIdeasDrawer({
   portfolios,
   onSuccess,
 }: AnalystIdeasDrawerProps) {
+  const router = useRouter();
   const [targetPortfolioId, setTargetPortfolioId] = useState<string>("");
   const [allocationMode, setAllocationMode] = useState<"auto" | "manual">("auto");
   const [overrides, setOverrides] = useState<Record<string, { amount_usd: string; target_price: string }>>({});
@@ -90,8 +92,26 @@ export function AnalystIdeasDrawer({
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail ?? "Failed to create proposal");
+
+      // Step 2: generate full proposals via Agent 12
+      const genResp = await fetch("/api/proposals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tickers: [...selectedTickers],
+          portfolio_id: targetPortfolioId,
+          scan_id: scanResult.scan_id,
+          trigger_mode: "on_demand",
+        }),
+      });
+      if (!genResp.ok) {
+        const genData = await genResp.json().catch(() => ({}));
+        throw new Error(genData.detail ?? `Proposal generation failed (${genResp.status})`);
+      }
+
       onSuccess(data.proposal_id);
       onClose();
+      router.push("/proposals");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -113,7 +133,11 @@ export function AnalystIdeasDrawer({
             <Label className="text-sm">Target Portfolio <span className="text-red-500">*</span></Label>
             <Select value={targetPortfolioId} onValueChange={(v) => setTargetPortfolioId(v ?? "")}>
               <SelectTrigger>
-                <SelectValue placeholder="Select target portfolio..." />
+                {targetPortfolioId ? (
+                  <span className="text-sm">{portfolios.find((p) => p.id === targetPortfolioId)?.name ?? "Portfolio"}</span>
+                ) : (
+                  <SelectValue placeholder="Select target portfolio..." />
+                )}
               </SelectTrigger>
               <SelectContent>
                 {activePortfolios.map((p) => (
