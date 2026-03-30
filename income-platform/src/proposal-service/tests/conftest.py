@@ -11,7 +11,7 @@ if _tests_dir not in sys.path:
 
 # Ensure this module is accessible as 'conftest' in sys.modules so that
 # `from conftest import X` inside test functions resolves to THIS module.
-import importlib
+import importlib.util
 _this_module = importlib.util.spec_from_file_location("conftest", __file__)
 if "conftest" not in sys.modules:
     sys.modules["conftest"] = sys.modules.get(__name__, sys.modules.get("conftest"))

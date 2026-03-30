@@ -32,7 +32,7 @@ def _compute_zone(
     entry_high: Optional[float],
 ) -> tuple[str, Optional[float]]:
     """Classify current price relative to the proposal entry range."""
-    if current_price is None or entry_low is None:
+    if current_price is None or entry_low is None or entry_low == 0:
         return "UNKNOWN", None
     pct = (current_price - entry_low) / entry_low
     if current_price < entry_low:
@@ -76,9 +76,12 @@ def _enrich_proposals(db: Session, tickers: list[str]) -> dict[str, dict]:
             ) s ON true
             WHERE m.symbol IN ({placeholders})
         """), params).mappings().all()
-    except OperationalError:
-        # Gracefully degrade when market data tables are unavailable (e.g. test env)
-        logger.debug("_enrich_proposals: market data tables unavailable; skipping enrichment")
+    except OperationalError as exc:
+        msg = str(exc).lower()
+        if "does not exist" in msg or "no such table" in msg:
+            logger.debug("_enrich_proposals: market data tables unavailable; skipping enrichment")
+        else:
+            logger.warning("_enrich_proposals: unexpected DB error during enrichment: %s", exc)
         return {}
     return {row["ticker"]: dict(row) for row in rows}
 
