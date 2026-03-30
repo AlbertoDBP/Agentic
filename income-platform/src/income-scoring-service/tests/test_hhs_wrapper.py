@@ -82,3 +82,8 @@ def test_insufficient_data_status():
 def test_scored_status_set_on_success():
     result = HHSWrapper().compute(_score(), _weights())
     assert result.status == HHSStatus.SCORED
+
+def test_pillar_clamped_at_100_when_score_exceeds_weight():
+    # vy=50 with weight_yield=40 → raw 125 → clamped to 100
+    result = HHSWrapper().compute(_score(vy=50.0, wy=40), _weights())
+    assert result.income_pillar == 100.0
