@@ -419,3 +419,80 @@ export interface ProposalDraft {
   target_portfolio_id: string;
   created_at: string;
 }
+
+// ── Proposal execution workflow types ────────────────────────────────────────
+
+export interface ProposalWithPortfolio {
+  id: number;
+  ticker: string;
+  portfolio_id: string | null;
+  platform_score: number | null;
+  platform_alignment: string | null;
+  analyst_recommendation: string | null;
+  analyst_yield_estimate: number | null;
+  platform_yield_estimate: number | null;
+  entry_price_low: number | null;
+  entry_price_high: number | null;
+  position_size_pct: number | null;
+  recommended_account: string | null;
+  analyst_thesis_summary: string | null;
+  analyst_safety_grade: string | null;
+  platform_income_grade: string | null;
+  sizing_rationale: string | null;
+  divergence_notes: string | null;
+  veto_flags: Record<string, unknown> | null;
+  status: string;
+  created_at: string | null;
+}
+
+export type OrderType = "market" | "limit" | "stop_limit";
+export type TimeInForce = "day" | "gtc" | "ioc";
+
+export interface OrderParams {
+  order_type: OrderType;
+  limit_price: number | null;    // null for market orders
+  shares: number | null;
+  dollar_amount: number | null;  // linked to shares via limit_price
+  time_in_force: TimeInForce;
+}
+
+export type BrokerOrderStatus =
+  | "pending"
+  | "partially_filled"
+  | "filled"
+  | "cancelled"
+  | "paper";
+
+export interface LiveOrder {
+  proposal_id: number;
+  ticker: string;
+  portfolio_id: string;
+  order_id: string;         // broker order ID
+  broker: string;           // e.g. "alpaca" — round-tripped from placement response
+  status: BrokerOrderStatus;
+  qty: number;
+  filled_qty: number;
+  avg_fill_price: number | null;
+  limit_price: number | null;
+  filled_at: string | null;
+  submitted_at: string | null;
+}
+
+export interface PaperOrder {
+  proposal_id: number;
+  ticker: string;
+  portfolio_id: string;
+  qty: number;
+  order_type: OrderType;
+  limit_price: number | null;
+  time_in_force: TimeInForce;
+  portfolio_name: string;
+  executed: boolean;          // true after "Mark as Executed"
+}
+
+export interface PortfolioImpact {
+  cash_required: number;
+  added_annual_income: number;
+  new_portfolio_yield: number | null;   // null if portfolio value unknown
+  concentration_pct: number | null;     // per-ticker, null if portfolio value unknown
+}
