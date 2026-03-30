@@ -12,6 +12,9 @@ export interface Portfolio {
   sync_interval_hours?: number;
   last_synced?: string;
   last_refreshed_at?: string | null;
+  // Aggregate KPIs (returned by /api/portfolios, computed server-side)
+  annual_income?: number | null;
+  blended_yield?: number | null;
   // Strategy settings
   benchmark_ticker?: string;
   target_yield?: number | null;
@@ -442,6 +445,17 @@ export interface ProposalWithPortfolio {
   divergence_notes: string | null;
   veto_flags: Record<string, unknown> | null;
   status: string;
+  // Market enrichment (from proposal-service DB joins)
+  current_price?: number | null;
+  zone_status?: string | null;
+  pct_from_entry?: number | null;
+  valuation_yield_score?: number | null;
+  financial_durability_score?: number | null;
+  technical_entry_score?: number | null;
+  week52_high?: number | null;
+  week52_low?: number | null;
+  nav_value?: number | null;
+  nav_discount_pct?: number | null;
   created_at: string | null;
 }
 
