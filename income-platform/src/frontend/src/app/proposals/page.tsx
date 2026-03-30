@@ -14,7 +14,7 @@ interface Proposal {
   analyst_id: number | null;
   platform_score: number | null;
   platform_alignment: string | null;
-  veto_flags: unknown;
+  veto_flags: Record<string, unknown> | string[] | null;
   divergence_notes: string | null;
   analyst_recommendation: string | null;
   analyst_sentiment: number | null;
@@ -22,7 +22,7 @@ interface Proposal {
   analyst_yield_estimate: number | null;
   analyst_safety_grade: string | null;
   platform_yield_estimate: number | null;
-  platform_safety_result: unknown;
+  platform_safety_result: Record<string, unknown> | null;
   platform_income_grade: string | null;
   entry_price_low: number | null;
   entry_price_high: number | null;
