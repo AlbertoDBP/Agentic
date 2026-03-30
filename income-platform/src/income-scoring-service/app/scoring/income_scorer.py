@@ -223,8 +223,8 @@ def _compute_chowder(
 
 @dataclass
 class ScoreResult:
-    ticker: str
-    asset_class: str
+    ticker: str = ""
+    asset_class: str = ""
 
     # Component scores
     valuation_yield_score: float = 0.0
@@ -252,6 +252,9 @@ class ScoreResult:
     # v2.0: weight profile provenance
     weight_profile_version: Optional[int] = None
     weight_profile_id: Optional[str] = None
+
+    # v2.1: weight profile dict (class-specific weights used during scoring)
+    weight_profile: Optional[dict] = None
 
 
 # ── Scorer ────────────────────────────────────────────────────────────────────
