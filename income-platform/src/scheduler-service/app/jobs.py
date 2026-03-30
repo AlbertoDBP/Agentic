@@ -74,8 +74,7 @@ def job_classify_new():
     """Agent 04 — Classify any unclassified securities.
     Schedule: Daily at 19:15 ET.
     """
-    _call("POST", f"{settings.agent04_url}/classify/batch", "Classification Batch",
-          json={"mode": "unclassified"})
+    _call("POST", f"{settings.agent04_url}/classify/refresh-unclassified", "Classification Batch")
 
 
 def job_opportunity_scan():

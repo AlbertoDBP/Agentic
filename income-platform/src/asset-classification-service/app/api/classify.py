@@ -3,6 +3,7 @@ import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -51,6 +52,50 @@ async def classify_batch(request: BatchClassifyRequest, db: Session = Depends(ge
 
     return {
         "total": len(request.tickers),
+        "classified": len(results),
+        "errors": len(errors),
+        "results": results,
+        "error_details": errors,
+    }
+
+
+@router.post("/classify/refresh-unclassified")
+async def refresh_unclassified(db: Session = Depends(get_db)):
+    """Classify all symbols in market_data_cache that lack a fresh classification (< 30 days).
+
+    Called daily by the scheduler to keep asset_classifications up to date
+    without requiring an explicit ticker list.
+    """
+    rows = db.execute(text(
+        """
+        SELECT DISTINCT m.symbol
+        FROM platform_shared.market_data_cache m
+        WHERE NOT EXISTS (
+            SELECT 1 FROM platform_shared.asset_classifications ac
+            WHERE ac.ticker = m.symbol
+              AND ac.classified_at >= NOW() - INTERVAL '30 days'
+        )
+        LIMIT 100
+        """
+    )).fetchall()
+
+    tickers = [r[0] for r in rows if r[0]]
+    if not tickers:
+        return {"total": 0, "classified": 0, "errors": 0, "results": [], "error_details": []}
+
+    engine = ClassificationEngine(db)
+    results = []
+    errors = []
+    for ticker in tickers:
+        try:
+            result = await engine.classify(ticker.upper().strip())
+            results.append(result)
+        except Exception as e:
+            logger.error("Error classifying %s: %s", ticker, e)
+            errors.append({"ticker": ticker, "error": str(e)})
+
+    return {
+        "total": len(tickers),
         "classified": len(results),
         "errors": len(errors),
         "results": results,

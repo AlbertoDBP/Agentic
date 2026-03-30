@@ -17,12 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 def _aggregate_agent07(db: Session) -> list[AlertData]:
-    """Aggregate VETO_FLAG alerts from Agent 07 scan_results."""
+    """Aggregate VETO_FLAG alerts from Agent 07 scan_results.
+
+    scan_results.items is a JSONB array of ScanItem dicts with keys:
+    ticker, veto_flag, score, grade, etc.
+    """
     sql = text(
         """
-        SELECT ticker AS symbol, created_at
-        FROM platform_shared.scan_results
-        WHERE veto_flag = true AND created_at >= NOW() - INTERVAL '7 days'
+        SELECT item->>'ticker' AS symbol, sr.created_at
+        FROM platform_shared.scan_results sr
+        CROSS JOIN LATERAL jsonb_array_elements(sr.items) AS item
+        WHERE (item->>'veto_flag')::boolean = true
+          AND sr.created_at >= NOW() - INTERVAL '7 days'
         """
     )
     rows = db.execute(sql).fetchall()
