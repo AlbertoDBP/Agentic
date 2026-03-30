@@ -67,6 +67,17 @@ class OrderPlaceRequest(BaseModel):
     proposal_id: Optional[str] = None   # link back to the originating proposal
 
 
+class SyncFillRequest(BaseModel):
+    portfolio_id: str
+    ticker: str
+    filled_qty: float
+    avg_fill_price: float
+    filled_at: str                      # ISO datetime — acquisition_date for new positions
+    proposal_id: Optional[str] = None
+    order_id: Optional[str] = None
+    broker_ref: Optional[str] = None
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/providers")
@@ -562,3 +573,64 @@ def _resolve_or_create_portfolio(
         "total": account.portfolio_value,
     })
     return pid
+
+
+# ── Sync-fill endpoint ─────────────────────────────────────────────────────────
+
+@router.post("/positions/sync-fill")
+def sync_fill(req: SyncFillRequest, db: Session = Depends(get_db)):
+    """Upsert a position after a confirmed broker fill.
+
+    For new positions: inserts with req.filled_qty, req.avg_fill_price.
+    For existing positions: adds shares and recomputes weighted-average cost basis atomically.
+    """
+    # Read existing position row for (portfolio_id, ticker, status='ACTIVE')
+    existing = db.execute(text("""
+        SELECT quantity, avg_cost_basis
+        FROM platform_shared.positions
+        WHERE portfolio_id = :pid AND symbol = :sym AND status = 'ACTIVE'
+        LIMIT 1
+    """), {"pid": req.portfolio_id, "sym": req.ticker.upper()}).fetchone()
+
+    if existing and existing[0]:
+        old_qty = float(existing[0])
+        old_cost = float(existing[1] or 0)
+        new_qty = old_qty + req.filled_qty
+        new_avg_cost = (old_qty * old_cost + req.filled_qty * req.avg_fill_price) / new_qty
+        is_new = False
+    else:
+        new_qty = req.filled_qty
+        new_avg_cost = req.avg_fill_price
+        is_new = True
+
+    db.execute(text("""
+        INSERT INTO platform_shared.positions
+            (id, portfolio_id, symbol, status, quantity, avg_cost_basis, total_cost_basis,
+             created_at, updated_at)
+        VALUES
+            (:id, :pid, :sym, 'ACTIVE', :qty, :avg_cb, :total_cb, NOW(), NOW())
+        ON CONFLICT (portfolio_id, symbol, status)
+        DO UPDATE SET
+            quantity         = :qty,
+            avg_cost_basis   = :avg_cb,
+            total_cost_basis = :total_cb,
+            updated_at       = NOW()
+    """), {
+        "id": str(uuid4()),
+        "pid": req.portfolio_id,
+        "sym": req.ticker.upper(),
+        "qty": new_qty,
+        "avg_cb": round(new_avg_cost, 6),
+        "total_cb": round(new_qty * new_avg_cost, 2),
+    })
+    db.commit()
+
+    return {
+        "portfolio_id": req.portfolio_id,
+        "ticker": req.ticker.upper(),
+        "filled_qty": req.filled_qty,
+        "avg_fill_price": req.avg_fill_price,
+        "total_shares": new_qty,
+        "new_avg_cost": round(new_avg_cost, 4),
+        "is_new_position": is_new,
+    }
