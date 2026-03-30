@@ -28,6 +28,10 @@ class HHSWeights:
     income_weight: int   # 0–100
     unsafe_threshold: int
 
+    def __post_init__(self) -> None:
+        if not (0 <= self.income_weight <= 100):
+            raise ValueError(f"income_weight must be 0–100, got {self.income_weight}")
+
     @property
     def durability_weight(self) -> int:
         return 100 - self.income_weight
@@ -53,13 +57,16 @@ class HHSWeightDefaults:
         """Return HHS weight config for an asset class.
         risk_profile reserved for Phase 3 per-profile differentiation.
         """
-        income_w = _DEFAULTS.get(asset_class.upper(), _DEFAULT_INCOME_WEIGHT)
+        normalized = asset_class.upper()
+        income_w = _DEFAULTS.get(normalized, _DEFAULT_INCOME_WEIGHT)
         return HHSWeights(
-            asset_class=asset_class,
+            asset_class=normalized,
             income_weight=income_w,
             unsafe_threshold=_DEFAULT_UNSAFE_THRESHOLD,
         )
 
     @staticmethod
     def unsafe_threshold(risk_profile: RiskProfile = RiskProfile.MODERATE) -> int:
+        # Phase 1: returns the same default for all risk profiles.
+        # Phase 3: per-profile thresholds loaded from HHSWeightProfile table.
         return _DEFAULT_UNSAFE_THRESHOLD
