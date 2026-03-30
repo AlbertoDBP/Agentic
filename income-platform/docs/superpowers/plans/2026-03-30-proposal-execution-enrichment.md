@@ -136,22 +136,30 @@ def test_proposal_to_response_without_enrichment():
     assert resp.zone_status == "UNKNOWN"
     assert resp.valuation_yield_score is None
 
-def test_enrich_proposals_called_once_for_batch(test_client, db_session):
-    """_enrich_proposals is called exactly once regardless of how many proposals are returned."""
+def test_enrich_proposals_called_once_for_batch(client, auth_headers):
+    """_enrich_proposals is called exactly once regardless of how many proposals are returned.
+
+    Uses conftest fixtures: client (TestClient), auth_headers (Bearer JWT).
+    The conftest's autouse clean_db fixture wipes proposals between tests.
+    Seed two proposals directly via the DB session from conftest.TestingSessionLocal.
+    """
     from unittest.mock import patch
-    # Seed two proposals
-    from app.models import Proposal
+    from conftest import TestingSessionLocal, Proposal as TestProposal
     from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc)
-    for ticker in ["MAIN", "ARCC"]:
-        db_session.add(Proposal(ticker=ticker, status="pending", created_at=now, updated_at=now))
-    db_session.commit()
+    db = TestingSessionLocal()
+    try:
+        for ticker in ["MAIN", "ARCC"]:
+            db.add(TestProposal(ticker=ticker, status="pending", created_at=now, updated_at=now))
+        db.commit()
+    finally:
+        db.close()
 
     with patch("app.api.proposals._enrich_proposals", return_value={}) as mock_enrich:
-        resp = test_client.get("/proposals?status=pending", headers={"Authorization": "Bearer test"})
+        resp = client.get("/proposals?status=pending", headers=auth_headers)
         assert resp.status_code == 200
         assert mock_enrich.call_count == 1
-        # Both tickers passed in single call
         called_tickers = set(mock_enrich.call_args[0][1])
         assert "MAIN" in called_tickers
         assert "ARCC" in called_tickers
