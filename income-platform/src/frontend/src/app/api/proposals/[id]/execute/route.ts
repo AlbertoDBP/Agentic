@@ -7,12 +7,13 @@ const ADMIN_PANEL = process.env.ADMIN_PANEL_URL ?? "http://localhost:8100";
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     const body = await req.json().catch(() => ({}));
     const upstream = await fetch(
-      `${ADMIN_PANEL}/api/proposals/${params.id}/execute`,
+      `${ADMIN_PANEL}/api/proposals/${id}/execute`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
