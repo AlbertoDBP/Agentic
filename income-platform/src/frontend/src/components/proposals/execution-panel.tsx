@@ -4,8 +4,7 @@
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { PortfolioImpactBar, computeImpact } from "./portfolio-impact-bar";
-import type { ProposalWithPortfolio, OrderParams, OrderType, TimeInForce } from "@/lib/types";
-import type { Portfolio } from "@/lib/types";
+import type { ProposalWithPortfolio, OrderParams, OrderType, TimeInForce, Portfolio } from "@/lib/types";
 
 interface ExecutionPanelProps {
   proposals: ProposalWithPortfolio[];
@@ -42,7 +41,7 @@ export function ExecutionPanel({
           order_type: "limit" as OrderType,
           limit_price: p.entry_price_low ?? null,
           shares: p.position_size_pct != null && portfolio.cash_balance != null
-            ? Math.floor((portfolio.cash_balance * (p.position_size_pct / 100)) / (p.entry_price_low ?? 1))
+            ? Math.floor((portfolio.cash_balance * (p.position_size_pct / 100)) / (p.entry_price_low || 1))
             : null,
           dollar_amount: null,
           time_in_force: "gtc" as TimeInForce,
@@ -219,7 +218,7 @@ export function ExecutionPanel({
             {/* PORTFOLIO section */}
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                Portfolio · {portfolio.name}
+                Portfolio{portfolio.name ? ` · ${portfolio.name}` : ""}
               </p>
               <div className="grid grid-cols-3 gap-2 mb-2">
                 <DataCell label="Cash"
