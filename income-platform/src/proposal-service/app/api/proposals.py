@@ -63,6 +63,21 @@ class RejectRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class FillConfirmedRequest(BaseModel):
+    filled_qty: float
+    avg_fill_price: float
+    filled_at: str          # ISO datetime string from broker
+    status: str             # filled | partially_filled | cancelled
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        allowed = {"filled", "partially_filled", "cancelled"}
+        if v not in allowed:
+            raise ValueError(f"status must be one of {allowed}")
+        return v
+
+
 class ProposalResponse(BaseModel):
     id: int
     ticker: str
@@ -419,3 +434,40 @@ async def re_evaluate_proposal(
     # Persist new proposal
     new_proposal = _persist_proposal(db, result, portfolio_id=old.portfolio_id)
     return _proposal_to_response(new_proposal)
+
+
+@router.post("/{proposal_id}/fill-confirmed")
+def fill_confirmed(
+    proposal_id: int,
+    body: FillConfirmedRequest,
+    db: Session = Depends(get_db),
+    _token: dict = Depends(verify_token),
+) -> ProposalResponse:
+    """Mark a proposal as fill-confirmed after broker order completes.
+
+    Transitions:
+      executed_aligned → executed_filled    (body.status == "filled")
+      executed_aligned → partially_filled   (body.status == "partially_filled")
+      executed_aligned → cancelled          (body.status == "cancelled")
+    """
+    proposal = _get_proposal_or_404(db, proposal_id)
+
+    if proposal.status not in ("executed_aligned", "partially_filled"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot confirm fill on proposal with status '{proposal.status}'",
+        )
+
+    status_map = {
+        "filled": "executed_filled",
+        "partially_filled": "partially_filled",
+        "cancelled": "cancelled",
+    }
+
+    now = datetime.now(timezone.utc)
+    proposal.status = status_map[body.status]
+    proposal.decided_at = now
+    proposal.updated_at = now
+    db.commit()
+    db.refresh(proposal)
+    return _proposal_to_response(proposal)
