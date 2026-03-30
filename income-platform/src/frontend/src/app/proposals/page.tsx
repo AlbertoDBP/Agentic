@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePortfolio } from "@/lib/portfolio-context";
@@ -92,6 +92,8 @@ export default function ProposalsPage() {
 
   // Order tracking (Phase 2)
   const [liveOrders, setLiveOrders] = useState<LiveOrder[]>([]);
+  const liveOrdersRef = useRef<LiveOrder[]>([]);
+  useEffect(() => { liveOrdersRef.current = liveOrders; }, [liveOrders]);
   const [paperOrders, setPaperOrders] = useState<PaperOrder[]>([]);
   const [submittedAt, setSubmittedAt] = useState<Date | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
@@ -262,8 +264,9 @@ export default function ProposalsPage() {
   // ── Polling / refresh ──
 
   const refreshOrders = useCallback(async () => {
+    const current = liveOrdersRef.current;
     const updated = await Promise.all(
-      liveOrders.map(async (o) => {
+      current.map(async (o) => {
         if (o.status === "filled" || o.status === "cancelled") return o;
         try {
           const resp = await fetch(`/broker/orders/${o.order_id}?broker=${o.broker}`);
@@ -300,7 +303,7 @@ export default function ProposalsPage() {
     );
     setLiveOrders(updated);
     setLastRefreshedAt(new Date());
-  }, [liveOrders, syncFill]);
+  }, [syncFill]); // no liveOrders dep — reads from ref to prevent polling interval reset
 
   // ── Cancel handlers ──
 
