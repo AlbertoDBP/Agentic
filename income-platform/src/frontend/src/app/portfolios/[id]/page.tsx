@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { ChevronDown, ChevronUp, ArrowLeft, RefreshCw } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip as ReTip, ResponsiveContainer } from "recharts";
@@ -16,6 +16,8 @@ import { SimulationContent } from "@/app/income-simulation/page";
 import { ProjectionContent } from "@/app/income-projection/page";
 import { PageHelpPanel } from "@/components/page-help-panel";
 import { PORTFOLIO_TAB_HELP } from "@/lib/page-help-content";
+import { PortfolioHealthCard } from "@/components/portfolio/health-card";
+import type { GateStatus, RefreshLog } from "@/lib/types";
 
 const SECTOR_COLORS: Record<string, string> = {
   "Financial Services":     "#3b82f6",
@@ -94,6 +96,18 @@ export default function PortfolioPage() {
       : "portfolio";
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [health, setHealth] = useState<{ gate: GateStatus | null; refresh_log: RefreshLog | null }>({
+    gate: null,
+    refresh_log: null,
+  });
+
+  useEffect(() => {
+    if (!id) return;
+    fetch(`/api/portfolios/${id}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data) setHealth(data); })
+      .catch(() => {});
+  }, [id]);
 
   const { data: summary, isLoading, error, refetch } = usePortfolioSummary(id);
 
@@ -185,6 +199,9 @@ export default function PortfolioPage() {
           </button>
         </div>
       </div>
+
+      {/* Data quality health card */}
+      <PortfolioHealthCard gate={health.gate} refreshLog={health.refresh_log} />
 
       {/* KPI strip */}
       <KpiStrip items={kpis} />
