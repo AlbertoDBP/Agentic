@@ -79,6 +79,31 @@ def _run_scan_background(market_refreshed_at: Optional[str]):
 
 # ── Gate check ────────────────────────────────────────────────────────────────
 
+@router.get("/gate/symbol/{symbol}")
+def gate_status_by_symbol(
+    symbol: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_token),
+):
+    """Check if a specific symbol has any critical unresolved issues."""
+    result = db.execute(
+        text("""
+            SELECT COUNT(*) AS cnt
+            FROM platform_shared.data_quality_issues
+            WHERE symbol = :sym
+              AND severity = 'critical'
+              AND status NOT IN ('resolved', 'unresolvable')
+        """),
+        {"sym": symbol},
+    ).fetchone()
+    critical_count = result.cnt if result else 0
+    return {
+        "symbol": symbol,
+        "status": "blocked" if critical_count > 0 else "passed",
+        "blocking_issue_count": critical_count,
+    }
+
+
 @router.get("/gate/{portfolio_id}", dependencies=[Depends(verify_token)])
 def get_gate(portfolio_id: str, db: Session = Depends(get_db)):
     result = evaluate_gate(db, portfolio_id)

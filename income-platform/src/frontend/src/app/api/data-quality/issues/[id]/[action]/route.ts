@@ -10,6 +10,10 @@ export async function POST(
 ) {
   try {
     const { id, action } = await params;
+    const ALLOWED_ACTIONS = new Set(["retry", "mark-na", "reclassify"]);
+    if (!ALLOWED_ACTIONS.has(action)) {
+      return NextResponse.json({ detail: "Invalid action" }, { status: 400 });
+    }
     const upstream = await fetch(
       `${AGENT14}/data-quality/issues/${id}/${action}`,
       {

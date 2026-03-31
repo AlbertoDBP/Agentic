@@ -9,6 +9,22 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+# Allowlist of columns that exist in market_data_cache and can be used in dynamic SQL.
+_VALID_FIELD_NAMES: frozenset[str] = frozenset({
+    "price", "sma_50", "sma_200", "rsi_14d", "week52_high", "week52_low",
+    "dividend_yield", "payout_ratio", "pe_ratio", "forward_pe",
+    "debt_to_equity", "interest_coverage_ratio", "price_to_book",
+    "profit_margin", "free_cash_flow_yield",
+    "chowder_number", "consecutive_growth_yrs",
+})
+
+
+def _validate_field_name(field_name: str) -> None:
+    """Raise ValueError if field_name is not in the known allowlist."""
+    if field_name not in _VALID_FIELD_NAMES:
+        raise ValueError(f"Unknown field_name: {field_name!r}")
+
+
 ASSET_TYPE_TO_CLASS: dict[str, str] = {
     "DIVIDEND_STOCK":  "CommonStock",
     "ETF":             "ETF",
@@ -19,6 +35,9 @@ ASSET_TYPE_TO_CLASS: dict[str, str] = {
     "MORTGAGE_REIT":   "REIT",
     "MLP":             "MLP",
     "PREFERRED_STOCK": "Preferred",
+    "BOND":            "Bond",
+    "CORPORATE_BOND":  "Bond",
+    "TREASURY_BOND":   "Bond",
 }
 
 
@@ -28,6 +47,7 @@ def resolve_asset_class(asset_type: Optional[str]) -> Optional[str]:
 
 def compute_severity(db: Session, symbol: str, field_name: str, asset_class: str) -> str:
     """Critical if any peer of same asset_class has the field populated; else warning."""
+    _validate_field_name(field_name)
     peer_count = db.execute(
         text("""
             SELECT COUNT(*)
@@ -93,6 +113,7 @@ def run_scan(db: Session) -> dict:
                 continue
 
             # Check if field is populated in market_data_cache
+            _validate_field_name(field_name)
             result = db.execute(
                 text(f"SELECT {field_name} FROM platform_shared.market_data_cache WHERE symbol = :s"),
                 {"s": symbol},
@@ -132,15 +153,16 @@ def run_scan(db: Session) -> dict:
                     issues_created += 1
             else:
                 # Field is present — mark any open issue resolved
-                db.execute(
+                resolve_result = db.execute(
                     text("""
                         UPDATE platform_shared.data_quality_issues
                         SET status='resolved', resolved_at=NOW(), updated_at=NOW()
-                        WHERE symbol=:s AND field_name=:f AND status != 'resolved'
+                        WHERE symbol=:s AND field_name=:f AND status NOT IN ('resolved','unresolvable')
                     """),
                     {"s": symbol, "f": field_name},
                 )
-                issues_resolved += 1
+                if resolve_result.rowcount > 0:
+                    issues_resolved += 1
 
     db.commit()
     logger.info(f"Scan complete: {len(symbols)} symbols, {issues_created} issues, {issues_resolved} resolved")

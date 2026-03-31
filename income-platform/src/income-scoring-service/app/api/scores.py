@@ -76,7 +76,7 @@ async def _dq_gate_check(ticker: str) -> dict:
         )
         async with httpx.AsyncClient(timeout=settings.data_quality_timeout) as client:
             resp = await client.get(
-                f"{settings.data_quality_service_url}/data-quality/gate/{ticker}",
+                f"{settings.data_quality_service_url}/data-quality/gate/symbol/{ticker}",
                 headers={"Authorization": f"Bearer {token}"},
             )
             if resp.status_code == 200:

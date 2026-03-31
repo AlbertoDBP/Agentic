@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.clients.fmp import FMPHealClient
 from app.clients.massive import MASSIVEHealClient
 from app.config import settings
+from app.scanner import _validate_field_name
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class HealerEngine:
             if value is not None:
                 # Write healed value back to market_data_cache
                 try:
+                    _validate_field_name(issue.field_name)
                     db.execute(
                         text(f"UPDATE platform_shared.market_data_cache "
                              f"SET {issue.field_name} = :val WHERE symbol = :s"),
