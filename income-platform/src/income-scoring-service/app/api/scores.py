@@ -9,8 +9,12 @@ Endpoints:
 """
 import asyncio
 import logging
+import time as _time
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+
+import httpx
+import jwt
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -52,6 +56,51 @@ _analyzer        = NAVErosionAnalyzer()
 _gate            = QualityGateEngine()
 _client          = MarketDataClient()
 _penalty_engine  = SignalPenaltyEngine()
+
+
+# ── Data Quality Gate helpers (Agent 14) ──────────────────────────────────────
+
+async def _dq_gate_check(ticker: str) -> dict:
+    """
+    Check the data quality gate for a ticker before scoring.
+    Returns {"status": "passed"|"blocked", "blocking_issue_count": N}.
+    Falls through (returns passed) if gate service is unreachable.
+    """
+    if not settings.data_quality_gate_enabled:
+        return {"status": "passed", "blocking_issue_count": 0}
+    try:
+        now = int(_time.time())
+        token = jwt.encode(
+            {"sub": "income-scoring", "iat": now, "exp": now + 60},
+            settings.jwt_secret, algorithm="HS256",
+        )
+        async with httpx.AsyncClient(timeout=settings.data_quality_timeout) as client:
+            resp = await client.get(
+                f"{settings.data_quality_service_url}/data-quality/gate/{ticker}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        logger.warning(f"Data quality gate unreachable for {ticker}: {e} — proceeding without gate")
+    return {"status": "passed", "blocking_issue_count": 0}
+
+
+async def _dq_mark_scoring_complete(ticker: str):
+    """Notify agent-14 that scoring completed for this ticker."""
+    try:
+        now = int(_time.time())
+        token = jwt.encode(
+            {"sub": "income-scoring", "iat": now, "exp": now + 60},
+            settings.jwt_secret, algorithm="HS256",
+        )
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(
+                f"{settings.data_quality_service_url}/data-quality/gate/{ticker}/scoring-complete",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    except Exception:
+        pass  # non-critical
 
 
 # ── Pydantic request / response models ────────────────────────────────────────
@@ -954,9 +1003,21 @@ async def refresh_portfolio_scores(
     tickers = [r[0].upper() for r in rows]
 
     async def _score_ticker(ticker: str) -> None:
+        # ── DATA QUALITY GATE CHECK ──────────────────────────────────────────
+        gate = await _dq_gate_check(ticker)
+        if gate.get("status") != "passed":
+            logger.warning(
+                "Portfolio refresh: scoring BLOCKED by data quality gate for %s "
+                "(%s critical issues)",
+                ticker,
+                gate.get("blocking_issue_count", "?"),
+            )
+            return
+        # ── END GATE CHECK ────────────────────────────────────────────────────
         try:
             with get_db_context() as bg_db:
                 await evaluate_score(ScoreRequest(ticker=ticker), bg_db)
+            await _dq_mark_scoring_complete(ticker)
         except Exception as exc:
             logger.warning("Portfolio refresh: scoring failed for %s: %s", ticker, exc)
 

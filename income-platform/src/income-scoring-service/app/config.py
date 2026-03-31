@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = ""                   # empty = auth endpoint disabled
 
+    # ── Data Quality Gate (Agent 14) ──────────────────────────────────────────
+    data_quality_service_url: str = "http://agent-14-data-quality:8014"
+    data_quality_gate_enabled: bool = True     # set False to bypass in dev
+    data_quality_timeout: int = 10
+
     # ── Rate Limiting ─────────────────────────────────────────────────────────
     max_batch_size: int = 50                   # max tickers per batch request
     scoring_timeout_seconds: int = 60          # per-ticker timeout
