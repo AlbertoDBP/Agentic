@@ -80,7 +80,7 @@ WHERE m.is_tracked = TRUE
 (canonical values from `src/shared/asset_class_detector/taxonomy.py`):
 
 | `securities.asset_type` | `field_requirements.asset_class` |
-|---|---|
+| --- | --- |
 | `DIVIDEND_STOCK` | `CommonStock` |
 | `ETF` | `ETF` |
 | `COVERED_CALL_ETF` | `ETF` |
@@ -94,8 +94,10 @@ WHERE m.is_tracked = TRUE
 | `NULL` | *(skip — no requirements can be resolved)* |
 
 > **Note:** The platform canonical asset type values come from the asset-classification-service
-> (`taxonomy.py`). Values like `REIT`, `PREFERRED`, and `ETF`-without-prefix do not appear in
-> `securities.asset_type` in practice — use the canonical names above.
+> (`taxonomy.py`). Short-form variants like `REIT` (use `EQUITY_REIT`/`MORTGAGE_REIT`) and
+> `PREFERRED` (use `PREFERRED_STOCK`) do not appear in `securities.asset_type`. Plain `ETF` is
+> the exception — market-data-service writes it directly for plain ETFs fetched via the ETF
+> info endpoint, so both `ETF` and `COVERED_CALL_ETF` mappings are needed.
 
 If a symbol has no entry in `securities` or `asset_type IS NULL`, it is skipped in the
 completeness scan and logged at DEBUG level.
@@ -127,7 +129,7 @@ Defines what fields are required per asset class. Populated from seed data and a
 promotions.
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `id` | SERIAL PK | |
 | `asset_class` | TEXT NOT NULL | `CommonStock \| ETF \| CEF \| BDC \| REIT \| MLP \| Preferred \| MORTGAGE_REIT` |
 | `field_name` | TEXT NOT NULL | Column name in `market_data_cache` |
@@ -181,7 +183,7 @@ promotions.
 **Fetch source priority:**
 
 | Field(s) | Primary | Fallback |
-|---|---|---|
+| --- | --- | --- |
 | `price`, `week52_*`, `sma_*`, `rsi_14d` | MASSIVE | FMP |
 | `dividend_yield`, `div_frequency`, `payout_ratio`, `chowder_number` | FMP `/dividends` | MASSIVE |
 | `nav_value`, `nav_discount_pct` | FMP `/etf-info` | none |
@@ -195,7 +197,7 @@ promotions.
 Live tracker — one row per open or recently-resolved issue.
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `id` | SERIAL PK | |
 | `symbol` | TEXT NOT NULL | Affected ticker |
 | `field_name` | TEXT NOT NULL | Which field is missing |
@@ -225,7 +227,7 @@ change `field_requirements.required` — that would be a platform-wide change. E
 ticker-scoped only.
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `id` | SERIAL PK | |
 | `symbol` | TEXT NOT NULL | Ticker being exempted |
 | `field_name` | TEXT NOT NULL | Field being exempted |
@@ -246,7 +248,7 @@ entirely — no issue is created and the pair does not contribute to gate blocki
 One row per portfolio per trading day. Controls whether scoring is allowed to run.
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `id` | SERIAL PK | |
 | `portfolio_id` | UUID NOT NULL | FK → `portfolios.id` (UUID — matches existing schema) |
 | `gate_date` | DATE NOT NULL | Trading day |
@@ -262,10 +264,11 @@ One row per portfolio per trading day. Controls whether scoring is allowed to ru
 
 ### 4.5 `data_refresh_log`
 
-Updated by market-data-service and income-scoring-service after each successful run.
+One row per portfolio — upserted (`ON CONFLICT DO UPDATE`) by market-data-service and
+income-scoring-service after each successful run. Not an append log; always reflects latest state.
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `portfolio_id` | UUID PK | FK → `portfolios.id` (UUID — matches existing schema) |
 | `market_data_refreshed_at` | TIMESTAMPTZ | Written by market-data-service |
 | `scores_recalculated_at` | TIMESTAMPTZ | Written by income-scoring-service |
@@ -284,7 +287,7 @@ EXTRACT(EPOCH FROM (NOW() - market_data_refreshed_at)) / 3600.0
 **Staleness thresholds:**
 
 | Condition | Status | UI colour |
-|---|---|---|
+| --- | --- | --- |
 | `staleness_hrs <= 24` | Fresh | Green |
 | `24 < staleness_hrs <= 48` | Warning | Amber |
 | `staleness_hrs > 48` | Stale | Red |
@@ -320,7 +323,7 @@ failure (system failure) and a data gap that doesn't exist anywhere yet.
 Stored as JSONB in `data_quality_issues.diagnostic`:
 
 | Code | Meaning | Suggested Action |
-|---|---|---|
+| --- | --- | --- |
 | `TICKER_NOT_FOUND` | Symbol absent from source entirely | Verify ticker; may be delisted or OTC |
 | `FIELD_NOT_SUPPORTED` | Ticker found but source doesn't carry this field | Try fallback; if both fail, accept N/A |
 | `CLASSIFICATION_MISMATCH` | Source asset type differs from our `asset_class` | Re-run asset classification |
@@ -371,7 +374,7 @@ GET /data-quality/gate/{portfolio_id}
 ### 6.3 End-of-Day Timeline
 
 | Time (ET) | Event |
-|---|---|
+| --- | --- |
 | 4:00 PM | Market close |
 | ~4:30 PM | market-data-service refresh completes; writes `market_data_refreshed_at` |
 | ~4:31 PM | agent-14 scan triggered via HTTP POST; issues detected and written |
@@ -417,7 +420,7 @@ No code deploy required — the scanner reads the registry live.
 ## 8. API Endpoints (agent-14)
 
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | `POST` | `/data-quality/scan/trigger` | Trigger scan (called by market-data-service) |
 | `GET` | `/data-quality/gate/{portfolio_id}` | Gate status for scoring service |
 | `GET` | `/data-quality/issues` | All open issues (filterable by symbol, class, severity) |
@@ -506,7 +509,7 @@ Status indicators must pair color with icon or text — never rely on color alon
 ## 11. Component Map
 
 | File | Change |
-|---|---|
+| --- | --- |
 | `src/agent-14-data-quality/` | New service directory |
 | `src/agent-14-data-quality/app/api/routes.py` | REST endpoints §8 |
 | `src/agent-14-data-quality/app/scanner.py` | Completeness scan + asset class resolution |
