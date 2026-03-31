@@ -14,6 +14,9 @@ from pydantic import BaseModel
 from app.config import settings
 from app.jobs import (
     job_classify_new,
+    job_data_quality_promote,
+    job_data_quality_retry,
+    job_data_quality_scan,
     job_market_cache_refresh,
     job_market_data_refresh,
     job_nav_monitor_scan,
@@ -81,6 +84,21 @@ JOBS = [
      {"day_of_week": "mon-fri", "hour": 20, "minute": 0},
      "smart-alert-scan",
      "Circuit breaker + alert aggregation (Mon-Fri 20:00 ET)"),
+
+    (job_data_quality_scan,
+     {"day_of_week": "mon-fri", "hour": 18, "minute": 35},
+     "data-quality-scan",
+     "Data quality scan after market data refresh (Mon-Fri 18:35 ET)"),
+
+    (job_data_quality_retry,
+     {"day_of_week": "mon-fri", "hour": "18-20", "minute": "*/15"},
+     "data-quality-retry",
+     "Retry open data quality issues (Mon-Fri every 15 min 18:00-20:00 ET)"),
+
+    (job_data_quality_promote,
+     {"hour": 2, "minute": 0},
+     "data-quality-promote",
+     "Promote feature gap entries to field requirements (nightly 02:00 ET)"),
 ]
 
 

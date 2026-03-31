@@ -104,3 +104,31 @@ def job_market_cache_refresh():
     Schedule: Every weekday at 06:30 ET (before market open, uses prior-day close data).
     """
     _call("POST", f"{settings.agent07_url}/cache/refresh", "Market Cache Refresh")
+
+
+def job_data_quality_scan():
+    """Agent 14 — Run data quality scan after market data refresh.
+    Schedule: Weekdays at 18:35 ET (5 min after market data refresh).
+    """
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).isoformat()
+    _call(
+        "POST",
+        f"{settings.agent14_url}/data-quality/scan/trigger",
+        "Data Quality Scan",
+        json={"market_refreshed_at": ts},
+    )
+
+
+def job_data_quality_retry():
+    """Agent 14 — Retry open data quality issues (every 15 min, Mon-Fri).
+    Schedule: Every 15 minutes on weekdays 18:35–20:00 ET.
+    """
+    _call("POST", f"{settings.agent14_url}/data-quality/retry-open", "Data Quality Retry")
+
+
+def job_data_quality_promote():
+    """Agent 14 — Promote analyst feature gap entries to field requirements.
+    Schedule: Nightly at 02:00 ET.
+    """
+    _call("POST", f"{settings.agent14_url}/data-quality/promote", "Feature Gap Promotion")

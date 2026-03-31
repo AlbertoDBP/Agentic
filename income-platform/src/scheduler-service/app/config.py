@@ -16,6 +16,7 @@ class Settings:
     agent09_url: str = os.environ.get("AGENT09_URL", "http://agent-09-income-projection:8009")
     agent10_url: str = os.environ.get("AGENT10_URL", "http://agent-10-nav-monitor:8010")
     agent11_url: str = os.environ.get("AGENT11_URL", "http://agent-11-smart-alert:8011")
+    agent14_url: str = os.environ.get("AGENT14_URL", "http://agent-14-data-quality:8014")
 
     # ── Timeouts ──
     http_timeout: int = int(os.environ.get("HTTP_TIMEOUT", "120"))
