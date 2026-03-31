@@ -519,6 +519,7 @@ export interface DataQualityIssue {
   field_name: string;
   asset_class: string;
   status: "missing" | "fetching" | "resolved" | "unresolvable";
+  /** Lower-cased by design — distinct from Alert.severity which uses UPPER_CASE. Not interchangeable. */
   severity: "warning" | "critical";
   attempt_count: number;
   last_attempted_at: string | null;
@@ -530,6 +531,7 @@ export interface DataQualityIssue {
 }
 
 export interface GateStatus {
+  /** Always present — the object is only returned when portfolio_id is known. */
   portfolio_id: string;
   status: "passed" | "blocked" | "pending";
   blocking_issue_count: number;
@@ -537,6 +539,7 @@ export interface GateStatus {
 }
 
 export interface RefreshLog {
+  /** Always present — the object is only returned when portfolio_id is known. */
   portfolio_id: string;
   market_data_refreshed_at: string | null;
   scores_recalculated_at: string | null;
@@ -549,5 +552,6 @@ export interface RefreshLog {
 export interface PortfolioHealth {
   gate: GateStatus | null;
   refresh_log: RefreshLog | null;
+  /** Keys are symbols with at least one open issue. Use `issues_by_symbol[sym] ?? []` for safe access. */
   issues_by_symbol: Record<string, DataQualityIssue[]>;
 }
