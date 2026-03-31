@@ -49,18 +49,20 @@ agent-14-data-quality ──scans──▶ data_quality_issues
                               (checks gate before running)
 ```
 
-**Scan trigger mechanism:** The market-data-service Prefect flow makes an HTTP POST to
-`agent-14:POST /data-quality/scan/trigger` immediately after a successful market refresh
-completes. agent-14 responds with `202 Accepted` and runs the scan asynchronously. This
-preserves the existing Prefect flow structure without requiring a new inter-service Prefect
-dependency.
+**Scan trigger mechanism:** After a successful market refresh, market-data-service makes an HTTP
+POST to `agent-14:POST /data-quality/scan/trigger`. agent-14 responds with `202 Accepted` and
+runs the scan asynchronously.
 
-**Schedules (via existing Prefect scheduler):**
+**Schedules** — added to `src/scheduler-service/app/jobs.py` using APScheduler (the platform
+scheduler; not Prefect). Prefect is used only by agent-02-newsletter-ingestion.
 
 - Triggered by market-data-service after each successful refresh → completeness scan for all
   tracked symbols
 - Every 15 minutes → retry loop for open issues (max 3 attempts per issue)
 - Nightly (2:00 AM ET) → analyst feature promotion from `feature_gap_log`
+
+New scheduler jobs call agent-14 via HTTP POST (same pattern as `job_market_data_refresh` in
+`scheduler-service/app/jobs.py`).
 
 ### 3.1 Asset Class Resolution
 
@@ -74,19 +76,26 @@ LEFT JOIN platform_shared.securities s ON s.symbol = m.symbol
 WHERE m.is_tracked = TRUE
 ```
 
-**Vocabulary mapping** between `securities.asset_type` and `field_requirements.asset_class`:
+**Vocabulary mapping** between `securities.asset_type` and `field_requirements.asset_class`
+(canonical values from `src/shared/asset_class_detector/taxonomy.py`):
 
 | `securities.asset_type` | `field_requirements.asset_class` |
 |---|---|
 | `DIVIDEND_STOCK` | `CommonStock` |
 | `ETF` | `ETF` |
+| `COVERED_CALL_ETF` | `ETF` |
 | `CEF` | `CEF` |
 | `BDC` | `BDC` |
-| `REIT` | `REIT` |
+| `EQUITY_REIT` | `REIT` |
+| `MORTGAGE_REIT` | `REIT` |
 | `MLP` | `MLP` |
-| `PREFERRED` | `Preferred` |
+| `PREFERRED_STOCK` | `Preferred` |
 | `BOND` | *(skip — bonds not in scope)* |
 | `NULL` | *(skip — no requirements can be resolved)* |
+
+> **Note:** The platform canonical asset type values come from the asset-classification-service
+> (`taxonomy.py`). Values like `REIT`, `PREFERRED`, and `ETF`-without-prefix do not appear in
+> `securities.asset_type` in practice — use the canonical names above.
 
 If a symbol has no entry in `securities` or `asset_type IS NULL`, it is skipped in the
 completeness scan and logged at DEBUG level.
@@ -120,7 +129,7 @@ promotions.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | SERIAL PK | |
-| `asset_class` | TEXT NOT NULL | `CommonStock \| ETF \| CEF \| BDC \| REIT \| MLP \| Preferred` |
+| `asset_class` | TEXT NOT NULL | `CommonStock \| ETF \| CEF \| BDC \| REIT \| MLP \| Preferred \| MORTGAGE_REIT` |
 | `field_name` | TEXT NOT NULL | Column name in `market_data_cache` |
 | `required` | BOOLEAN NOT NULL DEFAULT TRUE | FALSE = optional (warning only, never blocks gate) |
 | `fetch_source_primary` | TEXT | `fmp \| massive \| null` (null = pending source mapping) |
@@ -135,27 +144,39 @@ promotions.
 
 **Seed data — required fields per asset class:**
 
-| Field | CommonStock | ETF | CEF | BDC | REIT | MLP | Preferred |
-|---|---|---|---|---|---|---|---|
-| `price` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `week52_high` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `week52_low` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `dividend_yield` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `div_frequency` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `sma_50` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `sma_200` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `rsi_14d` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `payout_ratio` | ✓ | — | — | — | ✓ | — | — |
-| `chowder_number` | ✓ | — | — | — | — | — | — |
-| `consecutive_growth_yrs` | ✓ | — | — | — | — | — | — |
-| `nav_value` | — | ✓ | ✓ | ✓ | — | — | — |
-| `nav_discount_pct` | — | ✓ | ✓ | — | — | — | — |
-| `interest_coverage_ratio` | — | — | ✓ | ✓ | — | ✓ | — |
-| `debt_to_equity` | — | — | ✓ | ✓ | — | ✓ | — |
+| Field | CommonStock | ETF | CEF | BDC | REIT | MORTGAGE_REIT | MLP | Preferred |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `price` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `week52_high` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `week52_low` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `dividend_yield` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `div_frequency` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `sma_50` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `sma_200` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `rsi_14d` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `payout_ratio` | ✓ | — | — | — | ✓ | ✓ | — | — |
+| `chowder_number` | ✓ | — | — | — | — | — | — | — |
+| `consecutive_growth_yrs` | ✓ | — | — | — | — | — | — | — |
+| `nav_value` | — | ✓ | ✓ | ✓ | — | — | — | — |
+| `nav_discount_pct` | — | ✓ | ✓ | — | — | — | — | — |
+| `interest_coverage_ratio` | — | — | ✓ | ✓ | — | ✓ | ✓ | — |
+| `debt_to_equity` | — | — | ✓ | ✓ | — | ✓ | ✓ | — |
 
-> **Note on column names:** `interest_coverage_ratio` and `debt_to_equity` are the actual column
-> names in `market_data_cache` (confirmed from `opportunity-scanner-service/app/scanner/market_cache.py`).
-> The spec previously used `coverage_ratio` and `leverage_pct` — those names do not exist.
+**Notes on seed data:**
+
+- **`nav_discount_pct` for ETF:** FMP `/etf-info` frequently returns null `nav_value` for plain
+  ETFs and `COVERED_CALL_ETF` positions (see `market_cache.py:636`). When `nav_value` is null,
+  `nav_discount_pct` cannot be computed. Set `required = FALSE` for `nav_discount_pct` on the
+  `ETF` class in seed data. The scanner should treat missing `nav_discount_pct` as `warning`
+  severity (never `critical`) and the healer should accept N/A after one failed attempt.
+
+- **`promoted_from_gap_id` FK:** `feature_gap_log` is owned by `agent-02-newsletter-ingestion`.
+  This FK is a cross-service reference. The agent-02 migration must run before the agent-14
+  migration — enforce via `depends_on` ordering in `docker-compose.yml`.
+
+- **Column names:** `interest_coverage_ratio` and `debt_to_equity` are the actual column names in
+  `market_data_cache` (confirmed from `opportunity-scanner-service/app/scanner/market_cache.py`).
+  The names `coverage_ratio` and `leverage_pct` do not exist.
 
 **Fetch source priority:**
 
@@ -227,7 +248,7 @@ One row per portfolio per trading day. Controls whether scoring is allowed to ru
 | Column | Type | Notes |
 |---|---|---|
 | `id` | SERIAL PK | |
-| `portfolio_id` | TEXT NOT NULL | FK to portfolios |
+| `portfolio_id` | UUID NOT NULL | FK → `portfolios.id` (UUID — matches existing schema) |
 | `gate_date` | DATE NOT NULL | Trading day |
 | `status` | TEXT NOT NULL DEFAULT 'pending' | `pending \| passed \| blocked` |
 | `gate_passed_at` | TIMESTAMPTZ | When all critical issues resolved |
@@ -245,7 +266,7 @@ Updated by market-data-service and income-scoring-service after each successful 
 
 | Column | Type | Notes |
 |---|---|---|
-| `portfolio_id` | TEXT PK | FK to portfolios |
+| `portfolio_id` | UUID PK | FK → `portfolios.id` (UUID — matches existing schema) |
 | `market_data_refreshed_at` | TIMESTAMPTZ | Written by market-data-service |
 | `scores_recalculated_at` | TIMESTAMPTZ | Written by income-scoring-service |
 | `market_staleness_hrs` | NUMERIC(6,2) | See formula below |
@@ -493,11 +514,11 @@ Status indicators must pair color with icon or text — never rely on color alon
 | `src/agent-14-data-quality/app/gate.py` | Gate evaluation |
 | `src/agent-14-data-quality/app/promoter.py` | Analyst feature promotion |
 | `src/agent-14-data-quality/app/clients/fmp.py` | FMP heal fetcher |
-| `src/agent-14-data-quality/app/clients/massive.py` | MASSIVE/Polygon heal fetcher |
+| `src/agent-14-data-quality/app/clients/massive.py` | MASSIVE/Polygon heal fetcher — **new from scratch**; no existing MASSIVE client in codebase. MASSIVE_KEY env var present; follow Polygon.io REST API v2/v3 patterns |
 | `src/agent-14-data-quality/migrations/001_initial.sql` | 5 new tables (`field_requirements`, `data_quality_issues`, `data_quality_exemptions`, `data_quality_gate`, `data_refresh_log`) + seed data for `field_requirements` |
-| `src/income-scoring-service/` | Add gate check before scoring run |
+| `src/income-scoring-service/` | Add gate check before scoring run (docker container: `agent-03-income-scoring`; internal URL: `http://agent-03-income-scoring:8003`) |
 | `src/market-data-service/` | POST to scan trigger + write `market_data_refreshed_at` |
-| `src/frontend/src/app/api/portfolios/[id]/route.ts` | Include freshness + completeness summary |
+| `src/frontend/src/app/api/portfolios/[id]/route.ts` | **New file** — API route for portfolio detail including freshness + completeness summary (path does not exist yet) |
 | `src/frontend/src/components/portfolio/health-card.tsx` | New expandable health card |
 | `src/frontend/src/components/portfolio/completeness-badge.tsx` | New inline badge |
 | `src/frontend/src/app/admin/data-quality/page.tsx` | New admin page |
