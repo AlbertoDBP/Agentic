@@ -105,6 +105,7 @@ services:
       - MARKET_DATA_SERVICE_URL=http://market-data-service:8001
       - NEWSLETTER_SERVICE_URL=http://agent-02-newsletter-ingestion:8002
       - ASSET_CLASSIFICATION_SERVICE_URL=http://agent-04-asset-classification:8004
+      - DATA_QUALITY_SERVICE_URL=http://agent-14-data-quality:8014
       - JWT_SECRET=${JWT_SECRET}
       - SERVICE_TOKEN=${SERVICE_TOKEN}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
@@ -420,6 +421,36 @@ services:
     restart: unless-stopped
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Agent 14 — Data Quality Engine
+# ─────────────────────────────────────────────────────────────────────────────
+  agent-14-data-quality:
+    build:
+      context: src/agent-14-data-quality
+      dockerfile: Dockerfile
+    container_name: agent-14-data-quality
+    environment:
+      - DATABASE_URL=${PGBOUNCER_URL:-${DATABASE_URL}}
+      - FMP_API_KEY=${FMP_API_KEY}
+      - MASSIVE_KEY=${MASSIVE_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - SERVICE_PORT=8014
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8014:8014"
+    restart: unless-stopped
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8014/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Scheduler — APScheduler cron for all batch jobs
 # ─────────────────────────────────────────────────────────────────────────────
   scheduler:
@@ -432,6 +463,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
+      - AGENT14_URL=http://agent-14-data-quality:8014
     ports:
       - "8099:8099"
     depends_on:
