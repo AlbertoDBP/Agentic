@@ -510,3 +510,44 @@ export interface PortfolioImpact {
   new_portfolio_yield: number | null;   // null if portfolio value unknown
   concentration_pct: number | null;     // per-ticker, null if portfolio value unknown
 }
+
+// ── Data Quality ─────────────────────────────────────────────────────────────
+
+export interface DataQualityIssue {
+  id: number;
+  symbol: string;
+  field_name: string;
+  asset_class: string;
+  status: "missing" | "fetching" | "resolved" | "unresolvable";
+  severity: "warning" | "critical";
+  attempt_count: number;
+  last_attempted_at: string | null;
+  resolved_at: string | null;
+  source_used: string | null;
+  diagnostic: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GateStatus {
+  portfolio_id: string;
+  status: "passed" | "blocked" | "pending";
+  blocking_issue_count: number;
+  gate_passed_at: string | null;
+}
+
+export interface RefreshLog {
+  portfolio_id: string;
+  market_data_refreshed_at: string | null;
+  scores_recalculated_at: string | null;
+  market_staleness_hrs: number | null;
+  holdings_complete_count: number | null;
+  holdings_incomplete_count: number | null;
+  critical_issues_count: number | null;
+}
+
+export interface PortfolioHealth {
+  gate: GateStatus | null;
+  refresh_log: RefreshLog | null;
+  issues_by_symbol: Record<string, DataQualityIssue[]>;
+}
