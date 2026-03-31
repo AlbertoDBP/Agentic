@@ -20,9 +20,9 @@ const headers = () => ({
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const portfolioId = params.id;
+  const { id: portfolioId } = await params;
 
   try {
     const [gateRes, refreshRes] = await Promise.allSettled([

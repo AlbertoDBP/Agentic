@@ -127,7 +127,7 @@ export function PortfolioHealthCard({ gate, refreshLog }: HealthCardProps) {
             <p className="font-medium text-foreground">
               {refreshLog?.holdings_complete_count != null
                 ? `${refreshLog.holdings_complete_count} / ${
-                    (refreshLog.holdings_complete_count ?? 0) +
+                    refreshLog.holdings_complete_count +
                     (refreshLog.holdings_incomplete_count ?? 0)
                   }`
                 : "—"}
