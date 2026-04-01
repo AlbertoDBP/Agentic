@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
 import { TickerBadge } from "@/components/ticker-badge";
@@ -68,6 +68,18 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       .then(data => { setPositions(data); setLoading(false); })
       .catch(err => { setFetchError(err.message); setLoading(false); });
   }, [portfolioId]);
+
+  const portfolioContext = useMemo(() => {
+    if (!selected) return null;
+    return {
+      portWeight: computePortfolioWeight(selected, positions),
+      sectWeight: computeSectorWeight(selected, positions),
+      incomeWeight: computeIncomeWeight(selected, positions),
+      rankValue: computeRankByValue(selected, positions),
+      rankIncome: computeRankByIncome(selected, positions),
+      n: positions.length,
+    };
+  }, [selected, positions]);
 
   const columns: ColumnDef<Position>[] = [
     {
@@ -321,13 +333,8 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
           )}
 
           {/* Portfolio Context */}
-          {(() => {
-            const portWeight = computePortfolioWeight(selected, positions);
-            const sectWeight = computeSectorWeight(selected, positions);
-            const incomeWeight = computeIncomeWeight(selected, positions);
-            const rankValue = computeRankByValue(selected, positions);
-            const rankIncome = computeRankByIncome(selected, positions);
-            const n = positions.length;
+          {portfolioContext && (() => {
+            const { portWeight, sectWeight, incomeWeight, rankValue, rankIncome, n } = portfolioContext;
             const sectOver = sectWeight != null && sectWeight > 30;
             return (
               <section>
@@ -412,31 +419,37 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
                   </div>
                 )}
               </div>
-              {selected.week52_low != null && selected.week52_high != null && selected.market_price != null && (
-                <div className="mt-3">
-                  <div className="flex justify-between text-[10px] text-muted-foreground mb-0.5">
-                    <span>{formatCurrency(selected.week52_low)}</span>
-                    <span className="font-semibold text-foreground">{formatCurrency(selected.market_price)}</span>
-                    <span>{formatCurrency(selected.week52_high)}</span>
+              {selected.week52_low != null && selected.week52_high != null && selected.market_price != null && (() => {
+                const range52 = (selected.week52_high ?? 0) - (selected.week52_low ?? 0);
+                const pricePct52 = range52 > 0
+                  ? Math.min(((selected.market_price! - selected.week52_low!) / range52) * 100, 100)
+                  : 50;
+                return (
+                  <div className="mt-3">
+                    <div className="flex justify-between text-[10px] text-muted-foreground mb-0.5">
+                      <span>{formatCurrency(selected.week52_low)}</span>
+                      <span className="font-semibold text-foreground">{formatCurrency(selected.market_price)}</span>
+                      <span>{formatCurrency(selected.week52_high)}</span>
+                    </div>
+                    <div className="h-[5px] rounded-full bg-border relative overflow-visible">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${pricePct52}%`,
+                          background: "linear-gradient(to right, #10b981, #6366f1)",
+                        }}
+                      />
+                      <div
+                        className="absolute top-[-3px] w-[2px] h-[11px] bg-foreground rounded-sm"
+                        style={{
+                          left: `${pricePct52}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="text-[10px] text-muted-foreground text-center mt-0.5">52-week range</div>
                   </div>
-                  <div className="h-[5px] rounded-full bg-border relative overflow-visible">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${Math.min(((selected.market_price - selected.week52_low) / (selected.week52_high - selected.week52_low)) * 100, 100)}%`,
-                        background: "linear-gradient(to right, #10b981, #6366f1)",
-                      }}
-                    />
-                    <div
-                      className="absolute top-[-3px] w-[2px] h-[11px] bg-foreground rounded-sm"
-                      style={{
-                        left: `${Math.min(((selected.market_price - selected.week52_low) / (selected.week52_high - selected.week52_low)) * 100, 100)}%`,
-                      }}
-                    />
-                  </div>
-                  <div className="text-[10px] text-muted-foreground text-center mt-0.5">52-week range</div>
-                </div>
-              )}
+                );
+              })()}
             </section>
           )}
 
