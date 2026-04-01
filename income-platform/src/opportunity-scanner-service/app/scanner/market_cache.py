@@ -22,8 +22,19 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.scanner.bond_pricer import BondPricer
 
 logger = logging.getLogger(__name__)
+
+# ─── Bond registry ─────────────────────────────────────────────────────────────
+# Known corporate bonds held as CUSIPs.  Provides coupon/maturity metadata for
+# theoretical PV pricing when FMP CUSIP resolution returns no tradeable symbol.
+# Key: CUSIP (upper), Value: {coupon: float pct, maturity: YYYY-MM-DD, face: float}
+_BOND_REGISTRY: dict[str, dict] = {
+    "427096AH5": {"coupon": 2.625, "maturity": "2026-09-16", "face": 1000.0},  # HTGC 2.625% 09/2026
+    "55342UAH7": {"coupon": 5.0,   "maturity": "2027-10-15", "face": 1000.0},  # MPW 5% 10/2027
+    "74348TAW2": {"coupon": 3.437, "maturity": "2028-10-15", "face": 1000.0},  # PSEC 3.437% 10/2028
+}
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -103,6 +114,35 @@ async def _resolve_cusips(cusips: list[str]) -> dict[str, str]:
     await asyncio.gather(*[_one(c) for c in cusips])
     logger.info("CUSIP resolution: %d/%d resolved", len(result), len(cusips))
     return result
+
+
+async def _price_bonds(cusips: list[str]) -> dict[str, float]:
+    """Price unresolved CUSIP bonds via FRED Treasury yields + PV discounting.
+
+    Only prices CUSIPs that exist in _BOND_REGISTRY (known bond metadata).
+    Returns {cusip_upper: price_per_100_face}.
+    """
+    bond_prices: dict[str, float] = {}
+    pricer = BondPricer()
+    for cusip in cusips:
+        meta = _BOND_REGISTRY.get(cusip.upper())
+        if not meta:
+            logger.debug("No bond metadata for CUSIP %s — skipping PV pricing", cusip)
+            continue
+        price = await pricer.get_price(
+            coupon_rate_pct=meta["coupon"],
+            maturity_str=meta["maturity"],
+            face=meta["face"],
+        )
+        if price is not None:
+            bond_prices[cusip.upper()] = price
+            logger.info(
+                "Bond PV price CUSIP %s: %.4f (coupon=%.3f%% maturity=%s)",
+                cusip, price, meta["coupon"], meta["maturity"],
+            )
+        else:
+            logger.warning("Bond PV pricing failed for CUSIP %s", cusip)
+    return bond_prices
 
 
 # ─── FMP single-symbol fetcher ────────────────────────────────────────────────
@@ -561,16 +601,33 @@ async def fetch_and_upsert(
             ), {"sym": cusip.upper()})
         except Exception as _bond_err:
             logger.debug("BOND asset_type update for %s: %s", cusip, _bond_err)
-    if cusip_tickers:
+
+    # Mark /PR format symbols as PREFERRED_STOCK in securities table
+    preferred_tickers = [t for t in regular_tickers if "/PR" in t.upper() or "-P" in t.upper()]
+    for pref in preferred_tickers:
+        try:
+            db.execute(text(
+                "UPDATE platform_shared.securities SET asset_type = 'PREFERRED_STOCK' "
+                "WHERE symbol = :sym AND (asset_type IS NULL OR asset_type = 'DIVIDEND_STOCK')"
+            ), {"sym": pref.upper()})
+        except Exception as _pref_err:
+            logger.debug("PREFERRED_STOCK asset_type update for %s: %s", pref, _pref_err)
+
+    if cusip_tickers or preferred_tickers:
         db.commit()
 
     # Resolve CUSIPs to FMP symbols (concurrent API calls)
     cusip_map: dict[str, str] = {}
+    bond_prices: dict[str, float] = {}
     if cusip_tickers:
         cusip_map = await _resolve_cusips(cusip_tickers)
-        unresolved = len(cusip_tickers) - len(cusip_map)
-        if unresolved:
-            logger.info("Could not resolve %d CUSIPs — skipping those", unresolved)
+        unresolved_cusips = [c for c in cusip_tickers if c.upper() not in cusip_map]
+        if unresolved_cusips:
+            logger.info(
+                "Could not resolve %d CUSIPs via FMP — attempting PV bond pricing",
+                len(unresolved_cusips),
+            )
+            bond_prices = await _price_bonds(unresolved_cusips)
 
     # Build unified lookup: fmp_symbol → original_symbol
     # Regular tickers: convert preferred format (CHMI/PRA → CHMI-PA)
@@ -599,10 +656,21 @@ async def fetch_and_upsert(
 
         price_val = _safe_float(p.get("price"))
 
+        # For unresolved CUSIP bonds, use PV-discounted theoretical price
+        if price_val is None and sym in bond_prices:
+            price_val = bond_prices[sym]
+
         # dividend_yield: lastDividend is annual $ per share — convert to %
         last_div = _safe_float(p.get("lastDividend"))
         if last_div is not None and price_val and price_val > 0:
             div_yield = round((last_div / price_val) * 100, 4)
+        elif price_val and price_val > 0 and sym in bond_prices:
+            # For CUSIP bonds without FMP data: current yield = annual coupon / price
+            meta = _BOND_REGISTRY.get(sym)
+            if meta:
+                div_yield = round((meta["coupon"] / price_val) * 100, 4)
+            else:
+                div_yield = None
         else:
             div_yield = None
 
@@ -721,16 +789,16 @@ async def fetch_and_upsert(
                         :snapshot_date, :fetched_at
                     )
                     ON CONFLICT (symbol) DO UPDATE SET
-                        price                    = EXCLUDED.price,
-                        price_change_pct         = EXCLUDED.price_change_pct,
-                        volume_avg_10d           = EXCLUDED.volume_avg_10d,
-                        market_cap_m             = EXCLUDED.market_cap_m,
+                        price                    = COALESCE(EXCLUDED.price,            platform_shared.market_data_cache.price),
+                        price_change_pct         = COALESCE(EXCLUDED.price_change_pct, platform_shared.market_data_cache.price_change_pct),
+                        volume_avg_10d           = COALESCE(EXCLUDED.volume_avg_10d,   platform_shared.market_data_cache.volume_avg_10d),
+                        market_cap_m             = COALESCE(EXCLUDED.market_cap_m,     platform_shared.market_data_cache.market_cap_m),
                         pe_ratio                 = COALESCE(EXCLUDED.pe_ratio,          platform_shared.market_data_cache.pe_ratio),
                         price_to_book            = COALESCE(EXCLUDED.price_to_book,     platform_shared.market_data_cache.price_to_book),
-                        beta                     = EXCLUDED.beta,
-                        week52_high              = EXCLUDED.week52_high,
-                        week52_low               = EXCLUDED.week52_low,
-                        dividend_yield           = EXCLUDED.dividend_yield,
+                        beta                     = COALESCE(EXCLUDED.beta,             platform_shared.market_data_cache.beta),
+                        week52_high              = COALESCE(EXCLUDED.week52_high,      platform_shared.market_data_cache.week52_high),
+                        week52_low               = COALESCE(EXCLUDED.week52_low,       platform_shared.market_data_cache.week52_low),
+                        dividend_yield           = COALESCE(EXCLUDED.dividend_yield,   platform_shared.market_data_cache.dividend_yield),
                         payout_ratio             = COALESCE(EXCLUDED.payout_ratio,      platform_shared.market_data_cache.payout_ratio),
                         chowder_number           = COALESCE(EXCLUDED.chowder_number,    platform_shared.market_data_cache.chowder_number),
                         ex_div_date              = COALESCE(EXCLUDED.ex_div_date,       platform_shared.market_data_cache.ex_div_date),
