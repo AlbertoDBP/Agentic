@@ -52,6 +52,22 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Position | null>(null);
 
+  // Manage Positions panel state
+  const [manageOpen, setManageOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(`manage-positions-${portfolioId}`) === "true";
+  });
+  const [addForm, setAddForm] = useState({ symbol: "", shares: "", avgCost: "", acquiredDate: "" });
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addPending, setAddPending] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ shares: "", avgCost: "", acquiredDate: "" });
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editPending, setEditPending] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removePending, setRemovePending] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
   useEffect(() => {
     if (!portfolioId) return;
     const token = typeof window !== "undefined" ? localStorage.getItem("token") ?? "" : "";
@@ -80,6 +96,110 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       n: positions.length,
     };
   }, [selected, positions]);
+
+  function showToast(msg: string) {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 4000);
+  }
+
+  function triggerRefresh() {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") ?? "" : "";
+    fetch(`${API_BASE_URL}/broker/portfolios/${portfolioId}/refresh`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
+    }).catch(() => {});
+  }
+
+  function refreshPositions() {
+    // Use the Next.js proxy route (auth handled server-side)
+    fetch(`/api/portfolios/${portfolioId}/positions`)
+      .then(res => res.ok ? res.json() : Promise.reject())
+      .then(data => setPositions(data))
+      .catch(() => {});
+  }
+
+  async function handleAdd() {
+    setAddError(null);
+    setAddPending(true);
+    try {
+      const body: Record<string, unknown> = {
+        symbol: addForm.symbol.toUpperCase().trim(),
+        shares: parseFloat(addForm.shares),
+        cost_basis: parseFloat(addForm.avgCost),
+      };
+      if (addForm.acquiredDate) body.acquired_date = addForm.acquiredDate;
+      const res = await fetch(`/api/portfolios/${portfolioId}/positions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 409) {
+        setAddError("Position already exists — use Edit to update shares");
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setAddForm({ symbol: "", shares: "", avgCost: "", acquiredDate: "" });
+      showToast("Saving… scores will update shortly.");
+      triggerRefresh();
+      setTimeout(refreshPositions, 4000);
+    } catch {
+      setAddError("Failed to add position. Please try again.");
+    } finally {
+      setAddPending(false);
+    }
+  }
+
+  async function handleSave(posId: string) {
+    setEditError(null);
+    setEditPending(true);
+    try {
+      const body: Record<string, unknown> = {
+        quantity: parseFloat(editForm.shares),
+        avg_cost_basis: parseFloat(editForm.avgCost),
+      };
+      if (editForm.acquiredDate) body.acquired_date = editForm.acquiredDate;
+      const res = await fetch(`/api/positions/${posId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setEditingId(null);
+      showToast("Saving… scores will update shortly.");
+      triggerRefresh();
+      setTimeout(refreshPositions, 4000);
+    } catch {
+      setEditError("Failed to save changes. Please try again.");
+    } finally {
+      setEditPending(false);
+    }
+  }
+
+  async function handleDelete(posId: string) {
+    setRemovePending(true);
+    try {
+      const res = await fetch(`/api/positions/${posId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setRemovingId(null);
+      setPositions(prev => prev.filter(p => p.id !== posId));
+      showToast("Saving… scores will update shortly.");
+      triggerRefresh();
+      setTimeout(refreshPositions, 4000);
+    } catch {
+      // leave removingId set so user can retry
+    } finally {
+      setRemovePending(false);
+    }
+  }
+
+  function toggleManageOpen() {
+    const next = !manageOpen;
+    setManageOpen(next);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(`manage-positions-${portfolioId}`, String(next));
+    }
+  }
 
   const columns: ColumnDef<Position>[] = [
     {
@@ -249,7 +369,218 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
 
   return (
     <div className="flex gap-3">
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 space-y-3">
+        {/* Toast notification */}
+        {toastMsg && (
+          <div className="bg-indigo-950/60 border border-indigo-500/30 rounded-lg px-3 py-2 text-sm text-indigo-300">
+            {toastMsg}
+          </div>
+        )}
+
+        {/* Manage Positions panel */}
+        <div className="border border-border rounded-lg overflow-hidden">
+          <button
+            onClick={toggleManageOpen}
+            className="w-full flex items-center justify-between px-4 py-2.5 bg-card hover:bg-muted/50 transition-colors text-sm font-medium"
+          >
+            <span className="flex items-center gap-2">
+              <span>Manage Positions</span>
+              <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5">{positions.length}</span>
+            </span>
+            <span className="text-muted-foreground">{manageOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {manageOpen && (
+            <div className="border-t border-border">
+              {/* Add Position form */}
+              <div className="bg-muted/20 px-4 py-3 border-b border-border">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Add New Position</div>
+                <div className="flex flex-wrap gap-2 items-end">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Ticker</label>
+                    <input
+                      className="h-8 px-2 text-sm bg-background border border-border rounded w-24 uppercase placeholder:normal-case placeholder:text-muted-foreground"
+                      placeholder="SCHD"
+                      value={addForm.symbol}
+                      onChange={e => setAddForm(f => ({ ...f, symbol: e.target.value.toUpperCase() }))}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Shares</label>
+                    <input
+                      className="h-8 px-2 text-sm bg-background border border-border rounded w-24"
+                      placeholder="100"
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={addForm.shares}
+                      onChange={e => setAddForm(f => ({ ...f, shares: e.target.value }))}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Avg Cost / share</label>
+                    <input
+                      className="h-8 px-2 text-sm bg-background border border-border rounded w-28"
+                      placeholder="76.42"
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={addForm.avgCost}
+                      onChange={e => setAddForm(f => ({ ...f, avgCost: e.target.value }))}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Purchase Date (optional)</label>
+                    <input
+                      className="h-8 px-2 text-sm bg-background border border-border rounded w-36"
+                      type="date"
+                      value={addForm.acquiredDate}
+                      onChange={e => setAddForm(f => ({ ...f, acquiredDate: e.target.value }))}
+                    />
+                  </div>
+                  <button
+                    className="h-8 px-3 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={!addForm.symbol.trim() || !(parseFloat(addForm.shares) > 0) || !(parseFloat(addForm.avgCost) > 0) || addPending}
+                    onClick={handleAdd}
+                  >
+                    {addPending ? "Adding…" : "+ Add Position"}
+                  </button>
+                </div>
+                {addError && <div className="mt-2 text-xs text-red-400">{addError}</div>}
+              </div>
+
+              {/* Existing positions table */}
+              {positions.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
+                        <th className="text-left px-4 py-2 font-semibold">Ticker</th>
+                        <th className="text-right px-3 py-2 font-semibold">Shares</th>
+                        <th className="text-right px-3 py-2 font-semibold">Avg Cost</th>
+                        <th className="text-right px-3 py-2 font-semibold">Total Cost</th>
+                        <th className="text-left px-3 py-2 font-semibold">Date Acquired</th>
+                        <th className="text-right px-4 py-2 font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map(pos => {
+                        const avgCostVal = pos.avg_cost ?? (pos.shares ? pos.cost_basis / pos.shares : 0);
+                        const isEditing = editingId === pos.id;
+                        const isRemoving = removingId === pos.id;
+                        return (
+                          <tr
+                            key={pos.id}
+                            className={`border-b border-border last:border-0 ${isEditing ? "bg-indigo-950/20" : "hover:bg-muted/20"}`}
+                          >
+                            <td className="px-4 py-2 font-mono font-bold text-foreground">{pos.symbol}</td>
+                            <td className="px-3 py-2 text-right">
+                              {isEditing ? (
+                                <input
+                                  className="h-7 px-2 text-sm bg-background border border-border rounded w-20 text-right"
+                                  type="number" min="0" step="any"
+                                  value={editForm.shares}
+                                  onChange={e => setEditForm(f => ({ ...f, shares: e.target.value }))}
+                                />
+                              ) : (
+                                pos.shares?.toLocaleString() ?? "—"
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {isEditing ? (
+                                <input
+                                  className="h-7 px-2 text-sm bg-background border border-border rounded w-24 text-right"
+                                  type="number" min="0" step="any"
+                                  value={editForm.avgCost}
+                                  onChange={e => setEditForm(f => ({ ...f, avgCost: e.target.value }))}
+                                />
+                              ) : (
+                                formatCurrency(avgCostVal)
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right text-muted-foreground">
+                              {formatCurrency(pos.cost_basis)}
+                            </td>
+                            <td className="px-3 py-2">
+                              {isEditing ? (
+                                <input
+                                  className="h-7 px-2 text-sm bg-background border border-border rounded w-32"
+                                  type="date"
+                                  value={editForm.acquiredDate}
+                                  onChange={e => setEditForm(f => ({ ...f, acquiredDate: e.target.value }))}
+                                />
+                              ) : (
+                                <span className="text-muted-foreground">{pos.acquired_date ? fmtDate(pos.acquired_date) : "—"}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              {isRemoving ? (
+                                <span className="text-xs">
+                                  Remove {pos.symbol}?{" "}
+                                  <button
+                                    className="text-red-400 hover:text-red-300 font-semibold mr-2 disabled:opacity-50"
+                                    disabled={removePending}
+                                    onClick={() => handleDelete(pos.id)}
+                                  >
+                                    {removePending ? "…" : "Confirm"}
+                                  </button>
+                                  <button className="text-muted-foreground hover:text-foreground" onClick={() => setRemovingId(null)}>
+                                    Cancel
+                                  </button>
+                                </span>
+                              ) : isEditing ? (
+                                <span className="text-xs">
+                                  <button
+                                    className="text-indigo-400 hover:text-indigo-300 font-semibold mr-2 disabled:opacity-50"
+                                    disabled={editPending}
+                                    onClick={() => handleSave(pos.id)}
+                                  >
+                                    {editPending ? "Saving…" : "Save"}
+                                  </button>
+                                  <button className="text-muted-foreground hover:text-foreground" onClick={() => setEditingId(null)}>
+                                    Cancel
+                                  </button>
+                                  {editError && <span className="ml-2 text-red-400">{editError}</span>}
+                                </span>
+                              ) : (
+                                <span className="text-xs">
+                                  <button
+                                    className="text-indigo-400 hover:text-indigo-300 mr-3"
+                                    onClick={() => {
+                                      setEditingId(pos.id);
+                                      setRemovingId(null); // cancel any pending remove on another row
+                                      setEditError(null);
+                                      setEditForm({
+                                        shares: String(pos.shares ?? ""),
+                                        avgCost: String(avgCostVal.toFixed(2)),
+                                        acquiredDate: pos.acquired_date ?? "",
+                                      });
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    className="text-red-400 hover:text-red-300"
+                                    onClick={() => { setRemovingId(pos.id); setEditingId(null); }}
+                                  >
+                                    Remove
+                                  </button>
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="px-4 py-3 text-sm text-muted-foreground italic">No positions yet — use the form above to add one.</div>
+              )}
+            </div>
+          )}
+        </div>
+
         <DataTable
           columns={columns}
           data={positions}
