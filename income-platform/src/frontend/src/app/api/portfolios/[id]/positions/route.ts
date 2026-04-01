@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const ADMIN_PANEL_URL = process.env.ADMIN_PANEL_URL ?? "http://localhost:8100";
 
 function serviceToken(): string {
-  return process.env.SERVICE_JWT_TOKEN ?? "dev-token";
+  return process.env.SERVICE_TOKEN ?? "";
 }
 
 export async function POST(
