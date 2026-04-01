@@ -26,6 +26,26 @@ from app.scanner.bond_pricer import BondPricer
 
 logger = logging.getLogger(__name__)
 
+# ─── FMP rate-limit helper ─────────────────────────────────────────────────────
+
+async def _fmp_get(
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict,
+    *,
+    retries: int = 3,
+) -> httpx.Response:
+    """GET with exponential backoff on 429 Too Many Requests."""
+    for attempt in range(retries):
+        resp = await client.get(url, params=params)
+        if resp.status_code != 429:
+            return resp
+        wait = 2 ** (attempt + 1)   # 2s, 4s, 8s
+        logger.warning("FMP 429 for %s — retry %d/%d after %ds", url, attempt + 1, retries, wait)
+        await asyncio.sleep(wait)
+    return resp  # return last response even if still 429
+
+
 # ─── Bond registry ─────────────────────────────────────────────────────────────
 # Known corporate bonds held as CUSIPs.  Provides coupon/maturity metadata for
 # theoretical PV pricing when FMP CUSIP resolution returns no tradeable symbol.
@@ -156,10 +176,10 @@ async def _fmp_profile(symbol: str, client: httpx.AsyncClient) -> dict:
             yearHigh (from range), yearLow (from range), sector, exchange.
     """
     try:
-        resp = await client.get(
+        resp = await _fmp_get(
+            client,
             f"{settings.fmp_base_url}/profile",
-            params={"symbol": symbol, "apikey": settings.fmp_api_key},
-            timeout=settings.fmp_request_timeout,
+            {"symbol": symbol, "apikey": settings.fmp_api_key},
         )
         if resp.status_code != 200:
             logger.debug("FMP profile %s returned %d", symbol, resp.status_code)
@@ -180,6 +200,7 @@ async def _fetch_all_profiles(tickers: list[str]) -> dict[str, dict]:
 
     async def _one(sym: str):
         async with sem:
+            await asyncio.sleep(0.25)   # pace to ≤4 req/s per slot — prevents 429 bursts
             async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
                 data = await _fmp_profile(sym, client)
                 if data:
@@ -456,6 +477,7 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
 
     async def _one(sym: str):
         async with sem:
+            await asyncio.sleep(0.25)   # pace supplemental calls to prevent 429 bursts
             async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
                 km, div, etf, tech, ttm, cr = await asyncio.gather(
                     _fmp_key_metrics(sym, client),
