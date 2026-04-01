@@ -22,6 +22,7 @@ import {
 
 interface PortfolioTabProps {
   portfolioId: string;
+  refreshKey?: number;
 }
 
 function fmtDate(v: string | null | undefined) {
@@ -46,7 +47,7 @@ function SectionTitle({ label }: { label: string }) {
   );
 }
 
-export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
+export function PortfolioTab({ portfolioId, refreshKey = 0 }: PortfolioTabProps) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -90,7 +91,7 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       })
       .then(data => { setPositions(data); setLoading(false); })
       .catch(err => { setFetchError(err.message); setLoading(false); });
-  }, [portfolioId]);
+  }, [portfolioId, refreshKey]);
 
   const portfolioContext = useMemo(() => {
     if (!selected) return null;

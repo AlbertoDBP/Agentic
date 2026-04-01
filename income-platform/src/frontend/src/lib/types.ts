@@ -472,9 +472,13 @@ export interface OrderParams {
 
 export type BrokerOrderStatus =
   | "pending"
+  | "new"
+  | "accepted"
+  | "held"
   | "partially_filled"
   | "filled"
   | "cancelled"
+  | "expired"
   | "paper";
 
 export interface LiveOrder {

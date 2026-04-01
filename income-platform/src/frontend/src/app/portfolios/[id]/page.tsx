@@ -8,7 +8,7 @@ import { KpiStrip } from "@/components/portfolio/kpi-strip";
 import { HhsBadge } from "@/components/portfolio/hhs-badge";
 import { HHS_HELP } from "@/lib/help-content";
 import { cn, formatCurrency } from "@/lib/utils";
-import { ASSET_CLASS_COLORS, API_BASE_URL } from "@/lib/config";
+import { ASSET_CLASS_COLORS } from "@/lib/config";
 import { PortfolioTab }   from "./tabs/portfolio-tab";
 import { MarketTab }      from "./tabs/market-tab";
 import { HealthTab }      from "./tabs/health-tab";
@@ -96,6 +96,7 @@ export default function PortfolioPage() {
       : "portfolio";
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [tabRefreshKey, setTabRefreshKey] = useState(0);
   const [health, setHealth] = useState<{ gate: GateStatus | null; refresh_log: RefreshLog | null }>({
     gate: null,
     refresh_log: null,
@@ -115,15 +116,22 @@ export default function PortfolioPage() {
     if (!id || refreshing) return;
     setRefreshing(true);
     try {
-      await fetch(`${API_BASE_URL}/broker/portfolios/${id}/refresh`, {
+      // 1. Sync broker positions/balances from Alpaca — always attempt,
+      //    use portfolio's broker or fall back to "alpaca"
+      const broker = summary?.broker?.toLowerCase() || "alpaca";
+      await fetch("/api/broker/sync", {
         method: "POST",
-        headers: { Authorization: `Bearer ${typeof window !== "undefined" ? (localStorage.getItem("token") ?? "") : ""}` },
-      });
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ broker, portfolio_id: id }),
+      }).catch((e) => console.warn("Broker sync failed", e));
+      // 2. Refresh market data + classification + scores
+      await fetch(`/api/portfolios/${id}/refresh`, { method: "POST" });
     } catch (e) {
       console.error("Refresh failed", e);
     } finally {
       setRefreshing(false);
       refetch();
+      setTabRefreshKey((k) => k + 1);  // force tabs to reload positions
     }
   };
 
@@ -283,9 +291,9 @@ export default function PortfolioPage() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "portfolio"  && <PortfolioTab portfolioId={id} />}
-      {activeTab === "market"     && <MarketTab portfolioId={id} />}
-      {activeTab === "health"     && <HealthTab portfolioId={id} />}
+      {activeTab === "portfolio"  && <PortfolioTab portfolioId={id} refreshKey={tabRefreshKey} />}
+      {activeTab === "market"     && <MarketTab portfolioId={id} refreshKey={tabRefreshKey} />}
+      {activeTab === "health"     && <HealthTab portfolioId={id} refreshKey={tabRefreshKey} />}
       {activeTab === "simulation" && <SimulationContent defaultPortfolioId={id} />}
       {activeTab === "projection" && <ProjectionContent defaultPortfolioId={id} />}
     </div>

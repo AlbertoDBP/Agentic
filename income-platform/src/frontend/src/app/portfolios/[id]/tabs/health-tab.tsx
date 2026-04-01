@@ -38,9 +38,9 @@ function SectionTitle({ label }: { label: string }) {
   );
 }
 
-interface HealthTabProps { portfolioId: string; }
+interface HealthTabProps { portfolioId: string; refreshKey?: number; }
 
-export function HealthTab({ portfolioId }: HealthTabProps) {
+export function HealthTab({ portfolioId, refreshKey = 0 }: HealthTabProps) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +61,7 @@ export function HealthTab({ portfolioId }: HealthTabProps) {
       })
       .then(data => { setPositions(data); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
-  }, [portfolioId]);
+  }, [portfolioId, refreshKey]);
 
   const filtered = useMemo(
     () => positions.filter((p) => p.portfolio_id === portfolioId),

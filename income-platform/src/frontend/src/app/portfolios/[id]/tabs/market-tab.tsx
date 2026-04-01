@@ -12,6 +12,7 @@ import type { Position } from "@/lib/types";
 
 interface MarketTabProps {
   portfolioId: string;
+  refreshKey?: number;
 }
 
 function fmtDate(v: string | null | undefined) {
@@ -60,7 +61,7 @@ function Week52Bar({ price, low, high }: { price: number | null; low: number | n
   );
 }
 
-export function MarketTab({ portfolioId }: MarketTabProps) {
+export function MarketTab({ portfolioId, refreshKey = 0 }: MarketTabProps) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -81,7 +82,7 @@ export function MarketTab({ portfolioId }: MarketTabProps) {
       })
       .then(data => { setPositions(data); setLoading(false); })
       .catch(err => { setFetchError(err.message); setLoading(false); });
-  }, [portfolioId]);
+  }, [portfolioId, refreshKey]);
 
   const columns: ColumnDef<Position>[] = [
     {

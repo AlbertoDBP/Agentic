@@ -1,7 +1,7 @@
 // src/frontend/src/components/proposals/order-status-panel.tsx
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -18,12 +18,15 @@ interface OrderStatusPanelProps {
   liveOrders: LiveOrder[];
   paperOrders: PaperOrder[];
   submittedAt: Date;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   onCancelOrder: (orderId: string, broker: string) => void;
   onCancelRest: (orderId: string, broker: string) => void;
   onMarkPaperExecuted: (proposalId: number, fillPrice: number, fillDate: string) => void;
   lastRefreshedAt: Date | null;
 }
+
+const TERMINAL_STATUSES = new Set(["filled", "cancelled", "expired"]);
+const ACTIVE_STATUSES = new Set(["pending", "new", "accepted", "held", "partially_filled"]);
 
 export function OrderStatusPanel({
   liveOrders,
@@ -35,9 +38,9 @@ export function OrderStatusPanel({
   onMarkPaperExecuted,
   lastRefreshedAt,
 }: OrderStatusPanelProps) {
-  const allTerminal = liveOrders.every(
-    (o) => o.status === "filled" || o.status === "cancelled"
-  );
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const allTerminal = liveOrders.every((o) => TERMINAL_STATUSES.has(o.status));
 
   // Auto-poll every 10s until all orders are terminal
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -50,9 +53,18 @@ export function OrderStatusPanel({
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [allTerminal, onRefresh]);
 
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   const filledCount = liveOrders.filter((o) => o.status === "filled").length;
   const partialCount = liveOrders.filter((o) => o.status === "partially_filled").length;
-  const pendingCount = liveOrders.filter((o) => o.status === "pending").length;
+  const pendingCount = liveOrders.filter((o) => ACTIVE_STATUSES.has(o.status)).length;
 
   const allOrders = [
     ...liveOrders.map((o) => ({ type: "live" as const, data: o })),
@@ -83,11 +95,13 @@ export function OrderStatusPanel({
           </p>
         </div>
         <button
-          onClick={onRefresh}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground rounded border border-border px-2 py-1"
+          onClick={handleManualRefresh}
+          disabled={isRefreshing}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground rounded border border-border px-2 py-1 disabled:opacity-50"
           title="Refresh order status"
         >
-          <RefreshCw className="h-3 w-3" /> Refresh
+          <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
+          {isRefreshing ? "Refreshing…" : "Refresh"}
         </button>
       </div>
 
@@ -146,12 +160,12 @@ export function OrderStatusPanel({
                 .toLocaleString("en-US", { maximumFractionDigits: 0 })}
             </span>
           </span>
-          {pendingCount + partialCount > 0 && (
+          {pendingCount > 0 && (
             <span>
               Pending:{" "}
               <span className="text-amber-400 font-medium">
                 ${liveOrders
-                  .filter((o) => o.status === "pending" || o.status === "partially_filled")
+                  .filter((o) => ACTIVE_STATUSES.has(o.status))
                   .reduce((s, o) => s + (o.qty - o.filled_qty) * (o.limit_price ?? 0), 0)
                   .toLocaleString("en-US", { maximumFractionDigits: 0 })}
               </span>

@@ -361,7 +361,7 @@ async def generate_proposal(
 
 @router.get("")
 def list_proposals(
-    status: Optional[str] = Query(default=None),
+    status: Optional[List[str]] = Query(default=None),
     ticker: Optional[str] = Query(default=None),
     analyst_id: Optional[int] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
@@ -371,7 +371,10 @@ def list_proposals(
     """List proposals with optional filters."""
     query = db.query(Proposal)
     if status is not None:
-        query = query.filter(Proposal.status == status)
+        if len(status) == 1:
+            query = query.filter(Proposal.status == status[0])
+        else:
+            query = query.filter(Proposal.status.in_(status))
     if ticker is not None:
         query = query.filter(Proposal.ticker == ticker.upper())
     if analyst_id is not None:

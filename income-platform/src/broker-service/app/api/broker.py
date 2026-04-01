@@ -195,7 +195,7 @@ async def sync_broker(req: SyncRequest, db: Session = Depends(get_db)):
       - platform_shared.positions        → upsert all open positions
       - platform_shared.market_data_cache → update current prices
     """
-    provider = _get_provider(req.broker)
+    provider = _get_provider_with_override(req.broker)
 
     # 1. Verify connection
     status = await provider.test_connection()
