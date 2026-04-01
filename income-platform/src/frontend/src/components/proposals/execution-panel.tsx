@@ -195,13 +195,13 @@ export function ExecutionPanel({
               {activeProposal.analyst_thesis_summary && (
                 <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 mb-2">
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">Thesis</p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{activeProposal.analyst_thesis_summary}</p>
+                  <p className="text-xs text-foreground/80 leading-relaxed">{activeProposal.analyst_thesis_summary}</p>
                 </div>
               )}
               {activeProposal.sizing_rationale && (
                 <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 mb-2">
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">Sizing Rationale</p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{activeProposal.sizing_rationale}</p>
+                  <p className="text-xs text-foreground/80 leading-relaxed">{activeProposal.sizing_rationale}</p>
                 </div>
               )}
               {activeProposal.recommended_account && (
@@ -274,7 +274,7 @@ export function ExecutionPanel({
                         "px-3 py-1 text-xs rounded-full border transition-colors",
                         activeParams.order_type === t
                           ? "bg-violet-600/20 text-violet-300 border-violet-700/40"
-                          : "border-border text-muted-foreground hover:text-foreground"
+                          : "border-border text-foreground/60 hover:text-foreground"
                       )}
                     >
                       {t === "stop_limit" ? "Stop-Limit" : t.charAt(0).toUpperCase() + t.slice(1)}
@@ -293,7 +293,7 @@ export function ExecutionPanel({
                       step="0.01"
                       value={activeParams.limit_price ?? ""}
                       onChange={(e) => updateParam(activeProposal.id, "limit_price", parseFloat(e.target.value) || null)}
-                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs"
+                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground"
                     />
                   </div>
                 )}
@@ -305,7 +305,7 @@ export function ExecutionPanel({
                     type="number"
                     value={activeParams.shares ?? ""}
                     onChange={(e) => updateParam(activeProposal.id, "shares", parseInt(e.target.value) || null)}
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs"
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground"
                   />
                 </div>
 
@@ -317,7 +317,7 @@ export function ExecutionPanel({
                     step="1"
                     value={activeParams.dollar_amount != null ? Math.round(activeParams.dollar_amount) : ""}
                     onChange={(e) => updateParam(activeProposal.id, "dollar_amount", parseFloat(e.target.value) || null)}
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs"
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground"
                   />
                 </div>
               </div>
@@ -334,7 +334,7 @@ export function ExecutionPanel({
                         "px-3 py-1 text-xs rounded-full border transition-colors",
                         activeParams.time_in_force === t
                           ? "bg-muted text-foreground border-border"
-                          : "border-border text-muted-foreground hover:text-foreground"
+                          : "border-border text-foreground/60 hover:text-foreground"
                       )}
                     >
                       {t.toUpperCase()}
@@ -363,7 +363,7 @@ export function ExecutionPanel({
         <div className="flex gap-2">
           <button
             onClick={onRejectAll}
-            className="text-xs px-3 py-1.5 rounded border border-border text-muted-foreground hover:text-foreground"
+            className="text-xs px-3 py-1.5 rounded border border-border text-foreground/70 hover:text-foreground"
           >
             Reject All
           </button>
@@ -372,14 +372,14 @@ export function ExecutionPanel({
               const key = DRAFT_KEY(proposals.map((p) => p.id));
               try { localStorage.setItem(key, JSON.stringify(params)); } catch { /* ignore */ }
             }}
-            className="text-xs px-3 py-1.5 rounded border border-border text-muted-foreground hover:text-foreground"
+            className="text-xs px-3 py-1.5 rounded border border-border text-foreground/70 hover:text-foreground"
           >
             Save Draft
           </button>
           <button
             onClick={() => onSubmit(params)}
             disabled={loading || totalCommitted === 0}
-            className="text-xs px-4 py-1.5 rounded bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 font-medium"
+            className="text-xs px-4 py-1.5 rounded bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-60 font-medium"
           >
             {loading
               ? "Submitting…"

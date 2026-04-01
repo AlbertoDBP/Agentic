@@ -53,7 +53,7 @@ export function Sidebar() {
         <button
           onClick={toggleSidebar}
           className={cn(
-            "ml-auto flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors",
+            "ml-auto flex h-7 w-7 items-center justify-center rounded-md text-foreground/60 hover:bg-secondary hover:text-foreground transition-colors",
             sidebarCollapsed && "ml-0 mt-0"
           )}
           title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -89,7 +89,7 @@ export function Sidebar() {
                   : "gap-3 px-3 py-2 text-sm",
                 active
                   ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                  : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                  : "text-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
               )}
             >
               <Icon className="h-4 w-4 shrink-0" />

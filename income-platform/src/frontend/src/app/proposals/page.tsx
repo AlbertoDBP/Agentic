@@ -479,7 +479,7 @@ export default function ProposalsPage() {
           <h1 className="text-sm font-semibold">Proposals</h1>
           <button
             onClick={fetchProposals}
-            className="p-1 rounded text-muted-foreground hover:text-foreground"
+            className="p-1 rounded text-foreground/60 hover:text-foreground"
             title="Refresh"
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -497,7 +497,7 @@ export default function ProposalsPage() {
               "flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
               sidebarView === "pending"
                 ? "bg-violet-600/20 text-violet-300 border border-violet-700/40"
-                : "text-muted-foreground hover:text-foreground border border-transparent"
+                : "text-foreground/60 hover:text-foreground border border-transparent"
             )}
           >
             <Clock className="h-3 w-3" />
@@ -513,7 +513,7 @@ export default function ProposalsPage() {
               "flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
               sidebarView === "history"
                 ? "bg-muted text-foreground border border-border"
-                : "text-muted-foreground hover:text-foreground border border-transparent"
+                : "text-foreground/60 hover:text-foreground border border-transparent"
             )}
           >
             <History className="h-3 w-3" />
@@ -778,13 +778,13 @@ function HistoryDetailPane({ proposal }: { proposal: Proposal }) {
       {proposal.analyst_thesis_summary && (
         <div className="rounded-lg border border-border bg-muted/20 px-4 py-3">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Thesis</p>
-          <p className="text-sm text-muted-foreground leading-relaxed">{proposal.analyst_thesis_summary}</p>
+          <p className="text-sm text-foreground/80 leading-relaxed">{proposal.analyst_thesis_summary}</p>
         </div>
       )}
       {proposal.sizing_rationale && (
         <div className="rounded-lg border border-border bg-muted/20 px-4 py-3">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Sizing Rationale</p>
-          <p className="text-sm text-muted-foreground leading-relaxed">{proposal.sizing_rationale}</p>
+          <p className="text-sm text-foreground/80 leading-relaxed">{proposal.sizing_rationale}</p>
         </div>
       )}
       {proposal.divergence_notes && (

@@ -75,12 +75,12 @@
   --secondary: #181d2a;
   --secondary-foreground: #e8eaf0;
   --muted: #181d2a;
-  --muted-foreground: #a0aabb;
+  --muted-foreground: #b0b8cc;
   --accent: #181d2a;
   --accent-foreground: #e8eaf0;
   --destructive: #ef4444;
-  --border: #252d3d;
-  --input: #252d3d;
+  --border: #2e3850;
+  --input: #2e3850;
   --ring: #3b82f6;
   --chart-1: #3b82f6;
   --chart-2: #10b981;
@@ -94,7 +94,7 @@
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #111520;
   --sidebar-accent-foreground: #e8eaf0;
-  --sidebar-border: #252d3d;
+  --sidebar-border: #2e3850;
   --sidebar-ring: #3b82f6;
 }
 
@@ -143,6 +143,16 @@
   html {
     @apply font-sans;
   }
+  /* Ensure typed text is always visible in form controls */
+  input,
+  textarea,
+  select {
+    color: var(--foreground);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted-foreground);
+  }
 }
 
 /* Tabular numbers for financial data */
@@ -159,7 +169,7 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #252d3d;
+  background: #2e3850;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {

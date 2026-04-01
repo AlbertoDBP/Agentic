@@ -263,7 +263,7 @@ export default function SettingsPage() {
               value={global.notification_email}
               onChange={(e) => setGlobal({ ...global, notification_email: e.target.value })}
               placeholder="you@example.com"
-              className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -272,7 +272,7 @@ export default function SettingsPage() {
               <select
                 value={global.currency}
                 onChange={(e) => setGlobal({ ...global, currency: e.target.value })}
-                className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm"
+                className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm text-foreground"
               >
                 <option value="USD">USD</option>
                 <option value="EUR">EUR</option>
@@ -284,7 +284,7 @@ export default function SettingsPage() {
               <select
                 value={global.date_format}
                 onChange={(e) => setGlobal({ ...global, date_format: e.target.value })}
-                className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm"
+                className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm text-foreground"
               >
                 <option value="MM/DD/YYYY">MM/DD/YYYY</option>
                 <option value="DD/MM/YYYY">DD/MM/YYYY</option>
@@ -371,7 +371,7 @@ export default function SettingsPage() {
                     value={getTtlDays(cls)}
                     onChange={(e) => setTtlDays(cls, e.target.value)}
                     placeholder="45"
-                    className="w-20 rounded border border-border bg-background px-2 py-1 text-sm text-right"
+                    className="w-20 rounded border border-border bg-background px-2 py-1 text-sm text-foreground text-right"
                   />
                 </div>
               ))}
@@ -402,12 +402,12 @@ export default function SettingsPage() {
                       value={editForm.name}
                       onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                       placeholder="Portfolio name"
-                      className="rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      className="rounded-md border border-border bg-secondary px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                     />
                     <select
                       value={editForm.account_type}
                       onChange={(e) => setEditForm({ ...editForm, account_type: e.target.value })}
-                      className="rounded-md border border-border bg-secondary px-2 py-1 text-sm"
+                      className="rounded-md border border-border bg-secondary px-2 py-1 text-sm text-foreground"
                     >
                       <option>Taxable</option>
                       <option>Roth IRA</option>
@@ -419,7 +419,7 @@ export default function SettingsPage() {
                       value={editForm.broker}
                       onChange={(e) => setEditForm({ ...editForm, broker: e.target.value })}
                       placeholder="Broker"
-                      className="rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      className="rounded-md border border-border bg-secondary px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                     />
                   </div>
 
@@ -595,7 +595,7 @@ export default function SettingsPage() {
                     ) : (
                       <button
                         onClick={() => { setActiveId(p.id); flash(); }}
-                        className="rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                        className="rounded-md border border-border px-3 py-1 text-xs font-medium text-foreground/70 hover:text-foreground hover:bg-secondary transition-colors"
                       >
                         Set Active
                       </button>
@@ -623,12 +623,12 @@ export default function SettingsPage() {
                   onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
                   placeholder="Portfolio name"
                   autoFocus
-                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 />
                 <select
                   value={addForm.account_type}
                   onChange={(e) => setAddForm({ ...addForm, account_type: e.target.value })}
-                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm"
+                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm text-foreground"
                 >
                   <option>Taxable</option>
                   <option>Roth IRA</option>
@@ -640,7 +640,7 @@ export default function SettingsPage() {
                   value={addForm.broker}
                   onChange={(e) => setAddForm({ ...addForm, broker: e.target.value })}
                   placeholder="Broker"
-                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="rounded-md border border-border bg-secondary px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 />
               </div>
               <div className="flex gap-2">
@@ -659,7 +659,7 @@ export default function SettingsPage() {
           ) : (
             <button
               onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+              className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-4 py-2.5 text-sm text-foreground/60 hover:text-foreground hover:border-foreground/30 transition-colors"
             >
               <Plus className="h-4 w-4" /> Add Portfolio
             </button>
@@ -675,7 +675,7 @@ export default function SettingsPage() {
             <select
               value={configPortfolioId}
               onChange={(e) => setConfigPortfolioId(e.target.value)}
-              className="rounded-md border border-border bg-secondary px-2 py-1 text-sm flex-1"
+              className="rounded-md border border-border bg-secondary px-2 py-1 text-sm text-foreground flex-1"
             >
               {portfolios.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
