@@ -10,6 +10,15 @@ import { formatCurrency, formatDate, scoreTextColor } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
+import {
+  computePortfolioWeight,
+  computeSectorWeight,
+  computeIncomeWeight,
+  computeRankByValue,
+  computeRankByIncome,
+  formatSmaDeviation,
+  rsiLabel,
+} from "@/lib/portfolio-context";
 
 interface PortfolioTabProps {
   portfolioId: string;
@@ -308,6 +317,126 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
                 <DetailRow label="Sector" value={selected.sector ?? "—"} />
                 {selected.industry && <DetailRow label="Industry" value={selected.industry} />}
               </div>
+            </section>
+          )}
+
+          {/* Portfolio Context */}
+          {(() => {
+            const portWeight = computePortfolioWeight(selected, positions);
+            const sectWeight = computeSectorWeight(selected, positions);
+            const incomeWeight = computeIncomeWeight(selected, positions);
+            const rankValue = computeRankByValue(selected, positions);
+            const rankIncome = computeRankByIncome(selected, positions);
+            const n = positions.length;
+            const sectOver = sectWeight != null && sectWeight > 30;
+            return (
+              <section>
+                <SectionTitle label="Portfolio Context" />
+                <div className="grid grid-cols-2 gap-y-2.5 gap-x-3 mb-3">
+                  <DetailRow label="Portfolio Weight" value={portWeight != null ? `${portWeight.toFixed(1)}%` : "—"} />
+                  <DetailRow
+                    label="Sector Weight"
+                    value={sectWeight != null ? `${sectWeight.toFixed(1)}%` : "—"}
+                    className={sectOver ? "text-amber-400" : undefined}
+                  />
+                  <DetailRow label="Income Weight" value={incomeWeight != null ? `${incomeWeight.toFixed(1)}%` : "—"} />
+                  <DetailRow label="Rank by Value" value={rankValue != null ? `#${rankValue} of ${n}` : "—"} className="text-muted-foreground" />
+                  <DetailRow label="Rank by Income" value={rankIncome != null ? `#${rankIncome} of ${n}` : "—"} className="text-muted-foreground" />
+                </div>
+                {portWeight != null && (
+                  <div className="space-y-2">
+                    <div>
+                      <div className="flex justify-between text-[10px] text-muted-foreground mb-0.5">
+                        <span>Portfolio</span><span>{portWeight.toFixed(1)}%</span>
+                      </div>
+                      <div className="h-[5px] rounded-full bg-border overflow-hidden">
+                        <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(portWeight, 100)}%` }} />
+                      </div>
+                    </div>
+                    {sectWeight != null && (
+                      <div>
+                        <div className="flex justify-between text-[10px] mb-0.5">
+                          <span className="text-muted-foreground">Sector ({selected.sector})</span>
+                          <span className={sectOver ? "text-amber-400" : "text-muted-foreground"}>{sectWeight.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-[5px] rounded-full bg-border overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${sectOver ? "bg-amber-400" : "bg-green-500"}`}
+                            style={{ width: `${Math.min(sectWeight, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            );
+          })()}
+
+          {/* Technicals */}
+          {(selected.sma_50 != null || selected.sma_200 != null || selected.rsi_14d != null || selected.week52_low != null) && (
+            <section>
+              <SectionTitle label="Technicals" />
+              <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
+                {selected.sma_50 != null && (
+                  <>
+                    <DetailRow
+                      label="vs SMA-50"
+                      value={formatSmaDeviation(selected.market_price, selected.sma_50) ?? "—"}
+                      className={(selected.market_price ?? 0) >= selected.sma_50 ? "text-green-400" : "text-red-400"}
+                    />
+                  </>
+                )}
+                {selected.sma_200 != null && (
+                  <>
+                    <DetailRow
+                      label="vs SMA-200"
+                      value={formatSmaDeviation(selected.market_price, selected.sma_200) ?? "—"}
+                      className={(selected.market_price ?? 0) >= selected.sma_200 ? "text-green-400" : "text-red-400"}
+                    />
+                  </>
+                )}
+                {selected.rsi_14d != null && (
+                  <div className="col-span-2">
+                    <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80 mb-0.5">RSI (14d)</div>
+                    <div className="text-sm font-semibold">
+                      {selected.rsi_14d.toFixed(0)}{" "}
+                      <span className={`text-xs font-normal ${
+                        rsiLabel(selected.rsi_14d) === "oversold" ? "text-green-400" :
+                        rsiLabel(selected.rsi_14d) === "overbought" ? "text-red-400" :
+                        "text-muted-foreground"
+                      }`}>
+                        {rsiLabel(selected.rsi_14d)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {selected.week52_low != null && selected.week52_high != null && selected.market_price != null && (
+                <div className="mt-3">
+                  <div className="flex justify-between text-[10px] text-muted-foreground mb-0.5">
+                    <span>{formatCurrency(selected.week52_low)}</span>
+                    <span className="font-semibold text-foreground">{formatCurrency(selected.market_price)}</span>
+                    <span>{formatCurrency(selected.week52_high)}</span>
+                  </div>
+                  <div className="h-[5px] rounded-full bg-border relative overflow-visible">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.min(((selected.market_price - selected.week52_low) / (selected.week52_high - selected.week52_low)) * 100, 100)}%`,
+                        background: "linear-gradient(to right, #10b981, #6366f1)",
+                      }}
+                    />
+                    <div
+                      className="absolute top-[-3px] w-[2px] h-[11px] bg-foreground rounded-sm"
+                      style={{
+                        left: `${Math.min(((selected.market_price - selected.week52_low) / (selected.week52_high - selected.week52_low)) * 100, 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground text-center mt-0.5">52-week range</div>
+                </div>
+              )}
             </section>
           )}
 
