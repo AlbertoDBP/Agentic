@@ -25,6 +25,8 @@ class Settings(BaseSettings):
 
     # ── Downstream services ──
     scoring_service_url: str = "http://agent-03-income-scoring:8003"
+    classification_url: str = "http://agent-04-asset-classification:8004"
+    scanner_url: str = "http://agent-07-opportunity-scanner:8007"
     service_token: str = ""          # read from SERVICE_TOKEN env var
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)

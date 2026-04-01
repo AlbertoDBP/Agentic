@@ -388,6 +388,50 @@ async def cancel_order(order_id: str, broker: str = "alpaca"):
     return {"cancelled": cancelled, "order_id": order_id, "broker": broker}
 
 
+@router.post("/portfolios/{portfolio_id}/refresh")
+async def refresh_portfolio_data(portfolio_id: str, db: Session = Depends(get_db)):
+    """Sequential data refresh: market data → classification → scoring → stamp last_refreshed_at."""
+    row = db.execute(text("SELECT id FROM platform_shared.portfolios WHERE id = :id"), {"id": portfolio_id}).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    ticker_rows = db.execute(text("""
+        SELECT DISTINCT symbol FROM platform_shared.positions
+        WHERE portfolio_id = :pid AND status = 'ACTIVE' ORDER BY symbol
+    """), {"pid": portfolio_id}).fetchall()
+    tickers = [r[0] for r in ticker_rows]
+
+    hdrs = {"Authorization": f"Bearer {settings.service_token}"} if settings.service_token else {}
+    steps: dict = {}
+
+    async def _post(url: str, payload=None, timeout: int = 120) -> dict:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, headers=hdrs, json=payload)
+            ok = resp.status_code < 300
+            try:
+                return {"ok": ok, "status": resp.status_code, "data": resp.json()}
+            except Exception:
+                return {"ok": ok, "status": resp.status_code}
+        except httpx.TimeoutException:
+            return {"ok": False, "status": 504, "error": "timed out"}
+        except Exception as exc:
+            return {"ok": False, "status": 502, "error": str(exc)}
+
+    steps["market_data"] = await _post(f"{settings.scanner_url}/cache/refresh?force=true", timeout=180)
+    steps["classification"] = await _post(
+        f"{settings.classification_url}/classify/batch",
+        payload={"tickers": tickers},
+    ) if tickers else {"ok": True, "data": {"skipped": "no tickers"}}
+    steps["scoring"] = await _post(f"{settings.scoring_service_url}/scores/refresh-portfolio")
+
+    if any(v["ok"] for v in steps.values()):
+        db.execute(text("UPDATE platform_shared.portfolios SET last_refreshed_at = NOW(), updated_at = NOW() WHERE id = :pid"), {"pid": portfolio_id})
+        db.commit()
+
+    return {"ok": all(v["ok"] for v in steps.values()), "portfolio_id": portfolio_id, "tickers_count": len(tickers), "steps": steps}
+
+
 @router.get("/portfolios")
 async def list_portfolios(db: Session = Depends(get_db)):
     """List all portfolios with aggregate KPIs."""
