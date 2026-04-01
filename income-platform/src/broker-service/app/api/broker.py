@@ -453,72 +453,68 @@ async def refresh_portfolio_data(portfolio_id: str, db: Session = Depends(get_db
     ) if tickers else {"ok": True, "data": {"skipped": "no tickers"}}
     steps["scoring"] = await _post(f"{settings.scoring_service_url}/scores/refresh-portfolio")
 
-    # Portfolio health score: build holdings payload and call /portfolio/health, persist result
+    # Portfolio health score: value-weighted average HHS from income_scores
     try:
-        pos_rows = db.execute(text("""
-            SELECT p.symbol, p.current_value, p.total_cost_basis, p.annual_income,
-                   p.annual_fee_drag, p.estimated_tax_drag,
-                   sc.asset_class
-            FROM platform_shared.positions p
-            LEFT JOIN platform_shared.asset_classifications sc
-                ON sc.ticker = p.symbol AND sc.is_override IS NOT TRUE
-            WHERE p.portfolio_id = :pid AND p.status = 'ACTIVE'
-              AND p.current_value IS NOT NULL AND p.current_value > 0
-        """), {"pid": portfolio_id}).fetchall()
-
-        if pos_rows:
-            holdings = [
-                {
-                    "ticker": r[0],
-                    "asset_class": r[6],
-                    "position_value": float(r[1] or 0),
-                    "original_cost": float(r[2] or 0),
-                    "current_value": float(r[1] or 0),
-                    "income_received": float(r[3] or 0),
-                    "annual_fee_drag": float(r[4] or 0),
-                    "annual_tax_drag": float(r[5]) if r[5] is not None else None,
-                }
-                for r in pos_rows
-            ]
-            ph_resp = await _post(
-                f"{settings.scoring_service_url}/portfolio/portfolio/health",
-                payload={"holdings": holdings, "risk_profile": "moderate"},
-                timeout=60,
+        ph_row = db.execute(text("""
+            WITH latest_scores AS (
+                SELECT DISTINCT ON (ticker) ticker, hhs_score, unsafe_flag
+                FROM platform_shared.income_scores
+                ORDER BY ticker, scored_at DESC
             )
-            steps["portfolio_health"] = ph_resp
-            if ph_resp.get("ok") and isinstance(ph_resp.get("data"), dict):
-                ph = ph_resp["data"]
-                agg_hhs = ph.get("aggregate_hhs")
-                if agg_hhs is not None:
-                    # Persist to portfolio_health_scores and update portfolios.health_score
-                    score = float(agg_hhs)
-                    grade = ("A" if score >= 80 else "B" if score >= 70 else "C" if score >= 60
-                             else "D" if score >= 50 else "F")
-                    flags = (ph.get("unsafe_tickers") or []) + (ph.get("concentration_flags") or [])
-                    db.execute(text("""
-                        INSERT INTO platform_shared.portfolio_health_scores
-                            (id, portfolio_id, computed_at, score, grade,
-                             flags, position_count, total_value, actual_yield_pct, created_at)
-                        VALUES
-                            (gen_random_uuid(), :pid, NOW(), :score, :grade,
-                             :flags, :pos_count, :total_value, :yield_pct, NOW())
-                    """), {
-                        "pid": portfolio_id,
-                        "score": score,
-                        "grade": grade,
-                        "flags": flags,
-                        "pos_count": (ph.get("scored_holding_count", 0) +
-                                      ph.get("excluded_holding_count", 0)),
-                        "total_value": sum(float(r[1] or 0) for r in pos_rows),
-                        "yield_pct": ph.get("portfolio_naa_yield_pct"),
-                    })
-                    db.execute(text("""
-                        UPDATE platform_shared.portfolios
-                        SET health_score              = :score,
-                            health_score_computed_at  = NOW(),
-                            updated_at                = NOW()
-                        WHERE id = :pid
-                    """), {"pid": portfolio_id, "score": score})
+            SELECT
+                SUM(p.current_value * ls.hhs_score) / NULLIF(SUM(p.current_value), 0) AS agg_hhs,
+                SUM(p.current_value)                                                    AS total_val,
+                SUM(p.annual_income)                                                    AS total_income,
+                COUNT(p.id)                                                             AS pos_count,
+                COUNT(CASE WHEN ls.unsafe_flag THEN 1 END)                             AS unsafe_count,
+                ARRAY_AGG(CASE WHEN ls.unsafe_flag THEN p.symbol END)
+                    FILTER (WHERE ls.unsafe_flag)                                       AS unsafe_tickers
+            FROM platform_shared.positions p
+            JOIN latest_scores ls ON ls.ticker = p.symbol
+            WHERE p.portfolio_id = :pid AND p.status = 'ACTIVE'
+              AND p.current_value > 0 AND ls.hhs_score IS NOT NULL
+        """), {"pid": portfolio_id}).fetchone()
+
+        if ph_row and ph_row[0] is not None:
+            score = round(float(ph_row[0]), 2)
+            total_val = float(ph_row[1] or 0)
+            total_inc = float(ph_row[2] or 0)
+            pos_count = int(ph_row[3] or 0)
+            unsafe_count = int(ph_row[4] or 0)
+            unsafe_tickers = [t for t in (ph_row[5] or []) if t]
+            yield_pct = round((total_inc / total_val * 100), 4) if total_val > 0 else 0
+            grade = ("A" if score >= 80 else "B" if score >= 70 else "C" if score >= 60
+                     else "D" if score >= 50 else "F")
+            flags = unsafe_tickers
+            db.execute(text("""
+                INSERT INTO platform_shared.portfolio_health_scores
+                    (id, portfolio_id, computed_at, score, grade,
+                     flags, position_count, total_value, actual_yield_pct, created_at)
+                VALUES
+                    (gen_random_uuid(), :pid, NOW(), :score, :grade,
+                     :flags, :pos_count, :total_value, :yield_pct, NOW())
+            """), {
+                "pid": portfolio_id, "score": score, "grade": grade,
+                "flags": flags, "pos_count": pos_count,
+                "total_value": total_val, "yield_pct": yield_pct,
+            })
+            db.execute(text("""
+                UPDATE platform_shared.portfolios
+                SET health_score             = :score,
+                    health_score_computed_at = NOW(),
+                    updated_at               = NOW()
+                WHERE id = :pid
+            """), {"pid": portfolio_id, "score": score})
+            steps["portfolio_health"] = {
+                "ok": True,
+                "aggregate_hhs": score,
+                "grade": grade,
+                "scored_positions": pos_count,
+                "unsafe_count": unsafe_count,
+            }
+        else:
+            steps["portfolio_health"] = {"ok": True, "aggregate_hhs": None,
+                                          "note": "no scored positions with value"}
     except Exception as exc:
         steps["portfolio_health"] = {"ok": False, "error": str(exc)}
 
