@@ -35,10 +35,12 @@ def fetch_active_suggestions(
     """
     active_filter = "" if include_history else "AND s.is_active = TRUE"
 
+    # COALESCE with securities.asset_type so the canonical classification from the
+    # portfolio/classification pipeline wins over whatever was stored on the suggestion row.
     query = f"""
         SELECT
             s.ticker,
-            s.asset_class,
+            COALESCE(sec.asset_type, s.asset_class) AS asset_class,
             s.recommendation,
             s.sentiment_score,
             s.analyst_id,
@@ -54,6 +56,7 @@ def fetch_active_suggestions(
             s.is_active
         FROM platform_shared.analyst_suggestions s
         JOIN platform_shared.analysts a ON a.id = s.analyst_id
+        LEFT JOIN platform_shared.securities sec ON sec.symbol = s.ticker
         WHERE s.expires_at > NOW()
           AND s.staleness_weight >= :staleness_weight
           {active_filter}

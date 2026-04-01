@@ -223,17 +223,22 @@ async def post_scan(request: ScanRequest, db: Session = Depends(get_db)):
                 "nav_value": row[7],
             }
 
-        # Fetch latest score per ticker directly from income_scores — avoids N HTTP calls
+        # Fetch latest score per ticker directly from income_scores — avoids N HTTP calls.
+        # COALESCE with securities.asset_type so the canonical classification wins over
+        # whatever asset_class was stored at score time (which can be stale / NULL).
         score_rows = db.execute(
             text("""
-                SELECT DISTINCT ON (ticker)
-                    ticker, asset_class, total_score, grade, recommendation,
-                    valuation_yield_score, financial_durability_score,
-                    technical_entry_score, nav_erosion_penalty, signal_penalty,
-                    factor_details, scored_at
-                FROM platform_shared.income_scores
-                WHERE ticker = ANY(:syms)
-                ORDER BY ticker, scored_at DESC
+                SELECT DISTINCT ON (i.ticker)
+                    i.ticker,
+                    COALESCE(sec.asset_type, i.asset_class) AS asset_class,
+                    i.total_score, i.grade, i.recommendation,
+                    i.valuation_yield_score, i.financial_durability_score,
+                    i.technical_entry_score, i.nav_erosion_penalty, i.signal_penalty,
+                    i.factor_details, i.scored_at
+                FROM platform_shared.income_scores i
+                LEFT JOIN platform_shared.securities sec ON sec.symbol = i.ticker
+                WHERE i.ticker = ANY(:syms)
+                ORDER BY i.ticker, i.scored_at DESC
             """),
             {"syms": tickers},
         ).fetchall()
