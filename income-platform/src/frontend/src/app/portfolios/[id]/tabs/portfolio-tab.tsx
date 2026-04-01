@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
 import { TickerBadge } from "@/components/ticker-badge";
@@ -67,6 +67,13 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removePending, setRemovePending] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const timeoutIdsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    return () => {
+      timeoutIdsRef.current.forEach(clearTimeout);
+    };
+  }, []);
 
   useEffect(() => {
     if (!portfolioId) return;
@@ -99,7 +106,7 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
 
   function showToast(msg: string) {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 4000);
+    timeoutIdsRef.current.push(setTimeout(() => setToastMsg(null), 4000));
   }
 
   function triggerRefresh() {
@@ -122,11 +129,18 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
   async function handleAdd() {
     setAddError(null);
     setAddPending(true);
+    const sharesNum = parseFloat(addForm.shares);
+    const avgCostNum = parseFloat(addForm.avgCost);
+    if (!Number.isFinite(sharesNum) || sharesNum <= 0 || !Number.isFinite(avgCostNum) || avgCostNum <= 0) {
+      setAddError("Please enter valid shares and cost values.");
+      setAddPending(false);
+      return;
+    }
     try {
       const body: Record<string, unknown> = {
         symbol: addForm.symbol.toUpperCase().trim(),
-        shares: parseFloat(addForm.shares),
-        cost_basis: parseFloat(addForm.shares) * parseFloat(addForm.avgCost),
+        shares: sharesNum,
+        cost_basis: sharesNum * avgCostNum,
       };
       if (addForm.acquiredDate) body.acquired_date = addForm.acquiredDate;
       const res = await fetch(`/api/portfolios/${portfolioId}/positions`, {
@@ -142,7 +156,7 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       setAddForm({ symbol: "", shares: "", avgCost: "", acquiredDate: "" });
       showToast("Saving… scores will update shortly.");
       triggerRefresh();
-      setTimeout(refreshPositions, 4000);
+      timeoutIdsRef.current.push(setTimeout(refreshPositions, 4000));
     } catch {
       setAddError("Failed to add position. Please try again.");
     } finally {
@@ -153,10 +167,17 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
   async function handleSave(posId: string) {
     setEditError(null);
     setEditPending(true);
+    const qtyNum = parseFloat(editForm.shares);
+    const avgCbNum = parseFloat(editForm.avgCost);
+    if (!Number.isFinite(qtyNum) || qtyNum <= 0 || !Number.isFinite(avgCbNum) || avgCbNum <= 0) {
+      setEditError("Please enter valid shares and cost values.");
+      setEditPending(false);
+      return;
+    }
     try {
       const body: Record<string, unknown> = {
-        quantity: parseFloat(editForm.shares),
-        avg_cost_basis: parseFloat(editForm.avgCost),
+        quantity: qtyNum,
+        avg_cost_basis: avgCbNum,
       };
       if (editForm.acquiredDate) body.acquired_date = editForm.acquiredDate;
       const res = await fetch(`/api/positions/${posId}`, {
@@ -168,7 +189,7 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       setEditingId(null);
       showToast("Saving… scores will update shortly.");
       triggerRefresh();
-      setTimeout(refreshPositions, 4000);
+      timeoutIdsRef.current.push(setTimeout(refreshPositions, 4000));
     } catch {
       setEditError("Failed to save changes. Please try again.");
     } finally {
@@ -185,7 +206,7 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       setPositions(prev => prev.filter(p => p.id !== posId));
       showToast("Saving… scores will update shortly.");
       triggerRefresh();
-      setTimeout(refreshPositions, 4000);
+      timeoutIdsRef.current.push(setTimeout(refreshPositions, 4000));
     } catch {
       // leave removingId set so user can retry
     } finally {
