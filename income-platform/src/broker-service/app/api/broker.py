@@ -49,6 +49,12 @@ def _get_provider(broker: str) -> BaseBrokerProvider:
 
 # ── Request / Response models ─────────────────────────────────────────────────
 
+class CredentialsRequest(BaseModel):
+    broker: str = "alpaca"
+    api_key: str
+    api_secret: str
+
+
 class SyncRequest(BaseModel):
     broker: str = "alpaca"
     portfolio_id: Optional[str] = None   # if provided, link sync to this portfolio
@@ -97,10 +103,69 @@ async def list_providers():
     }
 
 
+# ── In-memory credentials override store ──────────────────────────────────────
+# Keys are broker name (lowercase); values are (api_key, api_secret) tuples.
+# These override env-configured values for the lifetime of the process.
+_credentials_store: dict[str, tuple[str, str]] = {}
+
+
+def _get_provider_with_override(broker: str) -> "BaseBrokerProvider":
+    """Like _get_provider but checks the runtime credentials store first."""
+    broker_lower = broker.lower()
+    if broker_lower == "alpaca":
+        override = _credentials_store.get("alpaca")
+        api_key = override[0] if override else settings.alpaca_api_key
+        secret_key = override[1] if override else settings.alpaca_secret_key
+        return AlpacaProvider(
+            api_key=api_key,
+            secret_key=secret_key,
+            base_url=settings.alpaca_base_url,
+        )
+    raise HTTPException(status_code=422, detail=f"Unsupported broker: '{broker}'")
+
+
+@router.post("/credentials")
+async def set_credentials(req: CredentialsRequest):
+    """
+    Accept broker credentials, test the connection, and store them in-memory
+    if valid. Returns the account summary on success.
+    """
+    broker_lower = req.broker.lower()
+    if broker_lower == "alpaca":
+        provider = AlpacaProvider(
+            api_key=req.api_key,
+            secret_key=req.api_secret,
+            base_url=settings.alpaca_base_url,
+        )
+    else:
+        raise HTTPException(status_code=422, detail=f"Unsupported broker: '{req.broker}'")
+
+    status = await provider.test_connection()
+    if not status.connected:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Credential test failed: {status.error or 'Could not connect to broker'}",
+        )
+
+    # Store credentials in memory for this process lifetime
+    _credentials_store[broker_lower] = (req.api_key, req.api_secret)
+
+    account = await provider.get_account()
+    return {
+        "ok": True,
+        "broker": req.broker,
+        "account_id": status.account_id,
+        "account_label": status.account_label,
+        "buying_power": account.buying_power,
+        "cash_balance": account.cash_balance,
+        "message": "Credentials validated and stored for this session.",
+    }
+
+
 @router.get("/connection")
 async def test_connection(broker: str = "alpaca"):
     """Test broker connection and return live account summary."""
-    provider = _get_provider(broker)
+    provider = _get_provider_with_override(broker)
     status = await provider.test_connection()
     if not status.connected:
         raise HTTPException(status_code=502, detail=f"Broker connection failed: {status.error}")

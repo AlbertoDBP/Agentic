@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { RefreshCw, Loader2 } from "lucide-react";
+import { RefreshCw, Loader2, History, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { ExecutionPanel } from "@/components/proposals/execution-panel";
@@ -40,6 +40,27 @@ interface Proposal {
 }
 
 type Phase = "setup" | "status";
+type SidebarView = "pending" | "history";
+
+const HISTORY_STATUSES = [
+  "executed_aligned",
+  "executed_override",
+  "executed_filled",
+  "partially_filled",
+  "rejected",
+  "expired",
+  "cancelled",
+];
+
+function statusBadge(status: string): { label: string; cls: string } {
+  if (status === "executed_filled") return { label: "Filled", cls: "bg-emerald-950/40 text-emerald-400 border-emerald-800/40" };
+  if (status === "executed_aligned" || status === "executed_override") return { label: status === "executed_aligned" ? "Executed" : "Override", cls: "bg-blue-950/40 text-blue-400 border-blue-800/40" };
+  if (status === "partially_filled") return { label: "Partial", cls: "bg-amber-950/40 text-amber-400 border-amber-800/40" };
+  if (status === "rejected") return { label: "Rejected", cls: "bg-red-950/40 text-red-400 border-red-800/40" };
+  if (status === "expired") return { label: "Expired", cls: "bg-muted/40 text-muted-foreground border-border" };
+  if (status === "cancelled") return { label: "Cancelled", cls: "bg-muted/40 text-muted-foreground border-border" };
+  return { label: status, cls: "bg-muted/40 text-muted-foreground border-border" };
+}
 
 function alignmentDot(alignment: string | null): string {
   if (!alignment) return "bg-muted-foreground";
@@ -82,9 +103,15 @@ export default function ProposalsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Sidebar view toggle
+  const [sidebarView, setSidebarView] = useState<SidebarView>("pending");
+
   // Selection
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [focusedPortfolioId, setFocusedPortfolioId] = useState<string | null>(null);
+
+  // History selection (single proposal detail view)
+  const [historyFocusedId, setHistoryFocusedId] = useState<number | null>(null);
 
   // Phase
   const [phase, setPhase] = useState<Phase>("setup");
@@ -98,12 +125,23 @@ export default function ProposalsPage() {
   const [submittedAt, setSubmittedAt] = useState<Date | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
 
+  // ── Submission banner state ──
+  const [submissionSummary, setSubmissionSummary] = useState<{
+    count: number;
+    isLive: boolean;
+    broker?: string;
+    orderIds: string[];
+  } | null>(null);
+
   // Load proposals
   const fetchProposals = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch("/api/proposals?limit=200&status=pending");
+      const statusParam = sidebarView === "history"
+        ? HISTORY_STATUSES.map((s) => `status=${s}`).join("&")
+        : "status=pending";
+      const resp = await fetch(`/api/proposals?limit=200&${statusParam}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       setProposals(Array.isArray(data) ? data : []);
@@ -112,14 +150,29 @@ export default function ProposalsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sidebarView]);
 
   useEffect(() => {
     fetchProposals();
   }, [fetchProposals]);
 
-  // Group pending proposals by portfolio
-  const pendingProposals = proposals.filter((p) => p.status === "pending");
+  // Restore paper orders from localStorage on mount
+  useEffect(() => {
+    if (focusedPortfolioId) {
+      try {
+        const stored = localStorage.getItem(`paper-orders-${focusedPortfolioId}`);
+        if (stored) {
+          const parsed: PaperOrder[] = JSON.parse(stored);
+          if (parsed.length > 0) setPaperOrders(parsed);
+        }
+      } catch { /* ignore */ }
+    }
+  }, [focusedPortfolioId]);
+
+  // Group proposals by portfolio
+  const pendingProposals = sidebarView === "pending"
+    ? proposals.filter((p) => p.status === "pending")
+    : proposals;
   const portfolioGroups = groupByPortfolio(pendingProposals);
 
   // Auto-focus first portfolio with proposals
@@ -132,17 +185,22 @@ export default function ProposalsPage() {
   const focusedPortfolio = portfolios.find((p) => p.id === focusedPortfolioId) ?? null;
   const focusedGroup = portfolioGroups.find((g) => g.portfolioId === focusedPortfolioId);
 
-  // Auto-select all proposals in focused portfolio on focus change
+  // Auto-select all proposals in focused portfolio on focus change (pending mode only)
   useEffect(() => {
-    if (focusedGroup) {
+    if (sidebarView === "pending" && focusedGroup) {
       setSelectedIds(new Set(focusedGroup.proposals.map((p) => p.id)));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusedPortfolioId]);
+  }, [focusedPortfolioId, sidebarView]);
 
   const focusedProposals = (focusedGroup?.proposals ?? []).filter((p) =>
     selectedIds.has(p.id)
   );
+
+  // History focused proposal
+  const historyProposal = historyFocusedId != null
+    ? proposals.find((p) => p.id === historyFocusedId) ?? null
+    : null;
 
   // ── Submit handler ──
 
@@ -223,6 +281,32 @@ export default function ProposalsPage() {
       } catch (err) {
         console.error(`Order error for ${proposal.ticker}:`, err);
       }
+    }
+
+    // Persist paper orders to localStorage
+    if (newPaperOrders.length > 0) {
+      try {
+        const key = `paper-orders-${focusedPortfolio.id}`;
+        const existing = localStorage.getItem(key);
+        const prev: PaperOrder[] = existing ? JSON.parse(existing) : [];
+        localStorage.setItem(key, JSON.stringify([...prev, ...newPaperOrders]));
+      } catch { /* ignore */ }
+    }
+
+    // Build submission summary banner
+    if (isBrokerConnected && newLiveOrders.length > 0) {
+      setSubmissionSummary({
+        count: newLiveOrders.length,
+        isLive: true,
+        broker: focusedPortfolio.broker ?? "Broker",
+        orderIds: newLiveOrders.map((o) => o.order_id),
+      });
+    } else if (!isBrokerConnected && newPaperOrders.length > 0) {
+      setSubmissionSummary({
+        count: newPaperOrders.length,
+        isLive: false,
+        orderIds: [],
+      });
     }
 
     setLiveOrders(newLiveOrders);
@@ -369,6 +453,20 @@ export default function ProposalsPage() {
     setPaperOrders((prev) =>
       prev.map((o) => (o.proposal_id === proposalId ? { ...o, executed: true } : o))
     );
+    // Remove from localStorage once executed
+    try {
+      const key = `paper-orders-${order.portfolio_id}`;
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const all: PaperOrder[] = JSON.parse(stored);
+        const remaining = all.filter((o) => o.proposal_id !== proposalId);
+        if (remaining.length > 0) {
+          localStorage.setItem(key, JSON.stringify(remaining));
+        } else {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch { /* ignore */ }
   };
 
   // ── Render ──
@@ -388,6 +486,41 @@ export default function ProposalsPage() {
           </button>
         </div>
 
+        {/* Pending / History toggle */}
+        <div className="flex gap-1 px-3 py-2 border-b border-border">
+          <button
+            onClick={() => {
+              setSidebarView("pending");
+              setHistoryFocusedId(null);
+            }}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
+              sidebarView === "pending"
+                ? "bg-violet-600/20 text-violet-300 border border-violet-700/40"
+                : "text-muted-foreground hover:text-foreground border border-transparent"
+            )}
+          >
+            <Clock className="h-3 w-3" />
+            Pending
+          </button>
+          <button
+            onClick={() => {
+              setSidebarView("history");
+              setSelectedIds(new Set());
+              setPhase("setup");
+            }}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
+              sidebarView === "history"
+                ? "bg-muted text-foreground border border-border"
+                : "text-muted-foreground hover:text-foreground border border-transparent"
+            )}
+          >
+            <History className="h-3 w-3" />
+            History
+          </button>
+        </div>
+
         <div className="flex-1 overflow-y-auto py-2">
           {loading && (
             <div className="flex items-center justify-center py-8 text-muted-foreground text-xs">
@@ -401,9 +534,9 @@ export default function ProposalsPage() {
           )}
           {!loading && !error && portfolioGroups.length === 0 && (
             <div className="px-4 py-8 text-center text-xs text-muted-foreground">
-              No pending proposals.
-              <br />
-              Run a scan and generate proposals to see them here.
+              {sidebarView === "pending"
+                ? <>No pending proposals.<br />Run a scan and generate proposals to see them here.</>
+                : "No historical proposals found."}
             </div>
           )}
 
@@ -419,7 +552,7 @@ export default function ProposalsPage() {
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     {port?.name ?? "Unassigned"}
                   </span>
-                  {port?.cash_balance != null && (
+                  {sidebarView === "pending" && port?.cash_balance != null && (
                     <span className="text-[10px] text-emerald-400">
                       $
                       {port.cash_balance.toLocaleString("en-US", {
@@ -427,8 +560,54 @@ export default function ProposalsPage() {
                       })}
                     </span>
                   )}
+                  {sidebarView === "history" && (
+                    <span className="text-[10px] text-muted-foreground">
+                      {group.proposals.length}
+                    </span>
+                  )}
                 </div>
                 {group.proposals.map((p) => {
+                  if (sidebarView === "history") {
+                    const badge = statusBadge(p.status);
+                    return (
+                      <div
+                        key={p.id}
+                        onClick={() => {
+                          setFocusedPortfolioId(group.portfolioId);
+                          setHistoryFocusedId(p.id);
+                        }}
+                        className={cn(
+                          "flex items-start gap-2.5 px-4 py-2.5 cursor-pointer border-l-2 transition-colors",
+                          historyFocusedId === p.id
+                            ? "bg-muted/30 border-l-muted-foreground"
+                            : "border-l-transparent hover:bg-muted/20"
+                        )}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-mono font-semibold text-sm">{p.ticker}</span>
+                            {p.platform_score != null && (
+                              <span className="text-[10px] font-medium text-muted-foreground">
+                                {p.platform_score.toFixed(0)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className={cn(
+                              "text-[10px] font-medium px-1.5 py-0 rounded border",
+                              badge.cls
+                            )}>
+                              {badge.label}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {fmtDate(p.created_at)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   const checked = selectedIds.has(p.id);
                   return (
                     <div
@@ -489,9 +668,17 @@ export default function ProposalsPage() {
         </div>
       </div>
 
-      {/* Right: execution panel or order status */}
+      {/* Right: execution panel, order status, or history detail */}
       <div className="flex-1 overflow-hidden">
-        {phase === "setup" ? (
+        {sidebarView === "history" ? (
+          historyProposal ? (
+            <HistoryDetailPane proposal={historyProposal} />
+          ) : (
+            <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+              Select a proposal from the left to view details
+            </div>
+          )
+        ) : phase === "setup" ? (
           focusedPortfolio && focusedProposals.length > 0 ? (
             <ExecutionPanel
               proposals={focusedProposals as ProposalWithPortfolio[]}
@@ -518,18 +705,103 @@ export default function ProposalsPage() {
             </div>
           )
         ) : submittedAt ? (
-          <OrderStatusPanel
-            liveOrders={liveOrders}
-            paperOrders={paperOrders}
-            submittedAt={submittedAt}
-            onRefresh={refreshOrders}
-            onCancelOrder={handleCancelOrder}
-            onCancelRest={handleCancelOrder}
-            onMarkPaperExecuted={handleMarkPaperExecuted}
-            lastRefreshedAt={lastRefreshedAt}
-          />
+          <div className="flex flex-col h-full">
+            {/* Submission confirmation banner */}
+            {submissionSummary && (
+              <div className={cn(
+                "px-5 py-3 border-b text-sm font-medium",
+                submissionSummary.isLive
+                  ? "bg-emerald-950/30 border-emerald-800/40 text-emerald-300"
+                  : "bg-blue-950/30 border-blue-800/40 text-blue-300"
+              )}>
+                {submissionSummary.isLive ? (
+                  <>
+                    ✓ {submissionSummary.count} order{submissionSummary.count !== 1 ? "s" : ""} submitted to {submissionSummary.broker}.
+                    {submissionSummary.orderIds.length > 0 && (
+                      <span className="ml-2 text-xs font-normal opacity-80">
+                        IDs: {submissionSummary.orderIds.join(", ")}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    📋 {submissionSummary.count} paper order{submissionSummary.count !== 1 ? "s" : ""} recorded. Execute manually and mark filled below.
+                  </>
+                )}
+              </div>
+            )}
+            <div className="flex-1 overflow-hidden">
+              <OrderStatusPanel
+                liveOrders={liveOrders}
+                paperOrders={paperOrders}
+                submittedAt={submittedAt}
+                onRefresh={refreshOrders}
+                onCancelOrder={handleCancelOrder}
+                onCancelRest={handleCancelOrder}
+                onMarkPaperExecuted={handleMarkPaperExecuted}
+                lastRefreshedAt={lastRefreshedAt}
+              />
+            </div>
+          </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// ── History Detail Pane ────────────────────────────────────────────────────────
+
+function HistoryDetailPane({ proposal }: { proposal: Proposal }) {
+  const badge = statusBadge(proposal.status);
+  return (
+    <div className="h-full overflow-y-auto p-6 space-y-4">
+      <div className="flex items-center gap-3">
+        <h2 className="text-xl font-mono font-bold">{proposal.ticker}</h2>
+        <span className={cn("text-xs font-medium px-2 py-1 rounded border", badge.cls)}>
+          {badge.label}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <HistCell label="Status" value={proposal.status} />
+        <HistCell label="Date" value={proposal.created_at ? new Date(proposal.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"} />
+        <HistCell label="Score" value={proposal.platform_score?.toFixed(0) ?? "—"} />
+        <HistCell label="Alignment" value={proposal.platform_alignment ?? "—"} />
+        <HistCell label="Income Grade" value={proposal.platform_income_grade ?? "—"} />
+        <HistCell label="Safety Grade" value={proposal.analyst_safety_grade ?? "—"} />
+        <HistCell label="Platform Yield" value={proposal.platform_yield_estimate != null ? `${(proposal.platform_yield_estimate * 100).toFixed(1)}%` : "—"} />
+        <HistCell label="Analyst Yield" value={proposal.analyst_yield_estimate != null ? `${(proposal.analyst_yield_estimate * 100).toFixed(1)}%` : "—"} />
+        <HistCell label="Analyst Rec" value={proposal.analyst_recommendation ?? "—"} />
+        <HistCell label="Entry Range" value={proposal.entry_price_low != null ? `$${proposal.entry_price_low.toFixed(2)}–$${(proposal.entry_price_high ?? proposal.entry_price_low).toFixed(2)}` : "—"} />
+        <HistCell label="Position Size" value={proposal.position_size_pct != null ? `${proposal.position_size_pct.toFixed(1)}%` : "—"} />
+        <HistCell label="Account" value={proposal.recommended_account ?? "—"} />
+      </div>
+      {proposal.analyst_thesis_summary && (
+        <div className="rounded-lg border border-border bg-muted/20 px-4 py-3">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Thesis</p>
+          <p className="text-sm text-muted-foreground leading-relaxed">{proposal.analyst_thesis_summary}</p>
+        </div>
+      )}
+      {proposal.sizing_rationale && (
+        <div className="rounded-lg border border-border bg-muted/20 px-4 py-3">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Sizing Rationale</p>
+          <p className="text-sm text-muted-foreground leading-relaxed">{proposal.sizing_rationale}</p>
+        </div>
+      )}
+      {proposal.divergence_notes && (
+        <div className="rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3">
+          <p className="text-[10px] text-amber-400 uppercase tracking-wide mb-1">Divergence Notes</p>
+          <p className="text-sm text-amber-300/80 leading-relaxed">{proposal.divergence_notes}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
+      <p className="text-sm font-semibold mt-0.5">{value}</p>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import { Save, Plus, Trash2, Check, X, Pencil, Sun, Moon, Cloud, Upload } from "lucide-react";
+import { Save, Plus, Trash2, Check, X, Pencil, Sun, Moon, Cloud, Upload, Wifi, WifiOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type SettingsTab = "global" | "portfolios" | "portfolio-config";
@@ -148,6 +148,42 @@ export default function SettingsPage() {
   const flash = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  // Broker connection test state (per portfolio)
+  const [testingConnection, setTestingConnection] = useState<string | null>(null); // portfolio id being tested
+  const [connectionResults, setConnectionResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+  // Credential save state (in edit form)
+  const [savingCredentials, setSavingCredentials] = useState(false);
+  const [credentialSaveResult, setCredentialSaveResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const testBrokerConnection = async (portfolioId: string, broker: string) => {
+    setTestingConnection(portfolioId);
+    try {
+      const resp = await fetch(`/broker/connection?broker=${encodeURIComponent(broker.toLowerCase())}`);
+      const data = await resp.json();
+      if (resp.ok && data.connected) {
+        setConnectionResults((prev) => ({
+          ...prev,
+          [portfolioId]: {
+            ok: true,
+            message: `Connected: $${(data.buying_power ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })} buying power`,
+          },
+        }));
+      } else {
+        setConnectionResults((prev) => ({
+          ...prev,
+          [portfolioId]: { ok: false, message: data.detail ?? "Connection failed" },
+        }));
+      }
+    } catch (err) {
+      setConnectionResults((prev) => ({
+        ...prev,
+        [portfolioId]: { ok: false, message: err instanceof Error ? err.message : "Network error" },
+      }));
+    } finally {
+      setTestingConnection(null);
+    }
   };
 
   // Portfolio edit state
@@ -449,6 +485,49 @@ export default function SettingsPage() {
                         <p className="text-[10px] text-muted-foreground">
                           Alpaca: provide both API Key ID and Secret Key from alpaca.markets → Paper Trading → API Keys
                         </p>
+                        {/* Save credentials to broker-service */}
+                        <div className="flex items-center gap-2 mt-1">
+                          <button
+                            type="button"
+                            disabled={savingCredentials || !editForm.broker_api_key || !editForm.broker_secret_key}
+                            onClick={async () => {
+                              setSavingCredentials(true);
+                              setCredentialSaveResult(null);
+                              try {
+                                const resp = await fetch("/broker/credentials", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    broker: editForm.broker || "alpaca",
+                                    api_key: editForm.broker_api_key,
+                                    api_secret: editForm.broker_secret_key,
+                                  }),
+                                });
+                                const data = await resp.json();
+                                if (resp.ok && data.ok) {
+                                  setCredentialSaveResult({ ok: true, message: `Connected: $${(data.buying_power ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })} buying power` });
+                                } else {
+                                  setCredentialSaveResult({ ok: false, message: data.detail ?? "Failed" });
+                                }
+                              } catch (err) {
+                                setCredentialSaveResult({ ok: false, message: err instanceof Error ? err.message : "Network error" });
+                              } finally {
+                                setSavingCredentials(false);
+                              }
+                            }}
+                            className="flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-secondary disabled:opacity-50 transition-colors"
+                          >
+                            {savingCredentials
+                              ? <><Loader2 className="h-3 w-3 animate-spin" /> Validating…</>
+                              : <><Wifi className="h-3 w-3" /> Save &amp; Test Credentials</>}
+                          </button>
+                          {credentialSaveResult && (
+                            <span className={cn("text-xs flex items-center gap-1", credentialSaveResult.ok ? "text-emerald-400" : "text-red-400")}>
+                              {credentialSaveResult.ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                              {credentialSaveResult.message}
+                            </span>
+                          )}
+                        </div>
                       </>
                     )}
                   </div>
@@ -476,8 +555,33 @@ export default function SettingsPage() {
                         </span>
                       )}
                     </p>
+                    {/* Connection test result */}
+                    {connectionResults[p.id] && (
+                      <p className={cn(
+                        "text-xs mt-1 flex items-center gap-1",
+                        connectionResults[p.id].ok ? "text-emerald-400" : "text-red-400"
+                      )}>
+                        {connectionResults[p.id].ok
+                          ? <Wifi className="h-3 w-3" />
+                          : <WifiOff className="h-3 w-3" />}
+                        {connectionResults[p.id].message}
+                      </p>
+                    )}
                   </div>
                   <div className="flex gap-2">
+                    {p.broker && (
+                      <button
+                        onClick={() => testBrokerConnection(p.id, p.broker!)}
+                        disabled={testingConnection === p.id}
+                        className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-secondary transition-colors disabled:opacity-50"
+                        title="Test broker connection"
+                      >
+                        {testingConnection === p.id
+                          ? <Loader2 className="h-3 w-3 animate-spin inline" />
+                          : <Wifi className="h-3 w-3 inline" />}
+                        {" "}Test
+                      </button>
+                    )}
                     <button
                       onClick={() => startEdit(p)}
                       className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-secondary transition-colors"

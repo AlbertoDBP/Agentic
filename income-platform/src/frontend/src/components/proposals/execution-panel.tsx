@@ -35,18 +35,23 @@ export function ExecutionPanel({
     } catch { /* ignore */ }
     // Default params from proposal data
     return Object.fromEntries(
-      proposals.map((p) => [
-        p.id,
-        {
-          order_type: "limit" as OrderType,
-          limit_price: p.entry_price_low ?? null,
-          shares: p.position_size_pct != null && portfolio.cash_balance != null
-            ? Math.floor((portfolio.cash_balance * (p.position_size_pct / 100)) / (p.entry_price_low || 1))
-            : null,
-          dollar_amount: null,
-          time_in_force: "gtc" as TimeInForce,
-        } satisfies OrderParams,
-      ])
+      proposals.map((p) => {
+        // Issue #2: fallback limit_price to current_price when entry_price_low is null
+        const effectivePrice = p.entry_price_low ?? p.current_price ?? null;
+        const shares = p.position_size_pct != null && portfolio.cash_balance != null && effectivePrice
+          ? Math.floor((portfolio.cash_balance * (p.position_size_pct / 100)) / effectivePrice)
+          : null;
+        return [
+          p.id,
+          {
+            order_type: "limit" as OrderType,
+            limit_price: effectivePrice,
+            shares,
+            dollar_amount: null,
+            time_in_force: "gtc" as TimeInForce,
+          } satisfies OrderParams,
+        ];
+      })
     );
   });
 
@@ -59,12 +64,15 @@ export function ExecutionPanel({
   const updateParam = <K extends keyof OrderParams>(id: number, key: K, value: OrderParams[K]) => {
     setParams((prev) => {
       const updated = { ...prev, [id]: { ...prev[id], [key]: value } };
+      // Issue #3: for market orders, use current_price as price for shares<=>dollar calculation
+      const proposal = proposals.find((p) => p.id === id);
+      const effectivePrice = updated[id].limit_price ?? proposal?.current_price ?? null;
       // Link shares <=> dollar_amount
-      if (key === "shares" && updated[id].limit_price) {
-        updated[id].dollar_amount = (value as number) * updated[id].limit_price!;
+      if (key === "shares" && effectivePrice) {
+        updated[id].dollar_amount = (value as number) * effectivePrice;
       }
-      if (key === "dollar_amount" && updated[id].limit_price) {
-        updated[id].shares = Math.floor((value as number) / updated[id].limit_price!);
+      if (key === "dollar_amount" && effectivePrice) {
+        updated[id].shares = Math.floor((value as number) / effectivePrice);
       }
       if (key === "limit_price") {
         if (updated[id].shares) {
@@ -242,6 +250,17 @@ export function ExecutionPanel({
             {/* Execution form */}
             <div className="space-y-3 rounded-xl border border-border bg-card/30 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Order Parameters</p>
+              {/* Issue #2: warn when no price is available */}
+              {activeProposal.entry_price_low == null && activeProposal.current_price == null && (
+                <div className="rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-300">
+                  ⚠ No entry price available — set limit price manually before submitting.
+                </div>
+              )}
+              {activeProposal.entry_price_low == null && activeProposal.current_price != null && (
+                <div className="rounded-lg border border-blue-800/40 bg-blue-950/20 px-3 py-2 text-xs text-blue-300">
+                  Entry price range not set — using current market price (${activeProposal.current_price.toFixed(2)}) as limit price.
+                </div>
+              )}
 
               {/* Order type pills */}
               <div>
