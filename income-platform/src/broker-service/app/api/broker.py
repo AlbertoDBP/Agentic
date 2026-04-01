@@ -334,7 +334,7 @@ async def place_order(req: OrderPlaceRequest, db: Session = Depends(get_db)):
         "price": price,
         "total": round(req.qty * price, 2) if price else None,
         "tdate": date.today().isoformat(),
-        "source": req.broker,
+        "source": req.broker.lower(),
         "ext_ref": result.order_id,
     })
     db.commit()
