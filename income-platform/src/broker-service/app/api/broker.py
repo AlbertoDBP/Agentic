@@ -481,7 +481,7 @@ async def refresh_portfolio_data(portfolio_id: str, db: Session = Depends(get_db
                 for r in pos_rows
             ]
             ph_resp = await _post(
-                f"{settings.scoring_service_url}/portfolio/health",
+                f"{settings.scoring_service_url}/portfolio/portfolio/health",
                 payload={"holdings": holdings, "risk_profile": "moderate"},
                 timeout=60,
             )
