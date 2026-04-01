@@ -483,7 +483,10 @@ async def refresh_portfolio_data(portfolio_id: str, db: Session = Depends(get_db
         except Exception as exc:
             return {"ok": False, "status": 502, "error": str(exc)}
 
-    steps["market_data"] = await _post(f"{settings.scanner_url}/cache/refresh?force=true", timeout=180)
+    # Do NOT force=true — that re-fetches all tickers from FMP every click (~500 API calls).
+    # The daily scheduler owns the full force-refresh. On-demand refresh only fetches
+    # tickers whose cache entry is stale/missing (today's date not yet set).
+    steps["market_data"] = await _post(f"{settings.scanner_url}/cache/refresh", timeout=180)
     # Propagate fresh prices from market_data_cache → positions.current_price / price_updated_at
     try:
         price_rows = db.execute(text("""
