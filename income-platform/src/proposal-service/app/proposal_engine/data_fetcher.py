@@ -1,6 +1,8 @@
 """Async HTTP fetcher: calls Agents 02, 03, 04, 05 concurrently.
 
 All calls use HS256 JWT auth with sub='agent-12'.
+Score lookup uses DB-first strategy: reads platform_shared.income_scores before
+calling Agent 03 live, so proposals always reflect the latest scored data.
 """
 from __future__ import annotations
 
@@ -8,16 +10,64 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
 import jwt
+from sqlalchemy import text
 
 from app.config import settings
+from app.database import engine
 
 logger = logging.getLogger(__name__)
 
 _ALGORITHM = "HS256"
+# Use cached score if it was computed within this window
+_SCORE_CACHE_TTL_HOURS = 24
+
+
+def _fetch_score_from_db(ticker: str) -> Optional[dict]:
+    """Read the most recent income_score for ticker from platform_shared.
+
+    Returns a dict compatible with the Agent 03 /scores/evaluate response,
+    or None if no score exists or it is older than _SCORE_CACHE_TTL_HOURS.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=_SCORE_CACHE_TTL_HOURS)
+    query = text("""
+        SELECT
+            i.total_score,
+            i.grade,
+            i.recommendation,
+            i.nav_erosion_penalty,
+            i.factor_details,
+            i.quality_gate_status,
+            i.scored_at,
+            COALESCE(sec.asset_type, i.asset_class) AS asset_class
+        FROM platform_shared.income_scores i
+        LEFT JOIN platform_shared.securities sec ON sec.symbol = i.ticker
+        WHERE i.ticker = :ticker
+          AND i.scored_at >= :cutoff
+        ORDER BY i.scored_at DESC
+        LIMIT 1
+    """)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(query, {"ticker": ticker, "cutoff": cutoff}).fetchone()
+        if row is None:
+            return None
+        return {
+            "total_score":         row.total_score,
+            "grade":               row.grade,
+            "recommendation":      row.recommendation,
+            "nav_erosion_penalty": row.nav_erosion_penalty,
+            "factor_details":      row.factor_details,
+            "quality_gate_status": row.quality_gate_status,
+            "asset_class":         row.asset_class,
+        }
+    except Exception as exc:
+        logger.warning("DB score lookup failed for %s: %s", ticker, exc)
+        return None
 
 
 def _make_token() -> str:
@@ -53,10 +103,20 @@ async def fetch_agent02_signal(ticker: str) -> dict:
 
 
 async def fetch_agent03_score(ticker: str) -> Optional[dict]:
-    """POST {agent03_url}/scores/evaluate body: {"ticker": ticker}.
+    """Return a score dict for ticker using DB-first strategy.
 
+    1. Check platform_shared.income_scores for a score < 24 h old.
+       If found, return it immediately (avoids live re-evaluation on every proposal).
+    2. Fall back to POST {agent03_url}/scores/evaluate for stale / missing scores.
     Returns None on failure (non-fatal per spec).
     """
+    # DB-first: avoids redundant scoring calls and returns the canonical cached data
+    cached = await asyncio.to_thread(_fetch_score_from_db, ticker)
+    if cached is not None:
+        logger.debug("Score cache hit for %s (scored_at in last %dh)", ticker, _SCORE_CACHE_TTL_HOURS)
+        return cached
+
+    logger.info("No fresh score in DB for %s — calling Agent 03 live", ticker)
     url = f"{settings.agent03_url}/scores/evaluate"
     try:
         async with httpx.AsyncClient(timeout=settings.agent03_timeout) as client:
