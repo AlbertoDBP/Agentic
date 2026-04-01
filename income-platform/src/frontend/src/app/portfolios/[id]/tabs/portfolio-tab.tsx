@@ -126,7 +126,7 @@ export function PortfolioTab({ portfolioId }: PortfolioTabProps) {
       const body: Record<string, unknown> = {
         symbol: addForm.symbol.toUpperCase().trim(),
         shares: parseFloat(addForm.shares),
-        cost_basis: parseFloat(addForm.avgCost),
+        cost_basis: parseFloat(addForm.shares) * parseFloat(addForm.avgCost),
       };
       if (addForm.acquiredDate) body.acquired_date = addForm.acquiredDate;
       const res = await fetch(`/api/portfolios/${portfolioId}/positions`, {
