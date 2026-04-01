@@ -8,6 +8,7 @@ Usage (mirrors AlphaVantageClient pattern):
 """
 import asyncio
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -87,6 +88,20 @@ class PolygonClient(BaseDataProvider):
     # BaseDataProvider implementation
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_symbol(symbol: str) -> str:
+        """Convert internal ticker format to Polygon ticker format.
+
+        Preferred stocks use BASE/PRX internally (e.g. CHMI/PRA, EPR/PRC)
+        but Polygon uses BASEpX (e.g. CHMIpA, EPRpC) — lowercase 'p' as
+        separator with the series letter only (no 'PR' prefix).
+        """
+        symbol = self._normalize_symbol(symbol)
+        m = re.match(r'^([A-Z0-9]+)/PR([A-Z])$', symbol)
+        if m:
+            return f"{m.group(1)}p{m.group(2)}"
+        return symbol
+
     async def get_current_price(self, symbol: str) -> dict:
         """Return the latest trade price for *symbol*.
 
@@ -99,7 +114,7 @@ class PolygonClient(BaseDataProvider):
         Returns:
             { symbol, price, volume, timestamp, source }
         """
-        symbol = symbol.upper()
+        symbol = self._normalize_symbol(symbol)
         cache_key = f"polygon:price:{symbol}"
 
         if self._cache:
@@ -168,7 +183,7 @@ class PolygonClient(BaseDataProvider):
         Returns:
             List of dicts sorted by date descending (most recent first).
         """
-        symbol = symbol.upper()
+        symbol = self._normalize_symbol(symbol)
         today = date.today()
         days_back = 140 if outputsize == "compact" else 730
         start = (today - timedelta(days=days_back)).isoformat()
@@ -228,7 +243,7 @@ class PolygonClient(BaseDataProvider):
         Note: Polygon v3 dividends does not provide a yield_pct field;
               that value is always returned as None.
         """
-        symbol = symbol.upper()
+        symbol = self._normalize_symbol(symbol)
         cache_key = f"polygon:dividends:{symbol}"
 
         if self._cache:
@@ -288,7 +303,7 @@ class PolygonClient(BaseDataProvider):
         Fields not available from Polygon (always None):
             credit_rating
         """
-        symbol = symbol.upper()
+        symbol = self._normalize_symbol(symbol)
         cache_key = f"polygon:fundamentals:{symbol}"
 
         if self._cache:
