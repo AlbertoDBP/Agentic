@@ -507,8 +507,9 @@ async def refresh_portfolio_data(portfolio_id: str):
             # 4a. Update current_price for all positions with market data (even quantity=0)
             result = conn.execute(text("""
                 UPDATE platform_shared.positions p
-                SET current_price = c.price,
-                    updated_at    = NOW()
+                SET current_price    = c.price,
+                    price_updated_at = NOW(),
+                    updated_at       = NOW()
                 FROM platform_shared.market_data_cache c
                 WHERE p.symbol        = c.symbol
                   AND p.portfolio_id  = :pid
@@ -1056,11 +1057,11 @@ def _upsert_position(conn, portfolio_id: str, item: PositionUpsertItem) -> str:
         INSERT INTO platform_shared.positions
             (id, portfolio_id, symbol, status, quantity, avg_cost_basis, total_cost_basis,
              current_price, current_value, annual_income, yield_on_cost,
-             dividend_frequency, sector, created_at, updated_at)
+             dividend_frequency, sector, price_updated_at, created_at, updated_at)
         VALUES
             (:id, :pid, :sym, 'ACTIVE', :qty, :avg_cb, :total_cb,
              :cur_price, :cur_val, :annual_income, :yoc,
-             :freq, :sector, NOW(), NOW())
+             :freq, :sector, NOW(), NOW(), NOW())
         ON CONFLICT (portfolio_id, symbol, status) DO UPDATE SET
             quantity         = EXCLUDED.quantity,
             avg_cost_basis   = EXCLUDED.avg_cost_basis,
@@ -1071,6 +1072,7 @@ def _upsert_position(conn, portfolio_id: str, item: PositionUpsertItem) -> str:
             yield_on_cost    = EXCLUDED.yield_on_cost,
             dividend_frequency = COALESCE(NULLIF(EXCLUDED.dividend_frequency, ''), platform_shared.positions.dividend_frequency),
             sector           = COALESCE(NULLIF(EXCLUDED.sector, ''), platform_shared.positions.sector),
+            price_updated_at = NOW(),
             updated_at       = NOW()
     """), {
         "id": pos_id,

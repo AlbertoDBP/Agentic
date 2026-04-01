@@ -419,6 +419,34 @@ async def refresh_portfolio_data(portfolio_id: str, db: Session = Depends(get_db
             return {"ok": False, "status": 502, "error": str(exc)}
 
     steps["market_data"] = await _post(f"{settings.scanner_url}/cache/refresh?force=true", timeout=180)
+    # Propagate fresh prices from market_data_cache → positions.current_price / price_updated_at
+    try:
+        price_rows = db.execute(text("""
+            UPDATE platform_shared.positions p
+            SET current_price    = c.price,
+                current_value    = ROUND((p.quantity * c.price)::numeric, 2),
+                price_updated_at = NOW(),
+                updated_at       = NOW()
+            FROM platform_shared.market_data_cache c
+            WHERE p.symbol       = c.symbol
+              AND p.portfolio_id = :pid
+              AND p.status       = 'ACTIVE'
+              AND c.price        IS NOT NULL
+              AND c.price        > 0
+        """), {"pid": portfolio_id})
+        db.execute(text("""
+            UPDATE platform_shared.portfolios
+            SET total_value = (
+                SELECT COALESCE(SUM(current_value), 0) + COALESCE(cash_balance, 0)
+                FROM platform_shared.positions
+                WHERE portfolio_id = :pid AND status = 'ACTIVE'
+            ), updated_at = NOW()
+            WHERE id = :pid
+        """), {"pid": portfolio_id})
+        db.commit()
+        steps["price_sync"] = {"ok": True, "prices_updated": price_rows.rowcount}
+    except Exception as exc:
+        steps["price_sync"] = {"ok": False, "error": str(exc)}
     steps["classification"] = await _post(
         f"{settings.classification_url}/classify/batch",
         payload={"tickers": tickers},
