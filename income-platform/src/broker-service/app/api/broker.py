@@ -453,6 +453,75 @@ async def refresh_portfolio_data(portfolio_id: str, db: Session = Depends(get_db
     ) if tickers else {"ok": True, "data": {"skipped": "no tickers"}}
     steps["scoring"] = await _post(f"{settings.scoring_service_url}/scores/refresh-portfolio")
 
+    # Portfolio health score: build holdings payload and call /portfolio/health, persist result
+    try:
+        pos_rows = db.execute(text("""
+            SELECT p.symbol, p.current_value, p.total_cost_basis, p.annual_income,
+                   p.annual_fee_drag, p.estimated_tax_drag,
+                   sc.asset_class
+            FROM platform_shared.positions p
+            LEFT JOIN platform_shared.asset_classifications sc
+                ON sc.ticker = p.symbol AND sc.is_override IS NOT TRUE
+            WHERE p.portfolio_id = :pid AND p.status = 'ACTIVE'
+              AND p.current_value IS NOT NULL AND p.current_value > 0
+        """), {"pid": portfolio_id}).fetchall()
+
+        if pos_rows:
+            holdings = [
+                {
+                    "ticker": r[0],
+                    "asset_class": r[6],
+                    "position_value": float(r[1] or 0),
+                    "original_cost": float(r[2] or 0),
+                    "current_value": float(r[1] or 0),
+                    "income_received": float(r[3] or 0),
+                    "annual_fee_drag": float(r[4] or 0),
+                    "annual_tax_drag": float(r[5]) if r[5] is not None else None,
+                }
+                for r in pos_rows
+            ]
+            ph_resp = await _post(
+                f"{settings.scoring_service_url}/portfolio/health",
+                payload={"holdings": holdings, "risk_profile": "moderate"},
+                timeout=60,
+            )
+            steps["portfolio_health"] = ph_resp
+            if ph_resp.get("ok") and isinstance(ph_resp.get("data"), dict):
+                ph = ph_resp["data"]
+                agg_hhs = ph.get("aggregate_hhs")
+                if agg_hhs is not None:
+                    # Persist to portfolio_health_scores and update portfolios.health_score
+                    score = float(agg_hhs)
+                    grade = ("A" if score >= 80 else "B" if score >= 70 else "C" if score >= 60
+                             else "D" if score >= 50 else "F")
+                    flags = (ph.get("unsafe_tickers") or []) + (ph.get("concentration_flags") or [])
+                    db.execute(text("""
+                        INSERT INTO platform_shared.portfolio_health_scores
+                            (id, portfolio_id, computed_at, score, grade,
+                             flags, position_count, total_value, actual_yield_pct, created_at)
+                        VALUES
+                            (gen_random_uuid(), :pid, NOW(), :score, :grade,
+                             :flags, :pos_count, :total_value, :yield_pct, NOW())
+                    """), {
+                        "pid": portfolio_id,
+                        "score": score,
+                        "grade": grade,
+                        "flags": flags,
+                        "pos_count": (ph.get("scored_holding_count", 0) +
+                                      ph.get("excluded_holding_count", 0)),
+                        "total_value": sum(float(r[1] or 0) for r in pos_rows),
+                        "yield_pct": ph.get("portfolio_naa_yield_pct"),
+                    })
+                    db.execute(text("""
+                        UPDATE platform_shared.portfolios
+                        SET health_score              = :score,
+                            health_score_computed_at  = NOW(),
+                            updated_at                = NOW()
+                        WHERE id = :pid
+                    """), {"pid": portfolio_id, "score": score})
+    except Exception as exc:
+        steps["portfolio_health"] = {"ok": False, "error": str(exc)}
+
     if any(v["ok"] for v in steps.values()):
         db.execute(text("UPDATE platform_shared.portfolios SET last_refreshed_at = NOW(), updated_at = NOW() WHERE id = :pid"), {"pid": portfolio_id})
         db.commit()
