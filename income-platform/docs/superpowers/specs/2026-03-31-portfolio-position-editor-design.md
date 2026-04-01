@@ -99,8 +99,10 @@ Columns: Ticker · Shares · Avg Cost · Total Cost (read-only, computed) · Dat
 - On success: row removed from local state, background refresh triggered.
 
 ### Score refresh after mutation
+
 After any successful add, edit, or delete:
-1. `POST /api/portfolios/{id}/refresh` fires (fire-and-forget, errors swallowed).
+
+1. `POST ${API_BASE_URL}/broker/portfolios/{id}/refresh` fires (fire-and-forget, errors swallowed). This is the same call already used by the manual refresh button on the portfolio page (`page.tsx:118`) — no new proxy route needed.
 2. A toast appears: "Saving… scores will update shortly."
 3. After 4 seconds the positions list re-fetches to pick up updated scores.
 
