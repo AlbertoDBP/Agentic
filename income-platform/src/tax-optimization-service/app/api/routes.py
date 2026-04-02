@@ -18,6 +18,8 @@ from app.models import (
     HarvestingRequest,
     HoldingInput,
     OptimizationRequest,
+    PlacementRequest,
+    PlacementResponse,
     PortfolioOptimizationRequest,
     TaxCalculationRequest,
     TaxProfileRequest,
@@ -247,3 +249,55 @@ async def list_asset_class_profiles():
         }
         for ac, profile in _PROFILE_MAP.items()
     }
+
+
+@router.post("/tax/placement", response_model=PlacementResponse)
+async def get_tax_placement(request: PlacementRequest):
+    """
+    Return the recommended account type for a single ticker.
+    Called by the proposal service (Agent 12) when generating proposals.
+    Falls back to TAXABLE if asset_class is unknown.
+    """
+    from app.tax.optimizer import (
+        _NEVER_SHELTER, _SHELTER_PRIORITY, _TAXABLE_FRIENDLY, _best_shelter_account,
+        AssetClass,
+    )
+
+    asset_class_str = request.asset_class.value if request.asset_class else "UNKNOWN"
+    try:
+        ac = AssetClass(asset_class_str)
+    except ValueError:
+        ac = AssetClass.UNKNOWN
+
+    if ac in _NEVER_SHELTER:
+        recommended = "TAXABLE"
+        reason = (
+            f"{asset_class_str} investments generate Unrelated Business Taxable Income "
+            "(UBTI) inside an IRA, which can trigger unexpected taxes. Keep in taxable account."
+        )
+    elif ac in _SHELTER_PRIORITY:
+        # Roth preferred for highest-tax treatments
+        if ac in {AssetClass.COVERED_CALL_ETF, AssetClass.BDC, AssetClass.CLOSED_END_FUND}:
+            recommended = "ROTH_IRA"
+        else:
+            recommended = "TRAD_IRA"
+        reason = (
+            f"{asset_class_str} distributions are primarily ordinary income, fully taxed "
+            "at your marginal rate in taxable accounts. Sheltering in a tax-advantaged "
+            "account eliminates this drag."
+        )
+    elif ac in _TAXABLE_FRIENDLY:
+        recommended = "TAXABLE"
+        reason = (
+            f"{asset_class_str} typically pays qualified dividends taxed at preferential "
+            "capital gains rates (0–20%). No benefit to sheltering; keep in taxable account."
+        )
+    else:
+        recommended = "TAXABLE"
+        reason = "No specific tax optimization rule for this asset class. Default: taxable account."
+
+    return PlacementResponse(
+        recommended_account=recommended,
+        reason=reason,
+        asset_class=asset_class_str,
+    )

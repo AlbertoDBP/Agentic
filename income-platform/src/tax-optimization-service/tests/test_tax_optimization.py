@@ -527,3 +527,38 @@ class TestAPIRoutes:
         }
         resp = await client.post("/tax/harvest", json=payload)
         assert resp.status_code == 422
+
+
+class TestTaxPlacement:
+    @pytest.mark.asyncio
+    async def test_placement_covered_call_etf_recommends_roth(self, client):
+        """COVERED_CALL_ETF with high income should recommend ROTH_IRA."""
+        resp = await client.post("/tax/placement", json={
+            "ticker": "JEPI",
+            "asset_class": "COVERED_CALL_ETF",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["recommended_account"] in ("ROTH_IRA", "TRAD_IRA")
+        assert "reason" in data
+        assert "asset_class" in data
+
+    @pytest.mark.asyncio
+    async def test_placement_mlp_always_taxable(self, client):
+        """MLP must never be sheltered (UBTI issue in IRAs)."""
+        resp = await client.post("/tax/placement", json={
+            "ticker": "EPD",
+            "asset_class": "MLP",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["recommended_account"] == "TAXABLE"
+
+    @pytest.mark.asyncio
+    async def test_placement_dividend_stock_taxable_friendly(self, client):
+        """DIVIDEND_STOCK with qualified dividends is fine in TAXABLE."""
+        resp = await client.post("/tax/placement", json={
+            "ticker": "JNJ",
+            "asset_class": "DIVIDEND_STOCK",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["recommended_account"] == "TAXABLE"

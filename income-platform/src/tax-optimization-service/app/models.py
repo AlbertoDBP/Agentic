@@ -120,6 +120,18 @@ class HoldingInput(BaseModel):
     annual_yield: float = Field(..., ge=0, le=5.0)   # decimal, e.g. 0.08
 
 
+class PlacementRequest(BaseModel):
+    ticker: str
+    asset_class: Optional[AssetClass] = None
+    portfolio_id: Optional[str] = None
+
+
+class PlacementResponse(BaseModel):
+    recommended_account: str
+    reason: str
+    asset_class: str
+
+
 class OptimizationRequest(BaseModel):
     holdings: List[HoldingInput]
     annual_income: float = Field(..., ge=0)
