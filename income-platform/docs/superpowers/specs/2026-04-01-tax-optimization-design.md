@@ -14,6 +14,8 @@ Expense Drag  = expense_ratio × Current Market Value   [funds only; 0 for stock
 Current Market Value = current_price × shares
 ```
 
+All NAA Yield values are stored and transmitted as **decimal fractions** (e.g. `0.071` = 7.1%). The existing `NAAYieldCalculator.compute()` returns `naa_yield_pct` as a **percentage** (e.g. `7.1`). Callers must divide by 100 before storing or transmitting: `nay = result.naa_yield_pct / 100`.
+
 - Uses **current market value** (not cost basis) — NAA is a current yield metric
 - `expense_ratio` applies to all funds: CEFs, ETFs, BDCs, REITs; zero for individual stocks
 - Tax rates derived from user's stored tax profile (`annual_income`, `filing_status`, `state_code`)
@@ -25,9 +27,9 @@ Current Market Value = current_price × shares
 
 | Component | Location | Status |
 |---|---|---|
-| `NAAYieldCalculator` | `income-scoring-service/app/scoring/naa_yield.py` | Built — needs real inputs |
-| `NAAYieldResult`, `TaxProfile` | same file | Built |
-| `portfolio_aggregator.py` | `broker-service/app/services/` | Uses gross-only shortcut with `pre_tax_flag=True` |
+| `NAAYieldCalculator` | `income-scoring-service/app/scoring/naa_yield.py` | Built — needs real inputs. Returns `naa_yield_pct` as %, divide by 100 for decimal. |
+| `NAAYieldResult`, `TaxProfile` | same file | Built. `TaxProfile` requires income character fractions (roc_pct, qualified_pct, ordinary_pct) + bracket rates — not user preferences directly (see Section 3). |
+| `portfolio_aggregator.py` | `broker-service/app/services/` | Uses gross-only shortcut with `naa_yield_pre_tax=True` |
 | Tax service endpoints | `tax-optimization-service` port 8005 | Built — needs `/tax/placement` + richer optimize response |
 | Portfolio header NAA Yield | `portfolio/[id]/page.tsx` | Rendered — currently pre-tax |
 | Portfolio card NAA Yield | `portfolio-card.tsx` | Rendered — currently pre-tax |
@@ -69,7 +71,7 @@ Upsert alongside existing profile columns. Null for tickers with no expense rati
 
 ### Positions endpoint
 
-`GET /api/portfolios/{id}/positions` (Next.js proxy → admin panel) already JOINs `market_data_cache`. Add `expense_ratio` to the SELECT and to the `Position` response shape.
+`GET /api/portfolios/{id}/positions` (Next.js proxy → admin panel) already JOINs `market_data_cache`. Add `expense_ratio` to the SELECT and to the `Position` response shape. Note: `expense_ratio` may already exist on the `Position` type in `lib/types.ts` — verify before adding.
 
 ---
 
@@ -86,17 +88,70 @@ Body: { "ticker": str, "portfolio_id": str | null }
 → { "recommended_account": "ROTH_IRA", "reason": str, "asset_class": str }
 ```
 
-Implementation:
-1. Look up `asset_type` from `platform_shared.securities` WHERE `symbol = ticker`
-2. Fall back to Agent 04 (asset classification) if not found
-3. Run `optimizer.get_placement_recommendation(asset_class)`
-4. Return `recommended_account` + `reason`
+**Implementation — inline placement logic** (do not call a non-existent helper):
+
+1. Look up `asset_type` from `platform_shared.securities` WHERE `symbol = ticker`; fall back to Agent 04 if not found
+2. Map `asset_class` to `recommended_account` using the same rules already in `optimizer.py`:
+   - `_NEVER_SHELTER` (MLP): always `TAXABLE`
+   - `_SHELTER_HIGH_YIELD` (COVERED_CALL_ETF, BDC, CLOSED_END_FUND with yield > 8%): `ROTH_IRA`
+   - `_SHELTER_PRIORITY` (BOND_ETF, REIT, ORDINARY_INCOME): `TRAD_IRA`
+   - `_TAXABLE_FRIENDLY` (DIVIDEND_STOCK, PREFERRED_STOCK): `TAXABLE`
+   - Default: `TAXABLE`
+3. Return `recommended_account` + a short `reason` string based on the matched rule
 
 ### 2b. Extend `/tax/optimize/portfolio` response
 
-Add `holdings_analysis` array and portfolio-level NAA fields to the existing response.
+**Step 1 — Update `OptimizationResponse` in `app/models.py`:**
 
-**New fields in response:**
+Add these fields to the existing Pydantic model (Pydantic will strip unknown fields otherwise, causing silent data loss):
+
+```python
+holdings_analysis: list[HoldingAnalysis] = []
+portfolio_gross_yield: Optional[float] = None
+portfolio_nay: Optional[float] = None          # decimal fraction, e.g. 0.071
+suboptimal_count: int = 0
+```
+
+Add a new `HoldingAnalysis` Pydantic model to `app/models.py`:
+
+```python
+class HoldingAnalysis(BaseModel):
+    symbol: str
+    asset_class: str
+    current_account: str
+    recommended_account: str
+    placement_mismatch: bool
+    treatment: str
+    gross_yield: float           # decimal, e.g. 0.423
+    effective_tax_rate: float    # decimal, e.g. 0.541
+    after_tax_yield: float       # decimal, e.g. 0.194
+    expense_ratio: Optional[float]
+    expense_drag_pct: float      # decimal
+    nay: float                   # decimal — NAAYieldCalculator.naa_yield_pct / 100
+    annual_income: float
+    tax_withheld: float
+    expense_drag_amount: float
+    net_annual_income: float
+    estimated_annual_tax_savings: float
+    reason: str
+```
+
+**Step 2 — Update `optimize_portfolio()` in `optimizer.py`:**
+
+`holdings_analysis` must include **every active holding** (not just suboptimally placed ones — this differs from `placement_recommendations` which filters). For each holding:
+
+1. Get tax profile from `calculator.get_effective_rate(asset_class, annual_income, filing_status, state_code)`
+2. Compute `gross_yield = annual_income / current_value`
+3. Compute `tax_withheld = annual_income × effective_tax_rate`
+4. Compute `expense_drag_amount = (expense_ratio or 0) × current_value`
+5. Call `NAAYieldCalculator().compute(annual_income, expense_drag_amount, tax_withheld, current_value)` → divide `naa_yield_pct` by 100 for `nay`
+6. `placement_mismatch = recommended_account != current_account AND estimated_savings > 1.0`
+
+`suboptimal_count = count(h for h in holdings_analysis if h.placement_mismatch)`.
+
+`portfolio_nay = sum(h.net_annual_income for h in holdings_analysis) / total_portfolio_value`.
+
+**Response JSON example** (all yield values as decimals):
 
 ```json
 {
@@ -132,8 +187,6 @@ Add `holdings_analysis` array and portfolio-level NAA fields to the existing res
 }
 ```
 
-**`suboptimal_count`** = count of holdings where `placement_mismatch = true`.
-
 ---
 
 ## Section 3 — Portfolio Aggregator: Wire Real Inputs
@@ -145,13 +198,49 @@ Current shortcut:
 naa_yield = round(total_income / total_value, 4) if total_value > 0 else None
 ```
 
-Replace with a call to `NAAYieldCalculator` fed by:
-- `gross_annual_dividends` = position `annual_income`
-- `annual_fee_drag` = `expense_ratio × current_value` (from `market_data_cache`)
-- `annual_tax_drag` = fetched from tax service per position (or estimated via `NAAYieldCalculator.estimate_tax_drag` using `TaxProfile` from `user_preferences`)
-- `total_invested` = `current_price × shares`
+**Strategy A (preferred) — use extended tax service response:**
 
-Remove `naa_yield_pre_tax: True` flag once tax data is wired. Flag stays `True` only when user has no tax profile set.
+After `/tax/optimize/portfolio` is extended (Section 2b), the portfolio aggregator can call that endpoint and read `portfolio_nay` directly. This is the cleanest path — the tax service already does all the per-holding computation.
+
+```python
+# Call tax service with user's tax profile
+tax_resp = await httpx_client.post(
+    f"{settings.tax_service_url}/tax/optimize/portfolio",
+    json={"portfolio_id": portfolio_id, "annual_income": annual_income,
+          "filing_status": filing_status, "state_code": state_code}
+)
+naa_yield = tax_resp.json().get("portfolio_nay")   # already a decimal fraction
+naa_yield_pre_tax = naa_yield is None
+```
+
+**Strategy B (fallback) — estimate without tax service:**
+
+If user has no tax profile or tax service is unavailable, fall back to `NAAYieldCalculator.estimate_tax_drag`:
+
+```python
+# TaxProfile requires income character fractions + bracket rates.
+# Get these from tax_service.profiler.get_profile(asset_class) which returns
+# {primary_treatment, qualified_dividend_eligible, ...} — use that to set:
+#   ordinary_pct = 1.0 if treatment == ORDINARY_INCOME else 0.0
+#   qualified_pct = 1.0 if qualified_dividend_eligible else 0.0
+#   roc_pct = 0.3 if treatment == REIT_DISTRIBUTION else 0.0
+# Bracket rates come from user_preferences annual_income + filing_status
+#   via calculator.get_bracket_rates(annual_income, filing_status, state_code)
+profile = TaxProfile(roc_pct=..., qualified_pct=..., ordinary_pct=...,
+                     qualified_rate=..., ordinary_rate=...)
+tax_drag = NAAYieldCalculator.estimate_tax_drag(annual_income, profile)
+result = NAAYieldCalculator().compute(
+    gross_annual_dividends=annual_income,
+    annual_fee_drag=expense_ratio * current_value if expense_ratio else 0.0,
+    annual_tax_drag=tax_drag,
+    total_invested=current_value,
+)
+naa_yield = result.naa_yield_pct / 100   # convert % → decimal fraction
+```
+
+**Strategy A is step 5 in implementation order; it depends on step 4 (extended optimize endpoint) being deployed first.**
+
+Remove `naa_yield_pre_tax: True` flag once Strategy A is wired. Flag stays `True` only when user has no tax profile.
 
 ---
 
@@ -162,15 +251,19 @@ Remove `naa_yield_pre_tax: True` flag once tax data is wired. Flag stays `True` 
 Powers the Tax tab. Called on tab mount.
 
 Flow:
-1. Read user tax profile from `user_preferences` (via DB or existing preferences endpoint)
+1. Read user tax profile from `user_preferences` via DB (or existing preferences endpoint)
 2. `POST tax-service/tax/optimize/portfolio` with `{ portfolio_id, annual_income, filing_status, state_code }`
-3. Return the full response (banner metrics + `holdings_analysis`)
+3. **Remap response for frontend:** the tax service returns `placement_recommendations`; the frontend expects `holdings`. The Next.js route merges data:
+   - Build a map: `symbol → PlacementRecommendation` from `placement_recommendations`
+   - Iterate `holdings_analysis` (which includes ALL holdings); attach `estimated_annual_tax_savings` and `reason` from the map where symbol matches
+   - Return as `holdings: TaxHolding[]`
+4. Attach `tax_profile` from step 1 to the response
 
 Response shape used by Tax tab:
 ```typescript
 interface PortfolioTaxAnalysis {
-  portfolio_gross_yield: number;
-  portfolio_nay: number;
+  portfolio_gross_yield: number;   // decimal
+  portfolio_nay: number;           // decimal
   current_annual_tax_burden: number;
   estimated_annual_savings: number;
   suboptimal_count: number;
@@ -185,13 +278,13 @@ Powers dashboard aggregate NAA. Called once on dashboard mount.
 
 Flow:
 1. Fetch all active portfolios for the current user
-2. For each portfolio, call `tax/optimize/portfolio` (or read from recent cache if < 24h)
-3. Aggregate: `sum(net_annual_income) / sum(current_value)` across all portfolios
+2. For each portfolio, call `/tax/optimize/portfolio` (parallel, `Promise.all`)
+3. Aggregate: `sum(net_annual_income across all holdings) / sum(current_value across all portfolios)`
 4. Return: `{ aggregate_nay, aggregate_gross_yield, total_tax_drag, total_expense_drag, portfolio_count }`
 
 ### `PUT /api/user/preferences`
 
-Ensure this endpoint persists `filing_status`, `state_code`, `annual_income` to `user_preferences`. Called when user edits tax profile in Tax tab settings. Existing endpoint — verify it handles these fields.
+Ensure this endpoint persists `filing_status`, `state_code`, `annual_income` to `user_preferences`. Called when user edits tax profile in Tax tab settings. Verify the existing endpoint handles these fields before adding new code.
 
 ---
 
@@ -297,7 +390,7 @@ Pass to tabs:
 
 **File:** `src/frontend/src/app/portfolios/[id]/tabs/portfolio-tab.tsx`
 
-In the position detail side panel, add a new section after the income section:
+In the position detail side panel, add a new "True Yield" section after the income section. The `SectionTitle` and `DetailRow` components are confirmed to exist (pattern from `health-tab.tsx`).
 
 ```tsx
 <SectionTitle label="True Yield" />
@@ -357,7 +450,7 @@ Calls `GET /api/tax/summary` on mount. Shows `—` with a note "Set tax profile 
 **`lib/types.ts` additions:**
 
 ```typescript
-// Add to Position
+// Verify expense_ratio is not already on Position before adding
 expense_ratio?: number | null;
 
 // New types
@@ -368,12 +461,12 @@ interface TaxHolding {
   recommended_account: string;
   placement_mismatch: boolean;
   treatment: string;
-  gross_yield: number;
-  effective_tax_rate: number;
-  after_tax_yield: number;
-  expense_ratio: number | null;
-  expense_drag_pct: number;
-  nay: number;
+  gross_yield: number;           // decimal fraction
+  effective_tax_rate: number;    // decimal fraction
+  after_tax_yield: number;       // decimal fraction
+  expense_ratio: number | null;  // decimal fraction
+  expense_drag_pct: number;      // decimal fraction
+  nay: number;                   // decimal fraction (NAAYieldCalculator.naa_yield_pct / 100)
   annual_income: number;
   tax_withheld: number;
   expense_drag_amount: number;
@@ -383,8 +476,8 @@ interface TaxHolding {
 }
 
 interface PortfolioTaxAnalysis {
-  portfolio_gross_yield: number;
-  portfolio_nay: number;
+  portfolio_gross_yield: number;  // decimal fraction
+  portfolio_nay: number;          // decimal fraction
   current_annual_tax_burden: number;
   estimated_annual_savings: number;
   suboptimal_count: number;
@@ -397,8 +490,8 @@ interface PortfolioTaxAnalysis {
 }
 
 interface TaxSummary {
-  aggregate_nay: number;
-  aggregate_gross_yield: number;
+  aggregate_nay: number;           // decimal fraction
+  aggregate_gross_yield: number;   // decimal fraction
   total_tax_drag: number;
   total_expense_drag: number;
   portfolio_count: number;
@@ -411,10 +504,10 @@ interface TaxSummary {
 
 1. **DB migration** — add `expense_ratio` to `market_data_cache`
 2. **market_cache.py** — store `expense_ratio` from FMP profile fetch
-3. **Tax service** — add `/tax/placement` endpoint
-4. **Tax service** — extend `/tax/optimize/portfolio` with `holdings_analysis`
-5. **portfolio_aggregator.py** — wire `NAAYieldCalculator` with real fee + tax inputs
-6. **Next.js routes** — `/api/portfolios/[id]/tax` and `/api/tax/summary`
+3. **Tax service** — add `/tax/placement` endpoint (inline placement logic, no missing helpers)
+4. **Tax service** — update `OptimizationResponse` + `HoldingAnalysis` in `models.py`; extend `optimize_portfolio()` to populate `holdings_analysis` for ALL holdings, `portfolio_nay`, `portfolio_gross_yield`, `suboptimal_count`
+5. **Next.js routes** — `/api/portfolios/[id]/tax` (with placement_recommendations → holdings remapping) and `/api/tax/summary`
+6. **portfolio_aggregator.py** — wire Strategy A: call extended `/tax/optimize/portfolio`, read `portfolio_nay` directly; Strategy B as fallback using `NAAYieldCalculator.estimate_tax_drag` with `TaxProfile` built from tax profiler + bracket rates (not raw user_preferences)
 7. **`lib/types.ts`** — add new types
 8. **`tax-tab.tsx`** — new component
 9. **`portfolio/[id]/page.tsx`** — add Tax tab + lifted state
