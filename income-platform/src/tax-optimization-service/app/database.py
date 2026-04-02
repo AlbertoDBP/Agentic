@@ -100,11 +100,13 @@ async def get_portfolio_holdings(portfolio_id: str) -> list:
                             THEN p.annual_income / p.current_value
                             ELSE 0
                         END                                                               AS annual_yield,
-                        COALESCE(a.account_type, 'TAXABLE')                               AS account_type
+                        COALESCE(a.account_type, 'TAXABLE')                               AS account_type,
+                        mdc.expense_ratio
                     FROM platform_shared.positions p
-                    LEFT JOIN platform_shared.securities      s  ON s.symbol = p.symbol
-                    LEFT JOIN platform_shared.portfolios      po ON po.id = p.portfolio_id
-                    LEFT JOIN platform_shared.accounts        a  ON a.id  = po.account_id
+                    LEFT JOIN platform_shared.securities           s   ON s.symbol  = p.symbol
+                    LEFT JOIN platform_shared.portfolios           po  ON po.id     = p.portfolio_id
+                    LEFT JOIN platform_shared.accounts             a   ON a.id      = po.account_id
+                    LEFT JOIN platform_shared.market_data_cache    mdc ON mdc.symbol = p.symbol
                     WHERE p.portfolio_id = :pid
                       AND p.status       = 'ACTIVE'
                       AND COALESCE(p.current_value, 0) > 0
@@ -113,7 +115,14 @@ async def get_portfolio_holdings(portfolio_id: str) -> list:
                 {"pid": portfolio_id},
             )
             rows = result.fetchall()
-            return [dict(r._mapping) for r in rows]
+            holdings = []
+            for r in rows:
+                row = dict(r._mapping)
+                row["expense_ratio"] = (
+                    float(row["expense_ratio"]) if row.get("expense_ratio") is not None else None
+                )
+                holdings.append(row)
+            return holdings
     except Exception as exc:
         logger.warning("get_portfolio_holdings error for %s: %s", portfolio_id, exc)
         return []

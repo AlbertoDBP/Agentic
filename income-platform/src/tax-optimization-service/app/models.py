@@ -118,6 +118,7 @@ class HoldingInput(BaseModel):
     account_type: AccountType = AccountType.TAXABLE
     current_value: float = Field(..., ge=0)
     annual_yield: float = Field(..., ge=0, le=5.0)   # decimal, e.g. 0.08
+    expense_ratio: Optional[float] = None            # annual expense ratio, e.g. 0.012
 
 
 class PlacementRequest(BaseModel):
@@ -155,6 +156,27 @@ class PlacementRecommendation(BaseModel):
     estimated_annual_tax_savings: float
 
 
+class HoldingAnalysis(BaseModel):
+    symbol: str
+    asset_class: str
+    current_account: str
+    recommended_account: str
+    placement_mismatch: bool
+    treatment: str
+    gross_yield: float
+    effective_tax_rate: float
+    after_tax_yield: float
+    expense_ratio: Optional[float] = None
+    expense_drag_pct: float
+    nay: float
+    annual_income: float
+    tax_withheld: float
+    expense_drag_amount: float
+    net_annual_income: float
+    estimated_annual_tax_savings: float
+    reason: str
+
+
 class OptimizationResponse(BaseModel):
     total_portfolio_value: float
     current_annual_tax_burden: float
@@ -163,6 +185,10 @@ class OptimizationResponse(BaseModel):
     placement_recommendations: List[PlacementRecommendation]
     summary: str
     notes: List[str] = []
+    holdings_analysis: List[HoldingAnalysis] = []
+    portfolio_gross_yield: Optional[float] = None
+    portfolio_nay: Optional[float] = None
+    suboptimal_count: int = 0
 
 
 # ─── Tax Harvester schemas ────────────────────────────────────────────────────

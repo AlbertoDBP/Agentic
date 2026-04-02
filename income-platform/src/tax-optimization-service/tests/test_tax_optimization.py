@@ -562,3 +562,56 @@ class TestTaxPlacement:
         })
         assert resp.status_code == 200
         assert resp.json()["recommended_account"] == "TAXABLE"
+
+
+class TestHoldingsAnalysis:
+    @pytest.mark.asyncio
+    async def test_portfolio_optimize_returns_holdings_analysis(self, client):
+        """POST /tax/optimize must return holdings_analysis for ALL holdings."""
+        resp = await client.post("/tax/optimize", json={
+            "holdings": [
+                {
+                    "symbol": "ECC",
+                    "asset_class": "CLOSED_END_FUND",
+                    "account_type": "TAXABLE",
+                    "current_value": 10000.0,
+                    "annual_yield": 0.42,
+                    "expense_ratio": 0.012,
+                },
+                {
+                    "symbol": "O",
+                    "asset_class": "REIT",
+                    "account_type": "ROTH_IRA",
+                    "current_value": 5000.0,
+                    "annual_yield": 0.054,
+                    "expense_ratio": None,
+                },
+            ],
+            "annual_income": 150000.0,
+            "filing_status": "SINGLE",
+            "state_code": "CA",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Both holdings must appear (not just suboptimal ones)
+        assert "holdings_analysis" in data
+        assert len(data["holdings_analysis"]) == 2
+
+        # portfolio-level NAA fields
+        assert "portfolio_nay" in data
+        assert "portfolio_gross_yield" in data
+        assert "suboptimal_count" in data
+        assert isinstance(data["portfolio_nay"], float)
+
+        # Per-holding fields
+        ecc = next(h for h in data["holdings_analysis"] if h["symbol"] == "ECC")
+        assert ecc["treatment"] is not None
+        assert ecc["effective_tax_rate"] > 0
+        assert ecc["after_tax_yield"] < ecc["gross_yield"]
+        assert ecc["nay"] <= ecc["after_tax_yield"]  # expense drag reduces further
+        assert ecc["placement_mismatch"] is True   # CLOSED_END_FUND in TAXABLE
+
+        # Optimally placed holding
+        o_holding = next(h for h in data["holdings_analysis"] if h["symbol"] == "O")
+        assert o_holding["placement_mismatch"] is False  # REIT in ROTH_IRA is fine

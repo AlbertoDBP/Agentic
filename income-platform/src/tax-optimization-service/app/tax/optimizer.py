@@ -17,6 +17,7 @@ from app.models import (
     AccountType,
     AssetClass,
     FilingStatus,
+    HoldingAnalysis,
     HoldingInput,
     OptimizationRequest,
     OptimizationResponse,
@@ -24,7 +25,13 @@ from app.models import (
     TaxCalculationRequest,
     TaxProfileRequest,
 )
-from app.tax.calculator import calculate_tax_burden
+from app.tax.calculator import (
+    calculate_tax_burden,
+    _niit_applicable,
+    _ordinary_rate,
+    _qualified_rate,
+    _state_rate,
+)
 from app.tax.profiler import build_tax_profile, _PROFILE_MAP
 from app.models import TaxTreatment
 
@@ -149,6 +156,147 @@ async def optimize_portfolio(request: OptimizationRequest) -> OptimizationRespon
 
     annual_savings = current_tax_burden - optimized_tax_burden
 
+    # ── Build holdings_analysis for ALL holdings ──────────────────────────────
+    # Index recommendations by symbol for fast lookup
+    rec_map: dict[str, PlacementRecommendation] = {
+        r.symbol: r for r in recommendations
+    }
+
+    holdings_analysis: list[HoldingAnalysis] = []
+    total_gross_income = 0.0
+    total_net_income = 0.0
+
+    for holding in request.holdings:
+        # Resolve asset class (re-use profile already built; re-call is cheap)
+        profile = await build_tax_profile(
+            TaxProfileRequest(
+                symbol=holding.symbol,
+                asset_class=holding.asset_class,
+                annual_income=request.annual_income,
+                filing_status=request.filing_status,
+                state_code=request.state_code,
+                account_type=holding.account_type,
+            )
+        )
+        ac = profile.asset_class
+        treatment = profile.primary_tax_treatment
+
+        gross_income = holding.current_value * holding.annual_yield
+        gross_yield = holding.annual_yield
+
+        # Determine if tax-sheltered
+        is_sheltered = holding.account_type in (
+            AccountType.TRAD_IRA, AccountType.ROTH_IRA,
+            AccountType.HSA, AccountType.FOUR01K,
+        )
+
+        if is_sheltered:
+            effective_tax_rate = 0.0
+            tax_withheld = 0.0
+        else:
+            # Compute effective tax rate using the same logic as calculator.py
+            income = request.annual_income
+            filing = request.filing_status
+            state = _state_rate(request.state_code)
+
+            use_qualified = treatment in (
+                TaxTreatment.QUALIFIED_DIVIDEND,
+                TaxTreatment.CAPITAL_GAIN_LONG,
+                TaxTreatment.SECTION_1256_60_40,
+            )
+
+            if treatment == TaxTreatment.TAX_EXEMPT:
+                fed_rate = 0.0
+            elif treatment == TaxTreatment.RETURN_OF_CAPITAL:
+                fed_rate = 0.0
+            elif treatment == TaxTreatment.SECTION_1256_60_40:
+                ltcg_rate = _qualified_rate(income, filing)
+                st_rate = _ordinary_rate(income, filing)
+                fed_rate = 0.60 * ltcg_rate + 0.40 * st_rate
+            elif treatment in (TaxTreatment.MLP_DISTRIBUTION, TaxTreatment.REIT_DISTRIBUTION):
+                fed_rate = _ordinary_rate(income, filing) * 0.30
+            elif use_qualified:
+                fed_rate = _qualified_rate(income, filing)
+            else:
+                fed_rate = _ordinary_rate(income, filing)
+
+            niit_rate = 0.038 if (
+                treatment not in (
+                    TaxTreatment.TAX_EXEMPT,
+                    TaxTreatment.RETURN_OF_CAPITAL,
+                    TaxTreatment.MLP_DISTRIBUTION,
+                )
+                and _niit_applicable(income, filing)
+            ) else 0.0
+
+            effective_tax_rate = fed_rate + state + niit_rate
+            tax_withheld = gross_income * effective_tax_rate
+
+        after_tax_income = gross_income - tax_withheld
+        after_tax_yield = after_tax_income / holding.current_value if holding.current_value > 0 else 0.0
+
+        # Expense drag
+        expense_ratio = holding.expense_ratio or 0.0
+        expense_drag_amount = holding.current_value * expense_ratio
+        expense_drag_pct = expense_ratio
+
+        net_annual_income = after_tax_income - expense_drag_amount
+        nay = net_annual_income / holding.current_value if holding.current_value > 0 else 0.0
+
+        # Placement mismatch: holding is in wrong shelter/taxable category.
+        # Fine-grained ROTH vs TRAD swaps within already-sheltered holdings
+        # are NOT considered a mismatch — the holding is already optimally placed
+        # from a tax-efficiency standpoint.
+        rec = rec_map.get(holding.symbol)
+        _sheltered_types = (
+            AccountType.TRAD_IRA, AccountType.ROTH_IRA,
+            AccountType.HSA, AccountType.FOUR01K,
+        )
+        current_is_sheltered = holding.account_type in _sheltered_types
+        recommended_account_type = rec.recommended_account if rec else holding.account_type
+        recommended_is_sheltered = recommended_account_type in _sheltered_types
+        placement_mismatch = (
+            rec is not None
+            and current_is_sheltered != recommended_is_sheltered
+        )
+        recommended_account = recommended_account_type.value
+        estimated_savings = rec.estimated_annual_tax_savings if rec else 0.0
+        reason = rec.reason if rec else "Holding is optimally placed."
+
+        total_gross_income += gross_income
+        total_net_income += net_annual_income
+
+        holdings_analysis.append(
+            HoldingAnalysis(
+                symbol=holding.symbol,
+                asset_class=ac.value,
+                current_account=holding.account_type.value,
+                recommended_account=recommended_account,
+                placement_mismatch=placement_mismatch,
+                treatment=treatment.value,
+                gross_yield=round(gross_yield, 6),
+                effective_tax_rate=round(effective_tax_rate, 6),
+                after_tax_yield=round(after_tax_yield, 6),
+                expense_ratio=holding.expense_ratio,
+                expense_drag_pct=round(expense_drag_pct, 6),
+                nay=round(nay, 6),
+                annual_income=round(gross_income, 4),
+                tax_withheld=round(tax_withheld, 4),
+                expense_drag_amount=round(expense_drag_amount, 4),
+                net_annual_income=round(net_annual_income, 4),
+                estimated_annual_tax_savings=round(estimated_savings, 2),
+                reason=reason,
+            )
+        )
+
+    # Portfolio-level metrics
+    portfolio_gross_yield = (
+        total_gross_income / total_value if total_value > 0 else 0.0
+    )
+    portfolio_nay = (
+        total_net_income / total_value if total_value > 0 else 0.0
+    )
+
     return OptimizationResponse(
         total_portfolio_value=round(total_value, 2),
         current_annual_tax_burden=round(current_tax_burden, 2),
@@ -164,4 +312,8 @@ async def optimize_portfolio(request: OptimizationRequest) -> OptimizationRespon
             "Recommendations are estimates based on marginal tax rates; consult a CPA.",
             "ROTH IRA capacity is limited by annual contribution limits.",
         ],
+        holdings_analysis=holdings_analysis,
+        portfolio_gross_yield=round(portfolio_gross_yield, 6),
+        portfolio_nay=round(portfolio_nay, 6),
+        suboptimal_count=len(recommendations),
     )
