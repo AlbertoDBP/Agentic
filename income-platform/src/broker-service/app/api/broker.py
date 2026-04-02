@@ -614,7 +614,7 @@ async def list_portfolios(db: Session = Depends(get_db)):
         positions = _get_positions_for_portfolio(db, str(row["id"]))
         # Read scores directly from DB (bypasses HTTP + staleness issues)
         scores = _get_scores_from_db(db, str(row["id"]))
-        agg = aggregate_portfolio(positions, scores)
+        agg = await aggregate_portfolio(str(row["id"]), positions, scores)
         results.append({
             "id": str(row["id"]),
             "name": row["name"],
@@ -643,7 +643,7 @@ async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
 
     positions = _get_positions_for_portfolio(db, portfolio_id)
     scores = _get_scores_from_db(db, portfolio_id)
-    agg = aggregate_portfolio(positions, scores)
+    agg = await aggregate_portfolio(portfolio_id, positions, scores)
 
     return {
         "id": str(row["id"]),

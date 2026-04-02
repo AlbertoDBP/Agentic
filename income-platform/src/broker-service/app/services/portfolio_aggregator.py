@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from datetime import datetime, timezone
 from typing import Optional
 import httpx
@@ -46,7 +47,42 @@ def compute_hhi(weights: list[float]) -> float:
     return round(sum(w ** 2 for w in weights), 4)
 
 
-def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
+async def _fetch_tax_nay(
+    portfolio_id: str,
+    tax_prefs: dict | None,
+) -> float | None:
+    """Call tax service /tax/optimize/portfolio and return portfolio_nay.
+
+    Returns None if tax service is unavailable or user has no preferences.
+    All yield values from the tax service are decimal fractions (e.g. 0.071).
+    """
+    if not tax_prefs:
+        return None
+    tax_url = os.environ.get("TAX_OPTIMIZATION_URL", "http://tax-optimization-service:8005")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{tax_url}/tax/optimize/portfolio",
+                json={
+                    "portfolio_id": portfolio_id,
+                    "annual_income": tax_prefs.get("annual_income", 100000),
+                    "filing_status": tax_prefs.get("filing_status", "SINGLE"),
+                    "state_code": tax_prefs.get("state_code"),
+                },
+            )
+            if resp.status_code == 200:
+                return resp.json().get("portfolio_nay")
+    except Exception as exc:
+        logger.warning("Tax service NAA fetch failed for %s: %s", portfolio_id, exc)
+    return None
+
+
+async def aggregate_portfolio(
+    portfolio_id: str,
+    positions: list[dict],
+    scores: dict[str, dict],
+    tax_prefs: dict | None = None,
+) -> dict:
     """Compute portfolio-level aggregates from positions + score map.
 
     positions: list of dicts with keys: symbol, current_value, annual_income,
@@ -104,8 +140,15 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
     if total_cost > 0:
         total_return = round(((total_value - total_cost + total_dividends) / total_cost) * 100, 2)
 
-    # NAA Yield (use gross yield as proxy; full NAA requires tax service)
-    naa_yield = round(total_income / total_value, 4) if total_value > 0 else None
+    # NAA Yield — Strategy A: read from tax service (real, post-tax + post-fee)
+    # Strategy B fallback: gross yield when tax service unavailable
+    _tax_nay = await _fetch_tax_nay(portfolio_id, tax_prefs)
+    if _tax_nay is not None:
+        naa_yield = round(_tax_nay, 4)
+        naa_yield_pre_tax = False
+    else:
+        naa_yield = round(total_income / total_value, 4) if total_value > 0 else None
+        naa_yield_pre_tax = True
 
     # Aggregate Yield on Cost = annual income / total cost basis
     agg_yoc = round(total_income / total_cost, 4) if total_cost > 0 else None
@@ -144,7 +187,7 @@ def aggregate_portfolio(positions: list[dict], scores: dict[str, dict]) -> dict:
     return {
         "agg_hhs": agg_hhs,
         "naa_yield": naa_yield,
-        "naa_yield_pre_tax": True,   # flag: using gross yield until tax service integrated
+        "naa_yield_pre_tax": naa_yield_pre_tax,
         "agg_yoc": agg_yoc,
         "total_value": round(total_value, 2),
         "annual_income": round(total_income, 2),
