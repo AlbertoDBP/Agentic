@@ -187,7 +187,9 @@ async def _fmp_profile(symbol: str, client: httpx.AsyncClient) -> dict:
         data = resp.json()
         if not isinstance(data, list) or not data:
             return {}
-        return data[0]
+        result = dict(data[0])
+        result["expense_ratio"] = data[0].get("expenseRatio")   # float or None
+        return result
     except Exception as exc:
         logger.debug("FMP profile %s failed: %s", symbol, exc)
         return {}
@@ -788,6 +790,7 @@ async def fetch_and_upsert(
                         interest_coverage_ratio, net_debt_ebitda,
                         free_cash_flow_yield, return_on_equity,
                         credit_rating, debt_to_equity,
+                        expense_ratio,
                         fmp_sector, fmp_industry,
                         is_tracked, track_reason,
                         snapshot_date, fetched_at
@@ -806,6 +809,7 @@ async def fetch_and_upsert(
                         :interest_coverage_ratio, :net_debt_ebitda,
                         :free_cash_flow_yield, :return_on_equity,
                         :credit_rating, :debt_to_equity,
+                        :expense_ratio,
                         :fmp_sector, :fmp_industry,
                         TRUE, :track_reason,
                         :snapshot_date, :fetched_at
@@ -845,6 +849,7 @@ async def fetch_and_upsert(
                         yield_5yr_avg            = COALESCE(EXCLUDED.yield_5yr_avg,     platform_shared.market_data_cache.yield_5yr_avg),
                         credit_rating            = COALESCE(EXCLUDED.credit_rating,     platform_shared.market_data_cache.credit_rating),
                         debt_to_equity           = COALESCE(EXCLUDED.debt_to_equity,    platform_shared.market_data_cache.debt_to_equity),
+                        expense_ratio            = COALESCE(EXCLUDED.expense_ratio,     platform_shared.market_data_cache.expense_ratio),
                         fmp_sector               = COALESCE(EXCLUDED.fmp_sector,        platform_shared.market_data_cache.fmp_sector),
                         fmp_industry             = COALESCE(EXCLUDED.fmp_industry,      platform_shared.market_data_cache.fmp_industry),
                         is_tracked               = TRUE,
@@ -891,6 +896,7 @@ async def fetch_and_upsert(
                     "return_on_equity": s.get("return_on_equity"),
                     "credit_rating": s.get("credit_rating"),
                     "debt_to_equity": s.get("debt_to_equity"),
+                    "expense_ratio": p.get("expense_ratio"),
                     "fmp_sector":   "Fixed Income" if _is_cusip(sym) else p.get("sector")   or None,
                     "fmp_industry": "Corporate Bond" if _is_cusip(sym) else p.get("industry") or None,
                     "track_reason": track_reason,
