@@ -526,6 +526,7 @@ services:
       args:
         - ADMIN_PANEL_URL=http://admin-panel:8100
         - BROKER_URL=http://broker-service:8013
+        - TAX_SERVICE_URL=http://tax-optimization-service:8005
     container_name: frontend
     environment:
       - JWT_SECRET=${JWT_SECRET}
@@ -533,6 +534,7 @@ services:
       - HOSTNAME=0.0.0.0
       - ADMIN_PANEL_URL=http://admin-panel:8100
       - BROKER_URL=http://broker-service:8013
+      - TAX_SERVICE_URL=http://tax-optimization-service:8005
       - SERVICE_TOKEN=${SERVICE_TOKEN}
     ports:
       - "8200:8200"
