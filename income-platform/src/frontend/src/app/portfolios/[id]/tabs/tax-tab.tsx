@@ -8,6 +8,8 @@ import { ColHeader } from "@/components/help-tooltip";
 import { cn, scoreTextColor } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { PortfolioTaxAnalysis, TaxHolding } from "@/lib/types";
+import { ProposalModal } from "@/components/scanner/proposal-modal";
+import { usePortfolios } from "@/lib/hooks/use-portfolios";
 
 // ── Helper components ─────────────────────────────────────────────────────────
 
@@ -66,6 +68,11 @@ export function TaxTab({ portfolioId, refreshKey = 0, onTaxDataLoaded }: TaxTabP
   const [showSettings, setShowSettings] = useState(false);
   const [settingsForm, setSettingsForm] = useState({ annual_income: "", filing_status: "SINGLE", state_code: "" });
   const [savingSettings, setSavingSettings] = useState(false);
+  const [proposalOpen, setProposalOpen] = useState(false);
+  const [proposalHoldings, setProposalHoldings] = useState<
+    Array<{ symbol: string; from_account: string; to_account: string; reason: string }>
+  >([]);
+  const { data: portfolios = [] } = usePortfolios();
 
   const load = useCallback(() => {
     if (!portfolioId) return;
@@ -296,11 +303,17 @@ export function TaxTab({ portfolioId, refreshKey = 0, onTaxDataLoaded }: TaxTabP
           <button
             className="bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded"
             onClick={() => {
-              // Opens proposal modal — scanner ProposalModal handles this
-              // Emit event or use router to navigate with selected tickers
-              // Implementation: store selectedTickers in URL params or session
-              // TODO(Task 12): wire ProposalModal — pre-populate selectedTickers
-              alert(`Open ProposalModal for: ${[...selectedTickers].join(", ")} — see Task 12`);
+              const holdings = [...selectedTickers].map((ticker) => {
+                const h = taxData!.holdings.find((x) => x.symbol === ticker);
+                return {
+                  symbol: ticker,
+                  from_account: h?.current_account ?? "TAXABLE",
+                  to_account: h?.recommended_account ?? "TAXABLE",
+                  reason: h?.reason ?? "Tax optimization",
+                };
+              });
+              setProposalHoldings(holdings);
+              setProposalOpen(true);
             }}
           >
             ⚡ Generate Rebalance Proposal
@@ -381,7 +394,15 @@ export function TaxTab({ portfolioId, refreshKey = 0, onTaxDataLoaded }: TaxTabP
                 </div>
                 <button
                   className="w-full mt-3 bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold py-2 rounded"
-                  onClick={() => alert(`TODO(Task 12): ProposalModal for ${selected.symbol}`)}
+                  onClick={() => {
+                    setProposalHoldings([{
+                      symbol: selected.symbol,
+                      from_account: selected.current_account,
+                      to_account: selected.recommended_account,
+                      reason: selected.reason,
+                    }]);
+                    setProposalOpen(true);
+                  }}
                 >
                   ⚡ Propose Account Transfer
                 </button>
@@ -393,6 +414,18 @@ export function TaxTab({ portfolioId, refreshKey = 0, onTaxDataLoaded }: TaxTabP
           </div>
         )}
       </div>
+
+      {/* PROPOSAL MODAL */}
+      <ProposalModal
+        open={proposalOpen}
+        onClose={() => setProposalOpen(false)}
+        selectedTickers={selectedTickers}
+        scanResult={null}
+        taxHoldings={proposalHoldings}
+        portfolios={portfolios}
+        defaultPortfolioId={portfolioId}
+        onSuccess={(id) => console.log("Proposal created:", id)}
+      />
 
       {/* SETTINGS MODAL */}
       {showSettings && (
