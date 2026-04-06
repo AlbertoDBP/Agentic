@@ -11,9 +11,9 @@ const ADMIN_PANEL = process.env.ADMIN_PANEL_URL ?? "http://localhost:8100";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const portfolioId = params.id;
+  const { id: portfolioId } = await params;
   const authHeader = req.headers.get("authorization") ?? "";
 
   try {
