@@ -6,11 +6,14 @@ import { PortfolioCard, AddPortfolioCard } from "@/components/portfolio/portfoli
 import { KpiStrip } from "@/components/portfolio/kpi-strip";
 import { formatCurrency } from "@/lib/utils";
 import { HHS_HELP } from "@/lib/help-content";
+import { API_BASE_URL } from "@/lib/config";
+import type { TaxSummary } from "@/lib/types";
 
 export default function DashboardPage() {
   const { data: portfolios, isLoading, error, refetch } = usePortfolios();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScroll, setCanScroll] = useState(false);
+  const [taxSummary, setTaxSummary] = useState<TaxSummary | null>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -21,6 +24,17 @@ export default function DashboardPage() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [portfolios]);
+
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") ?? "" : "";
+    fetch(`${API_BASE_URL}/api/tax/summary`, {
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => setTaxSummary(data))
+      .catch(() => {});
+  }, []);
 
   const scroll = (dir: "left" | "right") => {
     scrollRef.current?.scrollBy({ left: dir === "left" ? -316 : 316, behavior: "smooth" });
@@ -49,6 +63,16 @@ export default function DashboardPage() {
     { label: "Portfolios",    value: portfolios?.length ?? 0 },
     { label: "⚠ UNSAFE",      value: unsafeTotal, colorClass: unsafeTotal > 0 ? "text-red-400" : undefined,
       alert: unsafeTotal > 0, helpText: HHS_HELP.unsafe_flag },
+    {
+      label: "NAA Yield",
+      value: taxSummary?.aggregate_nay != null
+        ? `${(taxSummary.aggregate_nay * 100).toFixed(2)}%`
+        : "—",
+      colorClass: taxSummary?.aggregate_nay != null ? "text-blue-400" : undefined,
+      helpText: taxSummary?.aggregate_gross_yield != null
+        ? `Net After-All Yield across all portfolios. Gross: ${(taxSummary.aggregate_gross_yield * 100).toFixed(2)}%. Tax + cost drag: −${((taxSummary.aggregate_gross_yield - (taxSummary.aggregate_nay ?? 0)) * 100).toFixed(2)}%.`
+        : "Net After-All Yield: annual income minus tax and expense costs, divided by market value. Set tax profile in any portfolio's Tax tab.",
+    },
   ];
 
   return (
