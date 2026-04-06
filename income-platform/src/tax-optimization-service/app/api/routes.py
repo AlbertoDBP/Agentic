@@ -199,6 +199,7 @@ async def optimize_tax_portfolio(request: PortfolioOptimizationRequest):
             account_type=account_type,
             current_value=float(r.get("current_value") or 0.0),
             annual_yield=annual_yield,
+            expense_ratio=r.get("expense_ratio"),
         ))
 
     combined = OptimizationRequest(
