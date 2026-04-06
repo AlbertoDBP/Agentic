@@ -2,9 +2,12 @@
 Scheduler Service — APScheduler-based cron for all platform batch jobs.
 Port 8099 — lightweight health + status API.
 """
+import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -40,6 +43,33 @@ _last_run: dict[str, str] = {}
 # Mutable copy of cron kwargs — updated by reschedule endpoint
 _schedule_config: dict[str, dict] = {}
 
+# Persistent config file — survives restarts
+CONFIG_FILE = Path(os.getenv("SCHEDULE_CONFIG_FILE", "/data/schedule_config.json"))
+
+
+def _load_persisted_config() -> dict:
+    """Load schedule overrides from disk. Returns {} if file missing."""
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE) as f:
+                cfg = json.load(f)
+            logger.info("Loaded persisted schedule config from %s", CONFIG_FILE)
+            return cfg
+    except Exception as exc:
+        logger.warning("Could not load schedule config: %s", exc)
+    return {}
+
+
+def _save_persisted_config() -> None:
+    """Write _schedule_config to disk so changes survive container restarts."""
+    try:
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(_schedule_config, f, indent=2)
+    except Exception as exc:
+        logger.warning("Could not save schedule config: %s", exc)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # SCHEDULE DEFINITIONS  (all times US/Eastern)
 # ═══════════════════════════════════════════════════════════════════════
@@ -56,9 +86,9 @@ JOBS = [
      "Refresh prices after market close (Mon-Fri 18:30 ET)"),
 
     (job_newsletter_harvest,
-     {"day_of_week": "tue,fri", "hour": 7, "minute": 0},
+     {"day_of_week": "mon,wed,fri", "hour": 7, "minute": 0},
      "newsletter-harvest",
-     "Fetch Seeking Alpha articles (Tue & Fri 07:00 ET)"),
+     "Fetch Seeking Alpha articles (Mon, Wed, Fri 07:00 ET)"),
 
     (job_score_portfolio,
      {"day_of_week": "mon-fri", "hour": 19, "minute": 0},
@@ -114,19 +144,23 @@ def _tracked(job_id: str, func):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    persisted = _load_persisted_config()
+
     for func, cron_kwargs, job_id, desc in JOBS:
-        _schedule_config[job_id] = dict(cron_kwargs)
+        # Apply persisted overrides on top of code defaults
+        effective = {**cron_kwargs, **persisted.get(job_id, {})}
+        _schedule_config[job_id] = effective
         scheduler.add_job(
             _tracked(job_id, func),
-            trigger=CronTrigger(**cron_kwargs),
+            trigger=CronTrigger(**effective, timezone="America/New_York"),
             id=job_id,
             name=desc,
             replace_existing=True,
         )
-        logger.info(f"Registered: {job_id} — {desc}")
+        logger.info("Registered: %s — %s", job_id, effective)
 
     scheduler.start()
-    logger.info(f"Scheduler started with {len(JOBS)} jobs")
+    logger.info("Scheduler started with %d jobs", len(JOBS))
     yield
     scheduler.shutdown(wait=False)
     logger.info("Scheduler stopped")
@@ -186,18 +220,21 @@ class RescheduleRequest(BaseModel):
 
 @app.post("/jobs/{job_id}/reschedule")
 def reschedule_job(job_id: str, req: RescheduleRequest):
-    """Change the schedule time for a job (in-memory; resets on restart)."""
+    """Change the schedule for a job. Changes are persisted to disk."""
     job = scheduler.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
     current = _schedule_config.get(job_id, {})
     new_config = {**current, "hour": req.hour, "minute": req.minute}
     if req.day_of_week is not None:
         new_config["day_of_week"] = req.day_of_week
+
     _schedule_config[job_id] = new_config
     scheduler.reschedule_job(
         job_id,
         trigger=CronTrigger(**new_config, timezone="America/New_York"),
     )
-    logger.info("Rescheduled %s → %s", job_id, new_config)
+    _save_persisted_config()
+    logger.info("Rescheduled %s → %s (persisted)", job_id, new_config)
     return {"status": "rescheduled", "job_id": job_id, "schedule": new_config}

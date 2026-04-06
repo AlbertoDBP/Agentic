@@ -112,7 +112,6 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - SERVICE_PORT=8003
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
     ports:
       - "8003:8003"
@@ -464,6 +463,8 @@ services:
       - SERVICE_TOKEN=${SERVICE_TOKEN}
       - PYTHONUNBUFFERED=1
       - AGENT14_URL=http://agent-14-data-quality:8014
+    volumes:
+      - scheduler-config:/data
     ports:
       - "8099:8099"
     depends_on:
@@ -548,3 +549,6 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+
+volumes:
+  scheduler-config:

@@ -8,8 +8,8 @@
 <!-- ── Schedule Management ── -->
 <h2>Schedule Management</h2>
 <p style="color:var(--pico-muted-color);font-size:0.85rem;margin-top:-0.5rem">
-  Time changes are in-memory and reset on scheduler restart.
-  To persist, edit <code>scheduler-service/app/main.py</code>.
+  Schedule changes are saved to disk and survive container restarts.
+  All times are US/Eastern (ET).
 </p>
 
 {% if jobs %}
@@ -18,11 +18,10 @@
   <thead>
     <tr>
       <th>Job</th>
-      <th>Days</th>
-      <th>Current Time (ET)</th>
       <th>Last Run</th>
       <th>Next Run</th>
-      <th>Change Time</th>
+      <th>Days &amp; Time (ET)</th>
+      <th>Save</th>
     </tr>
   </thead>
   <tbody>
@@ -32,16 +31,6 @@
       <td>
         <strong>{{ job.name.split("(")[0].strip() if job.name else job.id }}</strong><br>
         <small style="color:var(--pico-muted-color)"><code>{{ job.id }}</code></small>
-      </td>
-      <td>
-        {% if sched.day_of_week is defined %}
-          <code style="font-size:0.78rem">{{ sched.day_of_week }}</code>
-        {% else %}—{% endif %}
-      </td>
-      <td>
-        {% if sched.hour is defined %}
-          <strong>{{ "%02d:%02d" | format(sched.hour | int, sched.minute | int) }}</strong>
-        {% else %}—{% endif %}
       </td>
       <td>
         {% if job.last_run %}
@@ -59,20 +48,39 @@
       </td>
       <td>
         <form method="post" action="/settings/reschedule/{{ job.id }}"
-              style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
-          <input type="hidden" name="day_of_week"
-                 value="{{ sched.day_of_week if sched.day_of_week is defined else '' }}">
-          <label style="font-size:0.78rem;margin:0">H
-            <input type="number" name="hour" min="0" max="23" style="width:3.5rem"
-                   value="{{ sched.hour | int if sched.hour is defined else 0 }}">
-          </label>
-          <label style="font-size:0.78rem;margin:0">M
-            <input type="number" name="minute" min="0" max="59" style="width:3.5rem"
-                   value="{{ sched.minute | int if sched.minute is defined else 0 }}">
-          </label>
-          <button type="submit" class="btn-sm"
-                  onclick="return confirm('Update schedule for {{ job.id }}?')">Save</button>
+              id="form-{{ job.id }}"
+              style="display:flex;flex-direction:column;gap:0.4rem">
+          <!-- Day-of-week checkboxes -->
+          {% if sched.day_of_week is defined %}
+          <div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center">
+            {% for day, lbl in [('mon','Mo'),('tue','Tu'),('wed','We'),('thu','Th'),('fri','Fr'),('sat','Sa'),('sun','Su')] %}
+            <label style="font-size:0.72rem;margin:0;display:flex;align-items:center;gap:0.15rem;cursor:pointer">
+              <input type="checkbox" name="days" value="{{ day }}"
+                     {% if day in (job.active_days or []) %}checked{% endif %}
+                     style="margin:0;width:0.85rem;height:0.85rem">
+              {{ lbl }}
+            </label>
+            {% endfor %}
+          </div>
+          {% else %}
+          <small style="color:var(--pico-muted-color);font-size:0.75rem">Every day</small>
+          {% endif %}
+          <!-- Time inputs -->
+          <div style="display:flex;align-items:center;gap:0.4rem">
+            <label style="font-size:0.78rem;margin:0">H
+              <input type="number" name="hour" min="0" max="23" style="width:3.5rem"
+                     value="{{ sched.hour | int if sched.hour is defined else 0 }}">
+            </label>
+            <label style="font-size:0.78rem;margin:0">M
+              <input type="number" name="minute" min="0" max="59" style="width:3.5rem"
+                     value="{{ sched.minute | int if sched.minute is defined else 0 }}">
+            </label>
+          </div>
         </form>
+      </td>
+      <td>
+        <button type="submit" form="form-{{ job.id }}" class="btn-sm"
+                onclick="return confirm('Update schedule for {{ job.id }}?')">Save</button>
       </td>
     </tr>
     {% endfor %}
