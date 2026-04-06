@@ -26,7 +26,7 @@ const NEXTJS_API_PREFIXES = [
   "/api/tax/",              // /api/tax/summary, /api/tax/calculate, /api/tax/harvest, /api/tax/optimize/portfolio
 ];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Only intercept /api/* paths
