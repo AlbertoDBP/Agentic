@@ -18,6 +18,8 @@ import { PageHelpPanel } from "@/components/page-help-panel";
 import { PORTFOLIO_TAB_HELP } from "@/lib/page-help-content";
 import { PortfolioHealthCard } from "@/components/portfolio/health-card";
 import type { GateStatus, RefreshLog } from "@/lib/types";
+import { TaxTab } from "./tabs/tax-tab";
+import type { PortfolioTaxAnalysis } from "@/lib/types";
 
 const SECTOR_COLORS: Record<string, string> = {
   "Financial Services":     "#3b82f6",
@@ -76,11 +78,12 @@ function MiniPie({ data, colorMap }: { data: { name: string; value: number }[]; 
   );
 }
 
-type Tab = "portfolio" | "market" | "health" | "simulation" | "projection";
+type Tab = "portfolio" | "market" | "health" | "simulation" | "projection" | "tax";
 const TABS: { key: Tab; label: string }[] = [
   { key: "portfolio",  label: "Portfolio" },
   { key: "market",     label: "Market" },
   { key: "health",     label: "Health" },
+  { key: "tax",        label: "Tax" },
   { key: "simulation", label: "Simulation" },
   { key: "projection", label: "Income Projection" },
 ];
@@ -101,6 +104,7 @@ export default function PortfolioPage() {
     gate: null,
     refresh_log: null,
   });
+  const [taxData, setTaxData] = useState<PortfolioTaxAnalysis | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -291,9 +295,16 @@ export default function PortfolioPage() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "portfolio"  && <PortfolioTab portfolioId={id} refreshKey={tabRefreshKey} />}
+      {activeTab === "portfolio"  && <PortfolioTab portfolioId={id} refreshKey={tabRefreshKey} taxData={taxData} />}
       {activeTab === "market"     && <MarketTab portfolioId={id} refreshKey={tabRefreshKey} />}
       {activeTab === "health"     && <HealthTab portfolioId={id} refreshKey={tabRefreshKey} />}
+      {activeTab === "tax"        && (
+        <TaxTab
+          portfolioId={id}
+          refreshKey={tabRefreshKey}
+          onTaxDataLoaded={setTaxData}
+        />
+      )}
       {activeTab === "simulation" && <SimulationContent defaultPortfolioId={id} />}
       {activeTab === "projection" && <ProjectionContent defaultPortfolioId={id} />}
     </div>
