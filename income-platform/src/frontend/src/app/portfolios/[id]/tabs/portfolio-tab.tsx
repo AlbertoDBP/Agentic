@@ -9,7 +9,7 @@ import { HHS_HELP, HOLDINGS_HELP } from "@/lib/help-content";
 import { formatCurrency, formatDate, scoreTextColor } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
-import type { Position } from "@/lib/types";
+import type { Position, PortfolioTaxAnalysis, TaxHolding } from "@/lib/types";
 import {
   computePortfolioWeight,
   computeSectorWeight,
@@ -23,6 +23,7 @@ import {
 interface PortfolioTabProps {
   portfolioId: string;
   refreshKey?: number;
+  taxData?: PortfolioTaxAnalysis | null;
 }
 
 function fmtDate(v: string | null | undefined) {
@@ -47,7 +48,7 @@ function SectionTitle({ label }: { label: string }) {
   );
 }
 
-export function PortfolioTab({ portfolioId, refreshKey = 0 }: PortfolioTabProps) {
+export function PortfolioTab({ portfolioId, refreshKey = 0, taxData }: PortfolioTabProps) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -672,6 +673,53 @@ export function PortfolioTab({ portfolioId, refreshKey = 0 }: PortfolioTabProps)
                 <DetailRow label="Chowder #" value={selected.chowder_number.toFixed(1)} />
               )}
             </div>
+          </section>
+
+          {/* True Yield (tax + cost breakdown) */}
+          <section>
+            <SectionTitle label="True Yield" />
+            {(() => {
+              const grossYield = selected.current_yield != null
+                ? selected.current_yield / 100
+                : (selected.current_value > 0
+                  ? (selected.annual_income ?? 0) / selected.current_value
+                  : null);
+              const taxHolding: TaxHolding | undefined = taxData?.holdings.find(
+                (h) => h.symbol === selected.symbol
+              );
+              return (
+                <div className="space-y-1.5">
+                  {grossYield != null && (
+                    <DetailRow label="Gross Yield" value={`${(grossYield * 100).toFixed(2)}%`} />
+                  )}
+                  {selected.expense_ratio != null && selected.expense_ratio > 0 && (
+                    <DetailRow
+                      label={`Cost Drag (${(selected.expense_ratio * 100).toFixed(2)}% ER)`}
+                      value={`−${(selected.expense_ratio * 100).toFixed(2)}%`}
+                      className="text-amber-400"
+                    />
+                  )}
+                  {taxHolding ? (
+                    <>
+                      <DetailRow
+                        label="Tax Drag"
+                        value={`−${((taxHolding.gross_yield - taxHolding.after_tax_yield) * 100).toFixed(2)}%`}
+                        className="text-red-400"
+                      />
+                      <DetailRow
+                        label="NAA Yield"
+                        value={`${(taxHolding.nay * 100).toFixed(2)}%`}
+                        className="text-green-400 font-bold"
+                      />
+                    </>
+                  ) : (
+                    <div className="text-xs text-muted-foreground italic">
+                      Open Tax tab to see NAA Yield
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </section>
 
           {(selected.sector || selected.industry) && (
