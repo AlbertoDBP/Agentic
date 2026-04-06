@@ -69,6 +69,7 @@ export function PortfolioTab({ portfolioId, refreshKey = 0, taxData }: Portfolio
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removePending, setRemovePending] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [manageSort, setManageSort] = useState<"asc" | "desc" | null>(null);
   const timeoutIdsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
@@ -313,12 +314,6 @@ export function PortfolioTab({ portfolioId, refreshKey = 0, taxData }: Portfolio
       },
     },
     {
-      accessorKey: "yield_on_cost",
-      header: "YoC",
-      meta: { defaultHidden: true, label: "Yield on Cost" },
-      cell: ({ getValue }) => getValue() != null ? `${(getValue() as number).toFixed(2)}%` : "—",
-    },
-    {
       accessorKey: "total_dividends_received",
       header: "Divs Recvd",
       meta: { defaultHidden: true, label: "Total Dividends Received" },
@@ -415,6 +410,12 @@ export function PortfolioTab({ portfolioId, refreshKey = 0, taxData }: Portfolio
         const v = getValue() as number | null;
         return v != null ? `${(v * 100).toFixed(2)}%` : "—";
       },
+    },
+    {
+      accessorKey: "yield_on_cost",
+      header: "YoC",
+      meta: { defaultHidden: true, label: "Yield on Cost" },
+      cell: ({ getValue }) => getValue() != null ? `${(getValue() as number).toFixed(2)}%` : "—",
     },
     {
       id: "tax_treatment",
@@ -525,7 +526,15 @@ export function PortfolioTab({ portfolioId, refreshKey = 0, taxData }: Portfolio
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
-                        <th className="text-left px-4 py-2 font-semibold">Ticker</th>
+                        <th className="text-left px-4 py-2 font-semibold">
+                          <button
+                            onClick={() => setManageSort(s => s === "asc" ? "desc" : s === "desc" ? null : "asc")}
+                            className="flex items-center gap-1 hover:text-foreground"
+                          >
+                            Ticker
+                            <span>{manageSort === "asc" ? "↑" : manageSort === "desc" ? "↓" : "⇅"}</span>
+                          </button>
+                        </th>
                         <th className="text-right px-3 py-2 font-semibold">Shares</th>
                         <th className="text-right px-3 py-2 font-semibold">Avg Cost</th>
                         <th className="text-right px-3 py-2 font-semibold">Total Cost</th>
@@ -534,7 +543,14 @@ export function PortfolioTab({ portfolioId, refreshKey = 0, taxData }: Portfolio
                       </tr>
                     </thead>
                     <tbody>
-                      {positions.map(pos => {
+                      {(manageSort
+                        ? [...positions].sort((a, b) =>
+                            manageSort === "asc"
+                              ? a.symbol.localeCompare(b.symbol)
+                              : b.symbol.localeCompare(a.symbol)
+                          )
+                        : positions
+                      ).map(pos => {
                         const avgCostVal = pos.avg_cost ?? (pos.shares ? pos.cost_basis / pos.shares : 0);
                         const isEditing = editingId === pos.id;
                         const isRemoving = removingId === pos.id;
