@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const TAX_SERVICE = process.env.TAX_SERVICE_URL ?? "http://tax-optimization-service:8005";
 const ADMIN_PANEL = process.env.ADMIN_PANEL_URL ?? "http://localhost:8100";
+const SERVICE_TOKEN = process.env.SERVICE_JWT_TOKEN ?? process.env.SERVICE_TOKEN ?? "";
 
 export async function GET(
   req: NextRequest,
@@ -24,12 +25,13 @@ export async function GET(
     });
     const prefs = prefResp.ok ? await prefResp.json() : {};
 
-    // 2. Call tax service optimize/portfolio
+    // 2. Call tax service optimize/portfolio (use service token — tax service
+    //    uses its own JWT_SECRET, separate from the admin-panel user JWT)
     const taxResp = await fetch(`${TAX_SERVICE}/tax/optimize/portfolio`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        authorization: authHeader,
+        authorization: `Bearer ${SERVICE_TOKEN}`,
       },
       body: JSON.stringify({
         portfolio_id: portfolioId,
