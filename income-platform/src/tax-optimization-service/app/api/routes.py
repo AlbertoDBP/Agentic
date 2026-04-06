@@ -183,10 +183,16 @@ async def optimize_tax_portfolio(request: PortfolioOptimizationRequest):
         account_type = at_map.get(raw_at, AccountType.TAXABLE)
 
         raw_ac = str(r.get("asset_type", "UNKNOWN")).upper()
-        try:
-            asset_class = AssetClass(raw_ac)
-        except ValueError:
-            asset_class = None
+        sec_name = str(r.get("security_name") or "").lower()
+        _MUNI_KEYWORDS = ("municipal", "muni", "tax-exempt bond", "tax exempt bond")
+        _BOND_CLASSES = {"CLOSED_END_FUND", "BOND_ETF", "BOND", "UNKNOWN"}
+        if raw_ac in _BOND_CLASSES and any(kw in sec_name for kw in _MUNI_KEYWORDS):
+            asset_class: Optional[AssetClass] = AssetClass.MUNICIPAL_BOND_FUND
+        else:
+            try:
+                asset_class = AssetClass(raw_ac)
+            except ValueError:
+                asset_class = None
 
         annual_yield = float(r.get("annual_yield") or 0.0)
         # annual_yield stored as fraction (e.g. 0.08) — cap at 5.0 for model validation

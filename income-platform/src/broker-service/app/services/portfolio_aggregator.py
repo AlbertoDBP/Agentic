@@ -50,6 +50,7 @@ def compute_hhi(weights: list[float]) -> float:
 async def _fetch_tax_nay(
     portfolio_id: str,
     tax_prefs: dict | None,
+    service_token: str = "",
 ) -> float | None:
     """Call tax service /tax/optimize/portfolio and return portfolio_nay.
 
@@ -59,15 +60,17 @@ async def _fetch_tax_nay(
     if not tax_prefs:
         return None
     tax_url = os.environ.get("TAX_OPTIMIZATION_URL", "http://tax-optimization-service:8005")
+    hdrs = {"Authorization": f"Bearer {service_token}"} if service_token else {}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{tax_url}/tax/optimize/portfolio",
+                headers=hdrs,
                 json={
                     "portfolio_id": portfolio_id,
                     "annual_income": tax_prefs.get("annual_income", 100000),
                     "filing_status": tax_prefs.get("filing_status", "SINGLE"),
-                    "state_code": tax_prefs.get("state_code"),
+                    "state_code": tax_prefs.get("state_code") or None,
                 },
             )
             if resp.status_code == 200:
@@ -82,6 +85,7 @@ async def aggregate_portfolio(
     positions: list[dict],
     scores: dict[str, dict],
     tax_prefs: dict | None = None,
+    service_token: str = "",
 ) -> dict:
     """Compute portfolio-level aggregates from positions + score map.
 
@@ -142,7 +146,7 @@ async def aggregate_portfolio(
 
     # NAA Yield — Strategy A: read from tax service (real, post-tax + post-fee)
     # Strategy B fallback: gross yield when tax service unavailable
-    _tax_nay = await _fetch_tax_nay(portfolio_id, tax_prefs)
+    _tax_nay = await _fetch_tax_nay(portfolio_id, tax_prefs, service_token=service_token)
     if _tax_nay is not None:
         naa_yield = round(_tax_nay, 4)
         naa_yield_pre_tax = False

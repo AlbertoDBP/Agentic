@@ -93,6 +93,7 @@ async def get_portfolio_holdings(portfolio_id: str) -> list:
                     SELECT
                         p.symbol,
                         COALESCE(s.asset_type, 'UNKNOWN')                                AS asset_type,
+                        LOWER(COALESCE(s.name, ''))                                       AS security_name,
                         COALESCE(p.current_value, 0)                                      AS current_value,
                         CASE
                             WHEN COALESCE(p.current_value, 0) > 0
