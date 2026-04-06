@@ -30,7 +30,7 @@ app.add_middleware(
 templates = Jinja2Templates(directory="app/templates")
 
 # ── Import and mount routes ──
-from app.routes import dashboard, services, scheduler, portfolio, alerts, proposals, analysts, newsletters, settings, proxy, api_portfolio, api_dashboard  # noqa: E402
+from app.routes import dashboard, services, scheduler, portfolio, alerts, proposals, analysts, newsletters, settings, proxy, api_portfolio, api_dashboard, api_preferences  # noqa: E402
 
 app.include_router(dashboard.router)
 app.include_router(services.router)
@@ -43,6 +43,7 @@ app.include_router(newsletters.router)
 app.include_router(settings.router)
 app.include_router(api_portfolio.router)   # JSON API — before proxy to avoid catch-all
 app.include_router(api_dashboard.router)   # Dashboard aggregate endpoint
+app.include_router(api_preferences.router) # User tax preferences
 app.include_router(proxy.router)
 
 

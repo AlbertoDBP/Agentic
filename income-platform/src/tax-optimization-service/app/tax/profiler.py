@@ -126,6 +126,19 @@ _PROFILE_MAP: dict[AssetClass, dict] = {
             "Return of capital from CEFs can be destructive (NAV erosion) or non-destructive.",
         ],
     },
+    AssetClass.MUNICIPAL_BOND_FUND: {
+        "primary": TaxTreatment.TAX_EXEMPT,
+        "secondary": [TaxTreatment.ORDINARY_INCOME],
+        "qualified": False,
+        "s199a": False,
+        "s1256": False,
+        "k1": False,
+        "notes": [
+            "Municipal bond distributions are exempt from federal income tax.",
+            "State tax exemption varies — in-state muni income is typically state-exempt too.",
+            "Sheltering in a tax-deferred account wastes IRA space without additional benefit.",
+        ],
+    },
     AssetClass.ORDINARY_INCOME: {
         "primary": TaxTreatment.ORDINARY_INCOME,
         "secondary": [],

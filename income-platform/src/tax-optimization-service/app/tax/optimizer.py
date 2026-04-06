@@ -52,6 +52,7 @@ _SHELTER_PRIORITY = {
 _TAXABLE_FRIENDLY = {
     AssetClass.DIVIDEND_STOCK,
     AssetClass.PREFERRED_STOCK,
+    AssetClass.MUNICIPAL_BOND_FUND,  # Tax-exempt income — sheltering wastes IRA space
 }
 
 # Never shelter (UBTI issue)
@@ -88,6 +89,7 @@ async def optimize_portfolio(request: OptimizationRequest) -> OptimizationRespon
             )
         )
         ac = profile.asset_class
+        primary_treatment = profile.primary_tax_treatment
         dist_amount = holding.current_value * holding.annual_yield
 
         # Current tax burden
@@ -110,6 +112,16 @@ async def optimize_portfolio(request: OptimizationRequest) -> OptimizationRespon
             reason = (
                 "MLPs generate Unrelated Business Taxable Income (UBTI) "
                 "inside IRAs, creating unexpected tax liability. Keep in taxable."
+            )
+        elif primary_treatment == TaxTreatment.TAX_EXEMPT:
+            # Municipal bond funds: income already tax-exempt at federal level.
+            # Sheltering them in a tax-deferred account wastes IRA space
+            # without additional benefit — keep in taxable.
+            recommended = AccountType.TAXABLE
+            reason = (
+                "Municipal bond distributions are federally tax-exempt. "
+                "Sheltering in an IRA provides no additional tax benefit and "
+                "wastes tax-advantaged space. Keep in taxable account."
             )
         elif ac in _SHELTER_PRIORITY:
             recommended = _best_shelter_account(holding.current_value, holding.annual_yield)

@@ -12,16 +12,17 @@ from pydantic import BaseModel, Field
 # ─── Enumerations ────────────────────────────────────────────────────────────
 
 class AssetClass(str, Enum):
-    COVERED_CALL_ETF   = "COVERED_CALL_ETF"
-    DIVIDEND_STOCK     = "DIVIDEND_STOCK"
-    REIT               = "REIT"
-    BOND_ETF           = "BOND_ETF"
-    PREFERRED_STOCK    = "PREFERRED_STOCK"
-    MLP                = "MLP"
-    BDC                = "BDC"
-    CLOSED_END_FUND    = "CLOSED_END_FUND"
-    ORDINARY_INCOME    = "ORDINARY_INCOME"   # Agent-04 fallback
-    UNKNOWN            = "UNKNOWN"
+    COVERED_CALL_ETF    = "COVERED_CALL_ETF"
+    DIVIDEND_STOCK      = "DIVIDEND_STOCK"
+    REIT                = "REIT"
+    BOND_ETF            = "BOND_ETF"
+    PREFERRED_STOCK     = "PREFERRED_STOCK"
+    MLP                 = "MLP"
+    BDC                 = "BDC"
+    CLOSED_END_FUND     = "CLOSED_END_FUND"
+    MUNICIPAL_BOND_FUND = "MUNICIPAL_BOND_FUND"  # Tax-exempt muni CEFs / ETFs
+    ORDINARY_INCOME     = "ORDINARY_INCOME"   # Agent-04 fallback
+    UNKNOWN             = "UNKNOWN"
 
 
 class TaxTreatment(str, Enum):

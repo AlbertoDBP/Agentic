@@ -6,12 +6,16 @@ const nextConfig: NextConfig = {
   output: "standalone",
 
   async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${adminPanelUrl}/api/:path*`,
-      },
-    ];
+    return {
+      beforeFiles: [],
+      afterFiles: [
+        {
+          source: "/api/:path*",
+          destination: `${adminPanelUrl}/api/:path*`,
+        },
+      ],
+      fallback: [],
+    };
   },
 };
 

@@ -593,6 +593,24 @@ async def refresh_portfolio_data(portfolio_id: str, db: Session = Depends(get_db
     return {"ok": all(v["ok"] for v in steps.values()), "portfolio_id": portfolio_id, "tickers_count": len(tickers), "steps": steps}
 
 
+async def _fetch_tax_prefs() -> dict | None:
+    """Fetch user tax preferences from admin panel. Returns None on failure."""
+    try:
+        hdrs = {"Authorization": f"Bearer {settings.service_token}"} if settings.service_token else {}
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{settings.admin_panel_url}/api/user/preferences",
+                headers=hdrs,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data:
+                    return data
+    except Exception as exc:
+        logger.warning("Could not fetch tax prefs from admin panel: %s", exc)
+    return None
+
+
 @router.get("/portfolios")
 async def list_portfolios(db: Session = Depends(get_db)):
     """List all portfolios with aggregate KPIs."""
@@ -608,13 +626,14 @@ async def list_portfolios(db: Session = Depends(get_db)):
         ORDER BY p.portfolio_name
     """)).mappings().all()
 
+    tax_prefs = await _fetch_tax_prefs()
     results = []
     for row in rows:
         # Fetch positions for this portfolio
         positions = _get_positions_for_portfolio(db, str(row["id"]))
         # Read scores directly from DB (bypasses HTTP + staleness issues)
         scores = _get_scores_from_db(db, str(row["id"]))
-        agg = await aggregate_portfolio(str(row["id"]), positions, scores, tax_prefs=None)
+        agg = await aggregate_portfolio(str(row["id"]), positions, scores, tax_prefs=tax_prefs, service_token=settings.service_token)
         results.append({
             "id": str(row["id"]),
             "name": row["name"],
@@ -643,7 +662,8 @@ async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
 
     positions = _get_positions_for_portfolio(db, portfolio_id)
     scores = _get_scores_from_db(db, portfolio_id)
-    agg = await aggregate_portfolio(portfolio_id, positions, scores, tax_prefs=None)
+    tax_prefs = await _fetch_tax_prefs()
+    agg = await aggregate_portfolio(portfolio_id, positions, scores, tax_prefs=tax_prefs, service_token=settings.service_token)
 
     return {
         "id": str(row["id"]),

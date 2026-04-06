@@ -26,6 +26,12 @@ interface PortfolioConfig {
   auto_execute_proposals: boolean;
 }
 
+interface TaxProfile {
+  annual_income: number;
+  filing_status: string;
+  state_code: string;
+}
+
 interface TtlRow {
   asset_class: string;
   ttl_days: number;
@@ -57,6 +63,41 @@ export default function SettingsPage() {
 
   // Global settings — load from localStorage
   const [global, setGlobal] = useState<GlobalSettings>(DEFAULT_GLOBAL);
+
+  // Tax profile state — saved to admin panel
+  const [taxProfile, setTaxProfile] = useState<TaxProfile>({ annual_income: 100000, filing_status: "SINGLE", state_code: "" });
+  const [taxSaving, setTaxSaving] = useState(false);
+  const [taxError, setTaxError] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/user/preferences").then((r) => r.json()).then((d) => {
+      if (d && (d.annual_income || d.filing_status)) {
+        setTaxProfile({
+          annual_income: d.annual_income ?? 100000,
+          filing_status: d.filing_status ?? "SINGLE",
+          state_code: d.state_code ?? "",
+        });
+      }
+    }).catch(() => {/* ignore */});
+  }, []);
+
+  const saveTaxProfile = async () => {
+    setTaxSaving(true);
+    setTaxError(null);
+    try {
+      const resp = await fetch("/api/user/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(taxProfile),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail ?? "Save failed");
+      flash();
+    } catch (err) {
+      setTaxError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTaxSaving(false);
+    }
+  };
 
   // TTL config state
   const [ttlConfig, setTtlConfig] = useState<TtlRow[]>([]);
@@ -351,6 +392,62 @@ export default function SettingsPage() {
           >
             <Save className="h-4 w-4" /> Save Settings
           </button>
+
+          {/* Tax Profile */}
+          <div className="mt-8 pt-6 border-t border-border">
+            <h3 className="text-sm font-semibold mb-1">Tax Profile</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              Used by the tax optimizer to calculate after-tax yield and account placement recommendations.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Annual Income</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={taxProfile.annual_income}
+                  onChange={(e) => setTaxProfile({ ...taxProfile, annual_income: Number(e.target.value) })}
+                  className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Filing Status</label>
+                  <select
+                    value={taxProfile.filing_status}
+                    onChange={(e) => setTaxProfile({ ...taxProfile, filing_status: e.target.value })}
+                    className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm text-foreground"
+                  >
+                    <option value="SINGLE">Single</option>
+                    <option value="MARRIED_JOINT">Married Filing Jointly</option>
+                    <option value="MARRIED_SEPARATE">Married Filing Separately</option>
+                    <option value="HEAD_OF_HOUSEHOLD">Head of Household</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">State Code</label>
+                  <input
+                    type="text"
+                    maxLength={2}
+                    value={taxProfile.state_code}
+                    onChange={(e) => setTaxProfile({ ...taxProfile, state_code: e.target.value.toUpperCase() })}
+                    placeholder="CA"
+                    className="w-full rounded-md border border-border bg-secondary px-3 py-1.5 text-sm text-foreground uppercase focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </div>
+              </div>
+              {taxError && <p className="text-xs text-red-400">{taxError}</p>}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={saveTaxProfile}
+                disabled={taxSaving}
+              >
+                {taxSaving ? "Saving…" : "Save Tax Profile"}
+              </Button>
+            </div>
+          </div>
 
           {/* Analyst Suggestion Expiry */}
           <div className="mt-8 pt-6 border-t border-border">
