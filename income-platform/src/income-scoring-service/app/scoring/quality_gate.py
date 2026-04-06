@@ -404,5 +404,97 @@ class QualityGateEngine:
         )
 
 
+    # ── Income vehicle gate (BDC / CEF / MORTGAGE_REIT / MLP / PREFERRED / EQUITY_REIT) ──────
+
+    def _evaluate_income_vehicle(
+        self,
+        ticker: str,
+        asset_class_label: str,
+        distribution_history_years: Optional[int],
+        min_years: int,
+        credit_rating: Optional[str] = None,
+    ) -> GateResult:
+        """
+        Shared gate logic for income-focused instruments.
+
+        Single mandatory check: distribution/dividend history ≥ min_years.
+        Credit rating is optional enrichment only (never fails on its own).
+        INSUFFICIENT_DATA only when distribution history is completely unknown.
+        """
+        fail_reasons = []
+        warnings = []
+        checks: dict = {}
+
+        if distribution_history_years is None:
+            checks["distribution_history"] = {"passed": None, "reason": "data_missing"}
+            warnings.append("Distribution history unavailable — check skipped")
+            return GateResult(
+                ticker=ticker,
+                asset_class=asset_class_label,
+                status=GateStatus.INSUFFICIENT_DATA,
+                passed=False,
+                fail_reasons=["Distribution history missing — cannot evaluate"],
+                warnings=warnings,
+                checks=checks,
+                data_quality_score=0.0,
+            )
+
+        passed = distribution_history_years >= min_years
+        checks["distribution_history"] = {
+            "value_years": distribution_history_years,
+            "minimum_years": min_years,
+            "passed": passed,
+        }
+        if not passed:
+            fail_reasons.append(
+                f"Only {distribution_history_years} years distribution history "
+                f"(need {min_years})"
+            )
+
+        # Credit rating: informational warning only, never fails gate
+        if credit_rating is not None:
+            checks["credit_rating"] = {"value": credit_rating, "informational": True}
+            if not credit_rating_meets_minimum(credit_rating, "BBB-"):
+                warnings.append(
+                    f"Credit rating {credit_rating} is below investment grade — elevated risk"
+                )
+
+        gate_passed = len(fail_reasons) == 0
+        return GateResult(
+            ticker=ticker,
+            asset_class=asset_class_label,
+            status=GateStatus.PASS if gate_passed else GateStatus.FAIL,
+            passed=gate_passed,
+            fail_reasons=fail_reasons,
+            warnings=warnings,
+            checks=checks,
+            data_quality_score=100.0,
+        )
+
+    def evaluate_bdc(self, ticker: str, distribution_history_years: Optional[int], credit_rating: Optional[str] = None) -> GateResult:
+        """BDC gate: ≥ 3 years of distributions (volatile structure, shorter window)."""
+        return self._evaluate_income_vehicle(ticker, "BDC", distribution_history_years, min_years=3, credit_rating=credit_rating)
+
+    def evaluate_cef(self, ticker: str, distribution_history_years: Optional[int], credit_rating: Optional[str] = None) -> GateResult:
+        """Closed-End Fund gate: ≥ 5 years of distributions (enough NAV history)."""
+        return self._evaluate_income_vehicle(ticker, "CEF", distribution_history_years, min_years=5, credit_rating=credit_rating)
+
+    def evaluate_mortgage_reit(self, ticker: str, distribution_history_years: Optional[int], credit_rating: Optional[str] = None) -> GateResult:
+        """Mortgage REIT gate: ≥ 3 years of distributions."""
+        return self._evaluate_income_vehicle(ticker, "MORTGAGE_REIT", distribution_history_years, min_years=3, credit_rating=credit_rating)
+
+    def evaluate_equity_reit(self, ticker: str, distribution_history_years: Optional[int], credit_rating: Optional[str] = None) -> GateResult:
+        """Equity REIT gate: ≥ 3 years of dividends (REITs must pay 90%+ income by law)."""
+        return self._evaluate_income_vehicle(ticker, "EQUITY_REIT", distribution_history_years, min_years=3, credit_rating=credit_rating)
+
+    def evaluate_mlp(self, ticker: str, distribution_history_years: Optional[int], credit_rating: Optional[str] = None) -> GateResult:
+        """MLP gate: ≥ 3 years of distributions."""
+        return self._evaluate_income_vehicle(ticker, "MLP", distribution_history_years, min_years=3, credit_rating=credit_rating)
+
+    def evaluate_preferred(self, ticker: str, distribution_history_years: Optional[int], credit_rating: Optional[str] = None) -> GateResult:
+        """Preferred Stock gate: ≥ 2 years of distributions (contractual fixed dividend)."""
+        return self._evaluate_income_vehicle(ticker, "PREFERRED_STOCK", distribution_history_years, min_years=2, credit_rating=credit_rating)
+
+
 # ── Singleton ─────────────────────────────────────────────────────────────────
 quality_gate_engine = QualityGateEngine()
