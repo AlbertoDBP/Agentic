@@ -559,3 +559,48 @@ export interface PortfolioHealth {
   /** Keys are symbols with at least one open issue. Use `issues_by_symbol[sym] ?? []` for safe access. */
   issues_by_symbol: Record<string, DataQualityIssue[]>;
 }
+
+// ── Tax Optimization ──────────────────────────────────────────────────────────
+
+export interface TaxHolding {
+  symbol: string;
+  asset_class: string;
+  current_account: string;
+  recommended_account: string;
+  placement_mismatch: boolean;
+  treatment: string;
+  gross_yield: number;           // decimal fraction, e.g. 0.423
+  effective_tax_rate: number;    // decimal fraction, combined fed+state+NIIT
+  after_tax_yield: number;       // decimal fraction
+  expense_ratio: number | null;  // decimal fraction, null for stocks
+  expense_drag_pct: number;      // decimal fraction
+  nay: number;                   // decimal fraction (NAA Yield)
+  annual_income: number;
+  tax_withheld: number;
+  expense_drag_amount: number;
+  net_annual_income: number;
+  estimated_annual_tax_savings: number;
+  reason: string;
+}
+
+export interface PortfolioTaxAnalysis {
+  portfolio_gross_yield: number;  // decimal fraction
+  portfolio_nay: number;          // decimal fraction
+  current_annual_tax_burden: number;
+  estimated_annual_savings: number;
+  suboptimal_count: number;
+  holdings: TaxHolding[];
+  tax_profile: {
+    annual_income: number;
+    filing_status: string;
+    state_code: string;
+  };
+}
+
+export interface TaxSummary {
+  aggregate_nay: number | null;          // decimal fraction; null if no tax profile
+  aggregate_gross_yield: number | null;  // decimal fraction
+  total_tax_drag: number;
+  total_expense_drag: number;
+  portfolio_count: number;
+}
