@@ -114,6 +114,15 @@ export default function PortfolioPage() {
       .catch(() => {});
   }, [id]);
 
+  // Pre-fetch tax data so tax columns in Portfolio tab are populated immediately
+  useEffect(() => {
+    if (!id) return;
+    fetch(`/api/portfolios/${id}/tax`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data) setTaxData(data); })
+      .catch(() => {});
+  }, [id]);
+
   const { data: summary, isLoading, error, refetch } = usePortfolioSummary(id);
 
   const triggerRefresh = async () => {
