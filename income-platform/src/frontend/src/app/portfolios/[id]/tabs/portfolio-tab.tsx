@@ -376,6 +376,53 @@ export function PortfolioTab({ portfolioId, refreshKey = 0, taxData }: Portfolio
       meta: { defaultHidden: true, label: "Date Acquired" },
       cell: ({ getValue }) => fmtDate(getValue() as string | null),
     },
+    // ── Tax & Cost columns — populated from taxData ──
+    {
+      accessorKey: "expense_ratio",
+      header: "Exp. Ratio",
+      meta: { defaultHidden: true, label: "Expense Ratio" },
+      cell: ({ getValue }) => {
+        const v = getValue() as number | null | undefined;
+        return v != null ? `${(v * 100).toFixed(2)}%` : "—";
+      },
+    },
+    {
+      id: "after_tax_yield",
+      header: () => <ColHeader label="After-Tax Yield" helpKey="current_yield" helpMap={HOLDINGS_HELP} />,
+      meta: { defaultHidden: true, label: "After-Tax Yield" },
+      accessorFn: (row) => taxData?.holdings.find((h) => h.symbol === row.symbol)?.after_tax_yield ?? null,
+      cell: ({ getValue }) => {
+        const v = getValue() as number | null;
+        return v != null ? `${(v * 100).toFixed(2)}%` : "—";
+      },
+    },
+    {
+      id: "effective_tax_rate",
+      header: "Tax Rate",
+      meta: { defaultHidden: true, label: "Effective Tax Rate" },
+      accessorFn: (row) => taxData?.holdings.find((h) => h.symbol === row.symbol)?.effective_tax_rate ?? null,
+      cell: ({ getValue }) => {
+        const v = getValue() as number | null;
+        return v != null ? `${(v * 100).toFixed(1)}%` : "—";
+      },
+    },
+    {
+      id: "naa_yield",
+      header: "NAA Yield",
+      meta: { defaultHidden: true, label: "NAA Yield (Net After-All)" },
+      accessorFn: (row) => taxData?.holdings.find((h) => h.symbol === row.symbol)?.nay ?? null,
+      cell: ({ getValue }) => {
+        const v = getValue() as number | null;
+        return v != null ? `${(v * 100).toFixed(2)}%` : "—";
+      },
+    },
+    {
+      id: "tax_treatment",
+      header: "Tax Treatment",
+      meta: { defaultHidden: true, label: "Tax Treatment" },
+      accessorFn: (row) => taxData?.holdings.find((h) => h.symbol === row.symbol)?.treatment ?? null,
+      cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+    },
   ];
 
   if (loading) return <div className="p-4 text-muted-foreground text-sm animate-pulse">Loading…</div>;

@@ -8,13 +8,13 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return {
       beforeFiles: [],
-      afterFiles: [
+      afterFiles: [],
+      fallback: [
         {
           source: "/api/:path*",
           destination: `${adminPanelUrl}/api/:path*`,
         },
       ],
-      fallback: [],
     };
   },
 };
