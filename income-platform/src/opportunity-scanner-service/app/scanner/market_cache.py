@@ -315,22 +315,28 @@ async def _fmp_key_metrics_ttm(symbol: str, client: httpx.AsyncClient) -> dict:
 
 async def _fmp_analyst_estimates(symbol: str, client: httpx.AsyncClient) -> dict:
     """
-    Fetch analyst price target and next earnings date from FMP.
-    Returns {analyst_price_target, next_earnings_date} or {}.
+    Fetch analyst consensus price target from FMP /price-target-consensus.
+    Returns {analyst_price_target} or {}.
     """
     result: dict = {}
     try:
         pt_resp = await client.get(
-            f"{settings.fmp_base_url}/analyst-estimates",
-            params={"symbol": symbol, "limit": 1, "apikey": settings.fmp_api_key},
+            f"{settings.fmp_base_url}/price-target-consensus",
+            params={"symbol": symbol, "apikey": settings.fmp_api_key},
             timeout=settings.fmp_request_timeout,
         )
         if pt_resp.status_code == 200:
             d = pt_resp.json()
             if isinstance(d, list) and d:
-                result["analyst_price_target"] = _safe_float(d[0].get("estimatedEpsAvg"))
+                result["analyst_price_target"] = _safe_float(
+                    d[0].get("targetConsensus") or d[0].get("priceTarget")
+                )
+            elif isinstance(d, dict) and d:
+                result["analyst_price_target"] = _safe_float(
+                    d.get("targetConsensus") or d.get("priceTarget")
+                )
     except Exception as exc:
-        logger.debug("FMP analyst-estimates %s failed: %s", symbol, exc)
+        logger.debug("FMP price-target-consensus %s failed: %s", symbol, exc)
     return result
 
 
@@ -481,22 +487,24 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
         async with sem:
             await asyncio.sleep(0.25)   # pace supplemental calls to prevent 429 bursts
             async with httpx.AsyncClient(timeout=settings.fmp_request_timeout) as client:
-                km, div, etf, tech, ttm, cr = await asyncio.gather(
+                km, div, etf, tech, ttm, cr, analyst = await asyncio.gather(
                     _fmp_key_metrics(sym, client),
                     _fmp_dividend_calendar(sym, client),
                     _fmp_etf_info(sym, client),
                     _fmp_technical_indicators(sym, client),
                     _fmp_key_metrics_ttm(sym, client),
                     _fmp_credit_rating(sym, client),
+                    _fmp_analyst_estimates(sym, client),
                     return_exceptions=True,
                 )
                 # Normalize exceptions to empty dicts / None
-                if isinstance(km, Exception):   km = {}
-                if isinstance(div, Exception):  div = {}
-                if isinstance(etf, Exception):  etf = {}
-                if isinstance(tech, Exception): tech = {}
-                if isinstance(ttm, Exception):  ttm = {}
-                if isinstance(cr, Exception):   cr = None
+                if isinstance(km, Exception):       km = {}
+                if isinstance(div, Exception):      div = {}
+                if isinstance(etf, Exception):      etf = {}
+                if isinstance(tech, Exception):     tech = {}
+                if isinstance(ttm, Exception):      ttm = {}
+                if isinstance(cr, Exception):       cr = None
+                if isinstance(analyst, Exception):  analyst = {}
 
                 merged: dict = {}
 
@@ -547,6 +555,10 @@ async def _fetch_supplemental(tickers: list[str]) -> dict[str, dict]:
                     merged["buyback_yield"] = ttm.get("buyback_yield")
                     if ttm.get("tangible_asset_value") is not None:
                         merged["tangible_asset_value"] = ttm["tangible_asset_value"]
+
+                # analyst consensus price target
+                if analyst:
+                    merged.update({k: v for k, v in analyst.items() if v is not None})
 
                 if merged:
                     result[sym.upper()] = merged
@@ -792,6 +804,7 @@ async def fetch_and_upsert(
                         credit_rating, debt_to_equity,
                         expense_ratio,
                         fmp_sector, fmp_industry,
+                        analyst_price_target,
                         is_tracked, track_reason,
                         snapshot_date, fetched_at
                     ) VALUES (
@@ -811,6 +824,7 @@ async def fetch_and_upsert(
                         :credit_rating, :debt_to_equity,
                         :expense_ratio,
                         :fmp_sector, :fmp_industry,
+                        :analyst_price_target,
                         TRUE, :track_reason,
                         :snapshot_date, :fetched_at
                     )
@@ -852,6 +866,7 @@ async def fetch_and_upsert(
                         expense_ratio            = COALESCE(EXCLUDED.expense_ratio,     platform_shared.market_data_cache.expense_ratio),
                         fmp_sector               = COALESCE(EXCLUDED.fmp_sector,        platform_shared.market_data_cache.fmp_sector),
                         fmp_industry             = COALESCE(EXCLUDED.fmp_industry,      platform_shared.market_data_cache.fmp_industry),
+                        analyst_price_target     = COALESCE(EXCLUDED.analyst_price_target, platform_shared.market_data_cache.analyst_price_target),
                         is_tracked               = TRUE,
                         track_reason             = EXCLUDED.track_reason,
                         snapshot_date            = EXCLUDED.snapshot_date,
@@ -897,8 +912,9 @@ async def fetch_and_upsert(
                     "credit_rating": s.get("credit_rating"),
                     "debt_to_equity": s.get("debt_to_equity"),
                     "expense_ratio": p.get("expense_ratio"),
-                    "fmp_sector":   "Fixed Income" if _is_cusip(sym) else p.get("sector")   or None,
-                    "fmp_industry": "Corporate Bond" if _is_cusip(sym) else p.get("industry") or None,
+                    "fmp_sector":            "Fixed Income" if _is_cusip(sym) else p.get("sector")   or None,
+                    "fmp_industry":          "Corporate Bond" if _is_cusip(sym) else p.get("industry") or None,
+                    "analyst_price_target":  s.get("analyst_price_target"),
                     "track_reason": track_reason,
                     "snapshot_date": today,
                     "fetched_at": now,

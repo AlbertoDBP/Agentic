@@ -129,7 +129,7 @@ def _run_gate(ticker: str, asset_class: str, market_data: dict):
     elif ac == "BDC":
         gate_result = _gate.evaluate_bdc(ticker, div_history_years,
                                          fundamentals.get("credit_rating"))
-    elif ac == "MREIT":
+    elif ac in ("MREIT", "MORTGAGE_REIT"):
         gate_result = _gate.evaluate_mortgage_reit(ticker, div_history_years,
                                                    fundamentals.get("credit_rating"))
     elif ac in ("REIT", "EQUITY_REIT"):

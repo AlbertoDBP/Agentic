@@ -194,6 +194,8 @@ SEED_RULES = [
                 "AGNC", "NLY", "MFA", "RITM", "PMT",
                 "EARN", "RC", "TWO", "CHMI", "ARR",
                 "IVR", "NYMT", "ACRE", "BXMT", "GPMT",
+                "AGNZ", "ARI", "BRSP", "KREF", "TRTX",
+                "SACH", "CLNC", "ABR", "LADR", "REFI",
             ]
         },
         "priority": 5,
@@ -224,6 +226,32 @@ SEED_RULES = [
     # ─────────────────────────────────────────
     # EQUITY_REIT
     # ─────────────────────────────────────────
+    {
+        "asset_class": "EQUITY_REIT",
+        "rule_type": "ticker_pattern",
+        "rule_config": {
+            "tickers": [
+                # Net lease / diversified REITs
+                "O", "NNN", "STOR", "EPRT", "ADC", "SRC",
+                # Industrial REITs
+                "STAG", "PLD", "EGP", "FR", "REXR",
+                # Healthcare REITs
+                "MPT", "VTR", "WELL", "OHI", "SBRA", "CTRE", "LTC",
+                # Office / Diversified
+                "BXP", "SLG", "HIW", "DEA", "PDM",
+                # Residential REITs
+                "EQR", "AVB", "CPT", "MAA", "UDR", "NHI",
+                # Retail REITs
+                "SPG", "MAC", "SKT", "KIM", "REG", "BRX",
+                # Self-storage
+                "PSA", "EXR", "CUBE", "LSI", "NSA",
+                # Other specialty
+                "AMT", "CCI", "SBAC", "UNITI", "IRM",
+            ]
+        },
+        "priority": 5,
+        "confidence_weight": 0.95,
+    },
     {
         "asset_class": "EQUITY_REIT",
         "rule_type": "metadata",
