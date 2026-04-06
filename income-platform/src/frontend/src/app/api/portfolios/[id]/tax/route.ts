@@ -16,7 +16,6 @@ export async function GET(
 ) {
   const { id: portfolioId } = await params;
   const authHeader = req.headers.get("authorization") ?? "";
-  console.log(`[tax-route] GET /api/portfolios/${portfolioId}/tax — token: ${authHeader ? "present" : "missing"}`);
 
   try {
     // 1. Fetch user tax preferences
@@ -25,7 +24,6 @@ export async function GET(
       signal: AbortSignal.timeout(5_000),
     });
     const prefs = prefResp.ok ? await prefResp.json() : {};
-    console.log(`[tax-route] prefs status: ${prefResp.status}`);
 
     // 2. Call tax service optimize/portfolio (use service token — tax service
     //    uses its own JWT_SECRET, separate from the admin-panel user JWT)
@@ -43,12 +41,9 @@ export async function GET(
       }),
       signal: AbortSignal.timeout(30_000),
     });
-    console.log(`[tax-route] tax service status: ${taxResp.status} for portfolio ${portfolioId}`);
-
     if (!taxResp.ok) {
       const err = await taxResp.json().catch(() => ({}));
       const detail = (err as { detail?: string }).detail ?? "Tax service error";
-      console.log(`[tax-route] tax service error: ${detail}`);
       return NextResponse.json({ detail }, { status: taxResp.status });
     }
 
