@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 
@@ -32,12 +33,15 @@ def _build_url(raw_url: str) -> str:
     return url
 
 
+# NullPool: create a fresh connection per session — avoids pgbouncer
+# transaction-mode incompatibility with asyncpg named prepared statements.
+# (statement_cache_size=0 disables the cache but asyncpg still uses named
+# prepared statements, which pgbouncer can route to a different backend
+# between Parse and Bind, causing "prepared statement does not exist".)
 engine = create_async_engine(
     _build_url(settings.database_url),
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
     echo=settings.db_echo,
-    future=True,
+    poolclass=NullPool,
     connect_args={"statement_cache_size": 0},
 )
 
