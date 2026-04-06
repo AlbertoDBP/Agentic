@@ -117,7 +117,7 @@ def _run_gate(ticker: str, asset_class: str, market_data: dict):
         etf_data = market_data.get("etf_data") or {}
         gate_result = _gate.evaluate_covered_call_etf(CoveredCallETFGateInput(
             ticker=ticker,
-            distribution_history_years=div_history_years,
+            distribution_history_months=div_history_years * 12 if div_history_years is not None else None,
             aum_millions=etf_data.get("aum_millions"),
             track_record_years=etf_data.get("track_record_years"),
         ))
