@@ -182,7 +182,7 @@ async def evaluate_hhs(request: HHSRequest, db: Session = Depends(get_db)):
     elif gate_result.status == GateStatus.INSUFFICIENT_DATA:
         hhs = _wrapper.from_gate_result(gate_result, asset_class=asset_class, ticker=ticker)
     else:
-        wp = weight_profile_loader.load(asset_class, db)
+        wp = weight_profile_loader.get_active_profile(asset_class, db)
         score = _scorer.score(
             ticker=ticker,
             asset_class=asset_class,
