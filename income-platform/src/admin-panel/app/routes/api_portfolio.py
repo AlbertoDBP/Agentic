@@ -1355,7 +1355,7 @@ def update_position(position_id: str, update: PositionUpdate):
                     sector            = COALESCE(:sector, sector),
                     dca_stage         = COALESCE(:dca_stage, dca_stage),
                     drip_enabled      = COALESCE(:drip_enabled, drip_enabled),
-                    acquired_date     = COALESCE(:acquired_date::DATE, acquired_date),
+                    acquired_date     = COALESCE(CAST(:acquired_date AS DATE), acquired_date),
                     updated_at        = NOW()
                 WHERE id = :id AND status = 'ACTIVE'
             """), {
