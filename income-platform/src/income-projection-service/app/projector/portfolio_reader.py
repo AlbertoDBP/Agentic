@@ -33,6 +33,7 @@ async def init_pool() -> None:
             min_size=1,
             max_size=5,
             ssl="require" if ssl_required else None,
+            statement_cache_size=0,  # required for pgbouncer transaction-mode
         )
         logger.info("asyncpg pool initialised")
     except Exception as exc:
