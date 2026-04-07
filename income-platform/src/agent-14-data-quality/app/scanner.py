@@ -16,6 +16,8 @@ _VALID_FIELD_NAMES: frozenset[str] = frozenset({
     "debt_to_equity", "interest_coverage_ratio", "price_to_book",
     "profit_margin", "free_cash_flow_yield",
     "chowder_number", "consecutive_growth_yrs",
+    "return_on_equity", "net_debt_ebitda", "yield_5yr_avg",
+    "insider_ownership_pct", "credit_rating",
 })
 
 

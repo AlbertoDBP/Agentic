@@ -66,3 +66,18 @@ async def ingest_article(request: Request):
             logger.error(f"Ingest request failed: {e}")
 
     return RedirectResponse("/newsletters", status_code=303)
+
+
+@router.post("/sync-suggestions/{article_id}")
+async def sync_suggestions(article_id: int, request: Request):
+    """Push BUY recommendations from an already-ingested article into analyst_suggestions."""
+    url = f"{get_service_url('02')}/analysts/articles/{article_id}/sync-suggestions"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, headers=auth_headers())
+            result = resp.json() if resp.status_code < 300 else {}
+            synced = result.get("synced", 0)
+            logger.info(f"Sync suggestions article {article_id}: {synced} written")
+    except Exception as e:
+        logger.error(f"Sync suggestions failed for article {article_id}: {e}")
+    return RedirectResponse("/newsletters", status_code=303)

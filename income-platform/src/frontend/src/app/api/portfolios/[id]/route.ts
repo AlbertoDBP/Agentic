@@ -59,7 +59,7 @@ export async function PATCH(
   const { id: portfolioId } = await params;
   try {
     const body = await req.text();
-    const res = await fetch(`${ADMIN_PANEL}/portfolios/${portfolioId}`, {
+    const res = await fetch(`${ADMIN_PANEL}/api/portfolios/${portfolioId}`, {
       method: "PATCH",
       headers: headers(),
       body,

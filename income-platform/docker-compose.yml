@@ -536,6 +536,8 @@ services:
       - ADMIN_PANEL_URL=http://admin-panel:8100
       - BROKER_URL=http://broker-service:8013
       - TAX_SERVICE_URL=http://tax-optimization-service:8005
+      - AGENT14_URL=http://agent-14-data-quality:8014
+      - PROJECTION_SERVICE_URL=http://agent-09-income-projection:8009
       - SERVICE_TOKEN=${SERVICE_TOKEN}
     ports:
       - "8200:8200"

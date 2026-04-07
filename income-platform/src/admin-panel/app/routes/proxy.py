@@ -291,6 +291,11 @@ async def proxy_ttl_config_put(request: Request):
     return await _proxy("PUT", "agent02", "/suggestions/ttl-config", request)
 
 
+@router.post("/agent02/articles/{article_id}/sync-suggestions")
+async def proxy_sync_suggestions(article_id: int, request: Request):
+    return await _proxy("POST", "agent02", f"/analysts/articles/{article_id}/sync-suggestions", request)
+
+
 # ─── Agent 12 — Proposals ─────────────────────────────────────────────────────
 
 @router.get("/proposals")

@@ -2,7 +2,7 @@
 """Self-healing engine — fetches missing fields and writes them back to market_data_cache."""
 import logging
 from enum import Enum
-from typing import Optional, Set, Tuple
+from typing import Any, Optional, Set, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -37,7 +37,7 @@ class HealerEngine:
         field_name: str,
         primary: Optional[str],
         fallback: Optional[str],
-    ) -> Tuple[Optional[float], dict, Optional[str]]:
+    ) -> Tuple[Optional[Any], dict, Optional[str]]:
         """Try primary then fallback. Returns (value, diagnostic, source_used)."""
         sources = [(primary, self.fmp if primary == "fmp" else self.massive),
                    (fallback, self.fmp if fallback == "fmp" else self.massive)]

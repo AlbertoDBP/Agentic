@@ -256,7 +256,15 @@ async def sync_broker(req: SyncRequest, db: Session = Depends(get_db)):
         db.execute(text("""
             INSERT INTO platform_shared.securities (symbol, asset_type, is_active, created_at, updated_at)
             VALUES (:sym, :at, TRUE, NOW(), NOW())
-            ON CONFLICT (symbol) DO NOTHING
+            ON CONFLICT (symbol) DO UPDATE SET
+                is_active = TRUE,
+                updated_at = NOW(),
+                asset_type = CASE
+                    WHEN platform_shared.securities.asset_type IS NULL
+                      OR platform_shared.securities.asset_type = 'UNKNOWN'
+                    THEN EXCLUDED.asset_type
+                    ELSE platform_shared.securities.asset_type
+                END
         """), {"sym": pos.symbol, "at": pos.asset_type})
 
         annual_income = None  # will be populated by income-scoring service

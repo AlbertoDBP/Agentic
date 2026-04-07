@@ -293,6 +293,99 @@ def ingest_article_by_id(payload: dict, db: Session = Depends(get_db)):
     }
 
 
+@router.post("/articles/{article_id}/sync-suggestions", tags=["Articles"])
+def sync_suggestions_for_article(article_id: int, db: Session = Depends(get_db)):
+    """
+    Backfill missing analyst_suggestions for an already-ingested article.
+    For each article_framework row, if no active suggestion exists for that
+    (analyst_id, ticker) pair, write one now.  Safe to call multiple times.
+    """
+    from app.processors import suggestion_store
+
+    article = db.query(AnalystArticle).filter(AnalystArticle.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail=f"Article {article_id} not found")
+
+    # Load tickers: frameworks first, then any BUY recommendations with no framework
+    rows = db.execute(text("""
+        SELECT
+            af.id            AS fw_id,
+            COALESCE(af.ticker, ar.ticker) AS ticker,
+            af.price_guidance_type,
+            af.price_guidance_value,
+            ar.recommendation,
+            ar.sentiment_score,
+            ar.asset_class,
+            aa.published_at
+        FROM platform_shared.analyst_articles aa
+        LEFT JOIN platform_shared.analyst_recommendations ar
+               ON ar.article_id = aa.id
+        LEFT JOIN platform_shared.article_frameworks af
+               ON af.article_id = aa.id AND af.ticker = ar.ticker
+        WHERE aa.id = :aid
+          AND ar.ticker IS NOT NULL
+    """), {"aid": article_id}).fetchall()
+
+    if not rows:
+        return {"synced": 0, "detail": "No recommendations found for this article"}
+
+    synced = 0
+    for row in rows:
+        if not suggestion_store.should_write_suggestion(row.recommendation):
+            continue
+        # Only write if no active suggestion already exists for this analyst+ticker
+        existing = db.execute(text("""
+            SELECT 1 FROM platform_shared.analyst_suggestions
+            WHERE analyst_id = :aid AND ticker = :ticker AND is_active = TRUE
+            LIMIT 1
+        """), {"aid": article.analyst_id, "ticker": row.ticker}).fetchone()
+        if existing:
+            continue
+
+        fw_id = row.fw_id
+        if fw_id is None:
+            # No framework exists — create a minimal one so the FK constraint is satisfied
+            import json as _json
+            result = db.execute(text("""
+                INSERT INTO platform_shared.article_frameworks
+                    (article_id, analyst_id, ticker, valuation_metrics_cited,
+                     thresholds_identified, catalysts, risk_factors_cited, macro_factors)
+                VALUES (:article_id, :analyst_id, :ticker,
+                    '[]'::jsonb, '{}'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
+                ON CONFLICT DO NOTHING RETURNING id
+            """), {"article_id": article_id, "analyst_id": article.analyst_id, "ticker": row.ticker})
+            inserted = result.fetchone()
+            db.flush()
+            if inserted:
+                fw_id = inserted[0]
+            else:
+                # Already exists after race — fetch it
+                fw_id = db.execute(text("""
+                    SELECT id FROM platform_shared.article_frameworks
+                    WHERE article_id = :aid AND ticker = :ticker LIMIT 1
+                """), {"aid": article_id, "ticker": row.ticker}).scalar()
+            if not fw_id:
+                continue
+
+        suggestion_store.upsert_suggestion(
+            db=db,
+            analyst_id=article.analyst_id,
+            article_framework_id=fw_id,
+            ticker=row.ticker,
+            asset_class=row.asset_class,
+            recommendation=row.recommendation,
+            sentiment_score=float(row.sentiment_score) if row.sentiment_score is not None else None,
+            price_guidance_type=row.price_guidance_type,
+            price_guidance_value=row.price_guidance_value,
+            sourced_at=row.published_at,
+        )
+        db.commit()
+        synced += 1
+        logger.info(f"sync-suggestions: wrote suggestion for article={article_id} ticker={row.ticker}")
+
+    return {"synced": synced, "article_id": article_id, "analyst_id": article.analyst_id}
+
+
 @router.put("/{analyst_id}", response_model=AnalystResponse, tags=["Analysts"])
 def update_analyst(
     analyst_id: int,

@@ -113,7 +113,9 @@ async def aggregate_portfolio(
         score = scores.get(ticker)
 
         # Asset class concentration — prefer asset_type from securities (canonical)
-        ac = p.get("asset_type") or (score or {}).get("asset_class") or "UNKNOWN"
+        # Skip "UNKNOWN" placeholder — fall through to score-based classification
+        raw_at = (p.get("asset_type") or "").upper()
+        ac = raw_at if raw_at and raw_at != "UNKNOWN" else ((score or {}).get("asset_class") or "UNKNOWN")
         asset_class_totals[ac] = asset_class_totals.get(ac, 0) + val
 
         # Sector concentration (from position data)
@@ -154,8 +156,14 @@ async def aggregate_portfolio(
         naa_yield = round(total_income / total_value, 4) if total_value > 0 else None
         naa_yield_pre_tax = True
 
-    # Aggregate Yield on Cost = annual income / total cost basis
-    agg_yoc = round(total_income / total_cost, 4) if total_cost > 0 else None
+    # Aggregate Yield on Cost = income / total cost basis.
+    # Use after-tax income (same basis as NAA Yield) to stay comparable: if tax service
+    # is available, rebase the after-tax yield from current value to cost basis.
+    if _tax_nay is not None and total_value > 0 and total_cost > 0:
+        _after_tax_income = _tax_nay * float(total_value)   # recover dollar amount
+        agg_yoc = round(_after_tax_income / float(total_cost), 4)
+    else:
+        agg_yoc = round(total_income / total_cost, 4) if total_cost > 0 else None
 
     # HHI on position weights
     weights = [p.get("current_value", 0) / total_value for p in positions if total_value > 0]

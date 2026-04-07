@@ -238,7 +238,7 @@ SEED_RULES = [
                 # Healthcare REITs
                 "MPT", "VTR", "WELL", "OHI", "SBRA", "CTRE", "LTC",
                 # Office / Diversified
-                "BXP", "SLG", "HIW", "DEA", "PDM",
+                "BXP", "SLG", "HIW", "DEA", "PDM", "ONL",
                 # Residential REITs
                 "EQR", "AVB", "CPT", "MAA", "UDR", "NHI",
                 # Retail REITs
