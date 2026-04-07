@@ -64,6 +64,7 @@ def _fake_profile(
     m.activated_at = datetime.now(timezone.utc)
     m.superseded_at = None
     m.superseded_by_id = None
+    m.benchmark_ticker = None
     return m
 
 

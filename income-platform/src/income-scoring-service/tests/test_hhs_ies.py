@@ -35,12 +35,12 @@ class TestComputeHhs:
         assert out["income_pillar_score"] == 75.0  # 30/40 * 100
         assert out["durability_pillar_score"] == 75.0
 
-    def test_insufficient_data_returns_none_hhs(self):
+    def test_insufficient_data_returns_provisional_hhs(self):
+        # INSUFFICIENT_DATA: score is still computed but hhs_status is prefixed with "~"
         r = FakeResult()
         out = _compute_hhs(r, DEFAULT_PROFILE, "INSUFFICIENT_DATA")
-        assert out["hhs_score"] is None
-        assert out["unsafe_flag"] is None
-        assert out["hhs_status"] == "INSUFFICIENT"
+        assert out["hhs_score"] is not None
+        assert out["hhs_status"].startswith("~")
 
     def test_unsafe_flag_when_durability_at_threshold(self):
         dur_score = ((_HHS_UNSAFE_THRESHOLD / 100) * 40)  # 8.0 pts → 20/100 normalized
