@@ -82,7 +82,7 @@ async def get_positions(portfolio_id: str) -> list[dict]:
                 portfolio_weight_pct,
                 acquired_date
             FROM platform_shared.positions
-            WHERE portfolio_id = $1 AND status = 'active'
+            WHERE portfolio_id = $1 AND UPPER(status) = 'ACTIVE'
             """,
             portfolio_id,
         )
