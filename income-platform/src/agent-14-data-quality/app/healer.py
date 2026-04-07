@@ -1,5 +1,6 @@
 # src/agent-14-data-quality/app/healer.py
 """Self-healing engine — fetches missing fields and writes them back to market_data_cache."""
+import json
 import logging
 from enum import Enum
 from typing import Any, Optional, Set, Tuple
@@ -120,12 +121,13 @@ class HealerEngine:
                     failed += 1
             else:
                 new_attempts = issue.attempt_count + 1
+                diag_json = json.dumps(diag) if diag else None
                 if new_attempts >= self.max_attempts:
                     # Escalate to unresolvable
                     db.execute(
                         text("UPDATE platform_shared.data_quality_issues "
                              "SET status='unresolvable', diagnostic=:diag, updated_at=NOW() WHERE id=:id"),
-                        {"diag": diag, "id": issue.id},
+                        {"diag": diag_json, "id": issue.id},
                     )
                     logger.warning(
                         f"UNRESOLVABLE: {issue.symbol}/{issue.field_name} — {diag.get('code')}"
@@ -135,7 +137,7 @@ class HealerEngine:
                     db.execute(
                         text("UPDATE platform_shared.data_quality_issues "
                              "SET status='missing', diagnostic=:diag, updated_at=NOW() WHERE id=:id"),
-                        {"diag": diag, "id": issue.id},
+                        {"diag": diag_json, "id": issue.id},
                     )
                     failed += 1
 
