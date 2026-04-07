@@ -12,9 +12,10 @@ logger = logging.getLogger(__name__)
 # Allowlist of columns that exist in market_data_cache and can be used in dynamic SQL.
 _VALID_FIELD_NAMES: frozenset[str] = frozenset({
     "price", "sma_50", "sma_200", "rsi_14d", "week52_high", "week52_low",
-    "dividend_yield", "payout_ratio", "pe_ratio", "forward_pe",
+    "dividend_yield", "div_frequency", "payout_ratio", "pe_ratio", "forward_pe",
     "debt_to_equity", "interest_coverage_ratio", "price_to_book",
     "profit_margin", "free_cash_flow_yield",
+    "nav_value", "nav_discount_pct",
     "chowder_number", "consecutive_growth_yrs",
     "return_on_equity", "net_debt_ebitda", "yield_5yr_avg",
     "insider_ownership_pct", "credit_rating",
