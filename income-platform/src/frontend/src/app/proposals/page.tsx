@@ -131,6 +131,7 @@ export default function ProposalsPage() {
     isLive: boolean;
     broker?: string;
     orderIds: string[];
+    failedTickers: string[];
   } | null>(null);
 
   // Load proposals
@@ -211,6 +212,7 @@ export default function ProposalsPage() {
     const isBrokerConnected = !!focusedPortfolio.broker;
     const newLiveOrders: LiveOrder[] = [];
     const newPaperOrders: PaperOrder[] = [];
+    const failedTickers: string[] = [];
 
     for (const proposal of focusedProposals) {
       const p = params[proposal.id];
@@ -254,7 +256,7 @@ export default function ProposalsPage() {
         });
         const data = await resp.json();
         if (!resp.ok) {
-          console.error(`Order failed for ${proposal.ticker}:`, data.detail);
+          failedTickers.push(proposal.ticker);
           continue;
         }
 
@@ -278,8 +280,8 @@ export default function ProposalsPage() {
           filled_at: null,
           submitted_at: new Date().toISOString(),
         });
-      } catch (err) {
-        console.error(`Order error for ${proposal.ticker}:`, err);
+      } catch {
+        failedTickers.push(proposal.ticker);
       }
     }
 
@@ -300,12 +302,21 @@ export default function ProposalsPage() {
         isLive: true,
         broker: focusedPortfolio.broker ?? "Broker",
         orderIds: newLiveOrders.map((o) => o.order_id),
+        failedTickers,
       });
     } else if (!isBrokerConnected && newPaperOrders.length > 0) {
       setSubmissionSummary({
         count: newPaperOrders.length,
         isLive: false,
         orderIds: [],
+        failedTickers,
+      });
+    } else if (failedTickers.length > 0) {
+      setSubmissionSummary({
+        count: 0,
+        isLive: isBrokerConnected,
+        orderIds: [],
+        failedTickers,
       });
     }
 
@@ -708,25 +719,34 @@ export default function ProposalsPage() {
           <div className="flex flex-col h-full">
             {/* Submission confirmation banner */}
             {submissionSummary && (
-              <div className={cn(
-                "px-5 py-3 border-b text-sm font-medium",
-                submissionSummary.isLive
-                  ? "bg-emerald-950/30 border-emerald-800/40 text-emerald-300"
-                  : "bg-blue-950/30 border-blue-800/40 text-blue-300"
-              )}>
-                {submissionSummary.isLive ? (
-                  <>
-                    ✓ {submissionSummary.count} order{submissionSummary.count !== 1 ? "s" : ""} submitted to {submissionSummary.broker}.
-                    {submissionSummary.orderIds.length > 0 && (
-                      <span className="ml-2 text-xs font-normal opacity-80">
-                        IDs: {submissionSummary.orderIds.join(", ")}
-                      </span>
+              <div className="border-b">
+                {submissionSummary.count > 0 && (
+                  <div className={cn(
+                    "px-5 py-3 text-sm font-medium",
+                    submissionSummary.isLive
+                      ? "bg-emerald-950/30 border-b border-emerald-800/40 text-emerald-300"
+                      : "bg-blue-950/30 border-b border-blue-800/40 text-blue-300"
+                  )}>
+                    {submissionSummary.isLive ? (
+                      <>
+                        ✓ {submissionSummary.count} order{submissionSummary.count !== 1 ? "s" : ""} submitted to {submissionSummary.broker}.
+                        {submissionSummary.orderIds.length > 0 && (
+                          <span className="ml-2 text-xs font-normal opacity-80">
+                            IDs: {submissionSummary.orderIds.join(", ")}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        📋 {submissionSummary.count} paper order{submissionSummary.count !== 1 ? "s" : ""} recorded. Execute manually and mark filled below.
+                      </>
                     )}
-                  </>
-                ) : (
-                  <>
-                    📋 {submissionSummary.count} paper order{submissionSummary.count !== 1 ? "s" : ""} recorded. Execute manually and mark filled below.
-                  </>
+                  </div>
+                )}
+                {submissionSummary.failedTickers.length > 0 && (
+                  <div className="px-5 py-3 text-sm font-medium bg-red-950/30 text-red-400">
+                    ✗ {submissionSummary.failedTickers.length} order{submissionSummary.failedTickers.length !== 1 ? "s" : ""} failed: {submissionSummary.failedTickers.join(", ")}. Check broker connection and try again.
+                  </div>
                 )}
               </div>
             )}

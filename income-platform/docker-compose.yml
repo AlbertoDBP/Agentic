@@ -22,6 +22,7 @@ services:
       - LOG_CONNECTIONS=0
       - LOG_DISCONNECTIONS=0
     restart: unless-stopped
+    mem_limit: 128m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 || exit 1"]
       interval: 10s
@@ -51,6 +52,7 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: unless-stopped
+    mem_limit: 384m
     command: python3 src/market-data-service/main.py
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
@@ -82,6 +84,7 @@ services:
     ports:
       - "8002:8002"
     restart: unless-stopped
+    mem_limit: 256m
     depends_on:
       market-data-service:
         condition: service_healthy
@@ -116,6 +119,7 @@ services:
     ports:
       - "8003:8003"
     restart: unless-stopped
+    mem_limit: 512m
     depends_on:
       market-data-service:
         condition: service_healthy
@@ -146,6 +150,7 @@ services:
     ports:
       - "8004:8004"
     restart: unless-stopped
+    mem_limit: 256m
     depends_on:
       market-data-service:
         condition: service_healthy
@@ -184,6 +189,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 256m
 
   agent-06-scenario-simulation:
     build:
@@ -209,6 +215,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 256m
 
   agent-07-opportunity-scanner:
     build:
@@ -237,6 +244,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 256m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent 08 — Rebalancing Service
@@ -268,6 +276,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 256m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent 09 — Income Projection Service
@@ -295,6 +304,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 256m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent 10 — NAV Monitor Service
@@ -322,6 +332,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 256m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent 11 — Smart Alert Service
@@ -349,6 +360,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 256m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent 12 — Proposal Service
@@ -388,6 +400,7 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+    mem_limit: 256m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Broker Service — multi-provider account sync + order execution
@@ -418,6 +431,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 256m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent 14 — Data Quality Engine
@@ -438,6 +452,7 @@ services:
     ports:
       - "8014:8014"
     restart: unless-stopped
+    mem_limit: 256m
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -487,6 +502,7 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    mem_limit: 192m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Admin Panel — Web dashboard for platform management
@@ -516,6 +532,7 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    mem_limit: 384m
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Frontend — User-facing investment dashboard (Next.js)
@@ -551,6 +568,7 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+    mem_limit: 512m
 
 volumes:
   scheduler-config:

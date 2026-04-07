@@ -393,7 +393,7 @@ export default function AlertsPage() {
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
-                            onClick={() => router.push(`/portfolio/${encodeURIComponent(alert.symbol)}`)}
+                            onClick={() => router.push(`/portfolios/${encodeURIComponent(alert.symbol)}`)}
                             className="rounded-md border border-border bg-secondary px-2 py-1 text-xs font-medium hover:bg-accent transition-colors"
                           >
                             View

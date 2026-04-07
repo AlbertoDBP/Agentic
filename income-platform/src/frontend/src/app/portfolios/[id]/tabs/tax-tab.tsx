@@ -357,11 +357,7 @@ export function TaxTab({ portfolioId, refreshKey = 0, onTaxDataLoaded }: TaxTabP
                 <DetailRow label="Gross Yield" value={`${(selected.gross_yield * 100).toFixed(2)}%`} />
                 <DetailRow label="Treatment" value={selected.treatment.replace(/_/g, " ")} />
                 <div className="border-t border-border/40 pt-1.5 space-y-1">
-                  <DetailRow label="Federal Tax" value={`−${((selected.effective_tax_rate - 0) * 100 * 0.7).toFixed(1)}%`} className="text-red-400" />
-                  <DetailRow label="State Tax" value={`−${((selected.effective_tax_rate) * 100 * 0.25).toFixed(1)}%`} className="text-red-400" />
-                  {selected.effective_tax_rate > 0.50 && (
-                    <DetailRow label="NIIT (3.8%)" value="−3.8%" className="text-red-400" />
-                  )}
+                  <DetailRow label="Tax Drag" value={`−${(selected.effective_tax_rate * 100).toFixed(1)}%`} className="text-red-400" />
                   <DetailRow label="After-Tax Yield" value={`${(selected.after_tax_yield * 100).toFixed(2)}%`} />
                 </div>
                 {selected.expense_ratio != null && selected.expense_ratio > 0 && (
