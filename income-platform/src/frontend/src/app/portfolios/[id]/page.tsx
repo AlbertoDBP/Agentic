@@ -100,6 +100,8 @@ export default function PortfolioPage() {
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tabRefreshKey, setTabRefreshKey] = useState(0);
+  const [editingCash, setEditingCash] = useState(false);
+  const [cashInput, setCashInput] = useState("");
   const [health, setHealth] = useState<{ gate: GateStatus | null; refresh_log: RefreshLog | null }>({
     gate: null,
     refresh_log: null,
@@ -148,6 +150,18 @@ export default function PortfolioPage() {
     }
   };
 
+  const saveCashBalance = async () => {
+    const val = parseFloat(cashInput.replace(/[^0-9.]/g, ""));
+    if (isNaN(val)) { setEditingCash(false); return; }
+    await fetch(`/api/portfolios/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cash_balance: val }),
+    }).catch(() => {});
+    setEditingCash(false);
+    refetch();
+  };
+
   const setTab = (tab: Tab) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", tab);
@@ -161,6 +175,9 @@ export default function PortfolioPage() {
       helpText: HHS_HELP.agg_hhs },
     { label: "NAA Yield",   value: summary?.naa_yield != null ? `${(summary.naa_yield * 100).toFixed(2)}%` : "—", colorClass: summary?.naa_yield != null ? "text-green-400" : undefined, helpText: HHS_HELP.naa_yield },
     { label: "Value",       value: summary ? formatCurrency(summary.total_value) : "—" },
+    { label: "Invested",    value: summary?.total_cost != null ? formatCurrency(summary.total_cost) : "—" },
+    { label: "Unreal. G/L", value: summary?.unrealized_gl != null ? formatCurrency(summary.unrealized_gl) : "—",
+      colorClass: summary?.unrealized_gl != null ? (summary.unrealized_gl >= 0 ? "text-green-400" : "text-red-400") : undefined },
     { label: "Ann. Income", value: summary ? formatCurrency(summary.annual_income) : "—", colorClass: "text-blue-400" },
     { label: "HHI",         value: summary?.hhi?.toFixed(3) ?? "—",
       colorClass: (summary?.hhi ?? 0) > 0.10 ? "text-amber-400" : undefined, helpText: HHS_HELP.hhi },
@@ -210,7 +227,29 @@ export default function PortfolioPage() {
                 {(summary.agg_yoc * 100).toFixed(2)}% YoC
               </span>
             )}
-            {summary?.last_refresh && <span>· {new Date(summary.last_refresh).toLocaleDateString()}</span>}
+            {summary?.last_refresh && <span>· Data: {new Date(summary.last_refresh).toLocaleDateString()}</span>}
+            {/* Cash balance — click to edit */}
+            {editingCash ? (
+              <span className="flex items-center gap-1">
+                <span>Cash:</span>
+                <input
+                  autoFocus
+                  className="w-24 bg-muted border border-border rounded px-1 py-0.5 text-foreground text-xs"
+                  value={cashInput}
+                  onChange={(e) => setCashInput(e.target.value)}
+                  onBlur={saveCashBalance}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveCashBalance(); if (e.key === "Escape") setEditingCash(false); }}
+                />
+              </span>
+            ) : (
+              <button
+                className="text-muted-foreground hover:text-foreground"
+                title="Click to update cash balance"
+                onClick={() => { setCashInput(summary?.cash_balance?.toFixed(2) ?? "0"); setEditingCash(true); }}
+              >
+                Cash: {summary?.cash_balance != null ? formatCurrency(summary.cash_balance) : <span className="text-muted-foreground/50 italic">—</span>}
+              </button>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1">

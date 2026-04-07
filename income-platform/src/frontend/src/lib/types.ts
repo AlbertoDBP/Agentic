@@ -299,9 +299,12 @@ export interface PortfolioListItem {
   name: string;
   tax_status?: string;
   broker?: string;
+  cash_balance?: number | null;
   last_refresh?: string | null;
   holding_count: number;
   total_value: number;
+  total_cost?: number | null;
+  unrealized_gl?: number | null;
   annual_income: number;
   naa_yield?: number | null;
   naa_yield_pre_tax?: boolean;

@@ -670,7 +670,7 @@ export function PortfolioTab({ portfolioId, refreshKey = 0, taxData }: Portfolio
         <DataTable
           columns={columns}
           data={positions}
-          storageKey={`portfolio-tab-${portfolioId}`}
+          storageKey={`portfolio-tab-v2-${portfolioId}`}
           enableRowSelection
           onRowClick={(row) =>
             setSelected((s) => (s?.symbol === row.symbol ? null : row))

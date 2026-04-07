@@ -60,7 +60,7 @@ def _run_scan_background(market_refreshed_at: Optional[str]):
                 SELECT DISTINCT p.id, :ts::TIMESTAMPTZ, NOW()
                 FROM platform_shared.portfolios p
                 JOIN platform_shared.positions pos ON pos.portfolio_id = p.id
-                WHERE pos.quantity > 0 AND p.is_active = TRUE
+                WHERE pos.quantity > 0 AND p.status = 'ACTIVE'
                 ON CONFLICT (portfolio_id) DO UPDATE SET
                     market_data_refreshed_at = :ts::TIMESTAMPTZ, updated_at = NOW()
             """), {"ts": market_refreshed_at})
@@ -71,7 +71,7 @@ def _run_scan_background(market_refreshed_at: Optional[str]):
         portfolios = db.execute(text("""
             SELECT DISTINCT p.id FROM platform_shared.portfolios p
             JOIN platform_shared.positions pos ON pos.portfolio_id = p.id
-            WHERE pos.quantity > 0 AND p.is_active = TRUE
+            WHERE pos.quantity > 0 AND p.status = 'ACTIVE'
         """)).fetchall()
         for p in portfolios:
             evaluate_gate(db, str(p.id))
@@ -234,13 +234,25 @@ def reclassify(issue_id: int, db: Session = Depends(get_db)):
 @router.get("/refresh-log/{portfolio_id}", dependencies=[Depends(verify_token)])
 def get_refresh_log(portfolio_id: str, db: Session = Depends(get_db)):
     row = db.execute(
-        text("SELECT * FROM platform_shared.data_refresh_log WHERE portfolio_id=:pid"),
+        text("""
+            SELECT *,
+                EXTRACT(EPOCH FROM (NOW() - market_data_refreshed_at)) / 3600.0
+                    AS market_staleness_hrs
+            FROM platform_shared.data_refresh_log
+            WHERE portfolio_id = :pid
+        """),
         {"pid": portfolio_id},
     ).fetchone()
     if not row:
         return {"portfolio_id": portfolio_id, "market_data_refreshed_at": None,
                 "scores_recalculated_at": None, "market_staleness_hrs": None}
-    return dict(row._mapping)
+    result = dict(row._mapping)
+    # Serialize timestamps
+    for k in ("market_data_refreshed_at", "scores_recalculated_at", "updated_at"):
+        v = result.get(k)
+        if v and hasattr(v, "isoformat"):
+            result[k] = v.isoformat()
+    return result
 
 
 # ── Field requirements (admin) ────────────────────────────────────────────────

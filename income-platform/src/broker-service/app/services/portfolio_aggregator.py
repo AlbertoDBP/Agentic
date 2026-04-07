@@ -188,12 +188,16 @@ async def aggregate_portfolio(
         for p in positions_with_income
     ]
 
+    unrealized_gl = round(total_value - total_cost, 2) if total_cost > 0 else None
+
     return {
         "agg_hhs": agg_hhs,
         "naa_yield": naa_yield,
         "naa_yield_pre_tax": naa_yield_pre_tax,
         "agg_yoc": agg_yoc,
         "total_value": round(total_value, 2),
+        "total_cost": round(total_cost, 2),
+        "unrealized_gl": unrealized_gl,
         "annual_income": round(total_income, 2),
         "total_return": total_return,
         "hhi": hhi,
@@ -209,7 +213,8 @@ async def aggregate_portfolio(
 def _empty_aggregate() -> dict:
     return {
         "agg_hhs": None, "naa_yield": None, "naa_yield_pre_tax": True, "agg_yoc": None,
-        "total_value": 0.0, "annual_income": 0.0, "total_return": None, "hhi": 0.0,
+        "total_value": 0.0, "total_cost": 0.0, "unrealized_gl": None,
+        "annual_income": 0.0, "total_return": None, "hhi": 0.0,
         "unsafe_count": 0, "gate_fail_count": 0, "holding_count": 0,
         "concentration_by_class": [], "concentration_by_sector": [],
         "top_income_holdings": [],

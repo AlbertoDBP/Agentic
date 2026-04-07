@@ -147,6 +147,7 @@ class PortfolioUpdate(BaseModel):
     name: Optional[str] = None
     account_type: Optional[str] = None
     broker: Optional[str] = None
+    cash_balance: Optional[float] = None
 
 
 class PortfolioSettings(BaseModel):
@@ -201,6 +202,12 @@ def update_portfolio(portfolio_id: str, body: PortfolioUpdate):
                     SET portfolio_name = :name, updated_at = NOW()
                     WHERE id = :pid
                 """), {"name": body.name, "pid": portfolio_id})
+            if body.cash_balance is not None:
+                conn.execute(text("""
+                    UPDATE platform_shared.portfolios
+                    SET cash_balance = :cash, updated_at = NOW()
+                    WHERE id = :pid
+                """), {"cash": body.cash_balance, "pid": portfolio_id})
             if body.account_type is not None or body.broker is not None:
                 updates, params = [], {"pid": portfolio_id}
                 if body.account_type is not None:

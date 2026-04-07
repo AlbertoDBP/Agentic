@@ -650,7 +650,11 @@ async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
     """Full portfolio summary for the portfolio page."""
     row = db.execute(text("""
         SELECT p.id, p.portfolio_name AS name, a.account_type AS tax_status, a.broker,
-               p.last_refreshed_at
+               p.last_refreshed_at, p.cash_balance,
+               (SELECT MAX(mdc.snapshot_date)
+                FROM platform_shared.market_data_cache mdc
+                JOIN platform_shared.positions pos ON pos.symbol = mdc.symbol
+                WHERE pos.portfolio_id = p.id AND pos.status = 'ACTIVE') AS market_data_date
         FROM platform_shared.portfolios p
         LEFT JOIN platform_shared.accounts a ON a.id = p.account_id
         WHERE p.id = :id
@@ -665,12 +669,17 @@ async def portfolio_summary(portfolio_id: str, db: Session = Depends(get_db)):
     tax_prefs = await _fetch_tax_prefs()
     agg = await aggregate_portfolio(portfolio_id, positions, scores, tax_prefs=tax_prefs, service_token=settings.service_token)
 
+    market_data_date = row["market_data_date"]
+    last_refreshed_at = row["last_refreshed_at"]
+
     return {
         "id": str(row["id"]),
         "name": row["name"],
         "tax_status": row["tax_status"],
         "broker": row["broker"],
-        "last_refresh": row["last_refreshed_at"].isoformat() if row["last_refreshed_at"] else None,
+        "cash_balance": float(row["cash_balance"]) if row["cash_balance"] is not None else None,
+        "last_refresh": (market_data_date.isoformat() if market_data_date
+                         else (last_refreshed_at.isoformat() if last_refreshed_at else None)),
         **agg,
         "scores_unavailable": not scores,
     }

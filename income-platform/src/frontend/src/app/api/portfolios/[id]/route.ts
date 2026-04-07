@@ -1,15 +1,14 @@
 // src/frontend/src/app/api/portfolios/[id]/route.ts
 /**
- * GET /api/portfolios/[id]
- * Returns portfolio detail with data quality freshness and gate status.
- * Proxies to agent-14 for DQ data.
+ * GET /api/portfolios/[id]  — data quality health from agent-14
+ * PATCH /api/portfolios/[id] — update portfolio fields (proxied to admin panel)
  */
 import { NextRequest, NextResponse } from "next/server";
 
 const AGENT14 = process.env.AGENT14_URL ?? "http://localhost:8014";
+const ADMIN_PANEL = process.env.ADMIN_PANEL_URL ?? "http://localhost:8100";
 
 function serviceToken(): string {
-  // Simple service token for internal calls — in production use proper JWT
   return process.env.SERVICE_JWT_TOKEN ?? "dev-token";
 }
 
@@ -47,6 +46,26 @@ export async function GET(
         : null;
 
     return NextResponse.json({ gate, refresh_log: refreshLog });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ detail: msg }, { status: 502 });
+  }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: portfolioId } = await params;
+  try {
+    const body = await req.text();
+    const res = await fetch(`${ADMIN_PANEL}/portfolios/${portfolioId}`, {
+      method: "PATCH",
+      headers: headers(),
+      body,
+    });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ detail: msg }, { status: 502 });
