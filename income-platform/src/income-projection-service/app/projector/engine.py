@@ -65,9 +65,17 @@ def _pick_yield(
             if fwd is not None:
                 return float(fwd), "features_historical"
 
-    # Both forward and trailing paths fall through to position_record
+    # Both forward and trailing paths fall through to position_record.
+    # Prefer annual_income (already a dollar figure) over yield_on_value,
+    # which is frequently stored as 0 even when annual_income is populated.
+    annual_income = pos.get("annual_income")
+    current_value = float(pos.get("current_value") or 0.0)
+    if annual_income is not None and float(annual_income) > 0 and current_value > 0:
+        yield_pct = float(annual_income) / current_value * 100.0
+        return yield_pct, "position_record"
+
     pos_yield = pos.get("yield_on_value")
-    if pos_yield is not None:
+    if pos_yield is not None and float(pos_yield) > 0:
         return float(pos_yield), "position_record"
 
     return 0.0, "missing"
@@ -101,13 +109,19 @@ async def run_projection(
         current_value = float(pos.get("current_value") or 0.0)
         feat = features_by_symbol.get(symbol)
 
-        # Honour position_record source directly without feature lookup
+        # Honour position_record source directly without feature lookup.
+        # Use annual_income as the primary source since yield_on_value may be 0.
         if yield_source == "position_record":
-            pos_yield = pos.get("yield_on_value")
-            if pos_yield is not None:
-                yield_pct, data_source = float(pos_yield), "position_record"
+            annual_income = pos.get("annual_income")
+            if annual_income is not None and float(annual_income) > 0 and current_value > 0:
+                yield_pct = float(annual_income) / current_value * 100.0
+                data_source = "position_record"
             else:
-                yield_pct, data_source = 0.0, "missing"
+                pos_yield = pos.get("yield_on_value")
+                if pos_yield is not None and float(pos_yield) > 0:
+                    yield_pct, data_source = float(pos_yield), "position_record"
+                else:
+                    yield_pct, data_source = 0.0, "missing"
         else:
             yield_pct, data_source = _pick_yield(pos, feat, yield_source)
 
