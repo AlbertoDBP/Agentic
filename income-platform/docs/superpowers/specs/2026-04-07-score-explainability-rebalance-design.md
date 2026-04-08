@@ -25,25 +25,27 @@ Frontend-only. No backend changes. All required data (`factor_details`) is alrea
 
 ### Data Contract
 
-`factor_details` structure (already in API response):
+`factor_details` structure (already in API response — `income_scorer.py` line 388 builds `{value, score, max}` per factor using `ceilings` dict derived from the active weight profile):
 
 ```json
 {
-  "payout_sustainability": { "score": 22, "max": 40 },
-  "yield_vs_market":       { "score": 28, "max": 35 },
-  "fcf_coverage":          { "score": 18, "max": 25 },
-  "debt_safety":           { "score": 34, "max": 40 },
-  "dividend_consistency":  { "score": 25, "max": 35 },
-  "volatility_score":      { "score": 12, "max": 25 },
-  "price_momentum":        { "score": 10, "max": 60 },
-  "price_range_position":  { "score": 28, "max": 40 }
+  "payout_sustainability": { "value": 0.65, "score": 22, "max": 16 },
+  "yield_vs_market":       { "value": 0.072, "score": 28, "max": 14 },
+  "fcf_coverage":          { "value": 1200000, "score": 18, "max": 10 },
+  "debt_safety":           { "score": 34, "value": 0.45, "max": 16 },
+  "dividend_consistency":  { "value": 12, "score": 25, "max": 14 },
+  "volatility_score":      { "value": 0.18, "score": 12, "max": 10 },
+  "price_momentum":        { "value": 0.03, "score": 10, "max": 12 },
+  "price_range_position":  { "value": 0.42, "score": 28, "max": 8 }
 }
 ```
 
-Pillar groupings:
+Note: the TypeScript `types.ts` definition currently shows `{value, score, weight}` — this is outdated. The actual API returns `{value, score, max}`. The TypeScript type should be updated as part of this task.
+
+Pillar groupings (match existing health-tab.tsx naming conventions):
 - **Income Pillar:** payout_sustainability, yield_vs_market, fcf_coverage
 - **Durability Pillar:** debt_safety, dividend_consistency, volatility_score
-- **Technical Pillar:** price_momentum, price_range_position
+- **IES Pillar (Technical):** price_momentum, price_range_position
 
 ### Directionality Labels
 
@@ -62,8 +64,8 @@ Derived from `score / max` ratio (frontend computation, no API change):
 
 - Location: `src/frontend/src/components/ScoreBreakdownModal.tsx`
 - Triggered by: clicking any HHS or IES badge in the Health tab (or Rebalance card)
-- Props: `ticker: string`, `factorDetails: Record<string, {score: number, max: number}>`, `hhsScore`, `iesScore`, `hhsStatus`, `onClose`
-- Layout: three sections (Income Pillar / Durability Pillar / Technical Pillar), each with horizontal bar per factor showing score/max, label text, and raw `score/max` points
+- Props: `ticker: string`, `factorDetails: Record<string, {value: number | null, score: number, max: number}>`, `hhsScore`, `iesScore`, `hhsStatus`, `onClose`
+- Layout: three sections (Income Pillar / Durability Pillar / IES Pillar), each with horizontal bar per factor showing score/max, label text, and raw `score/max` points
 - Bars: filled portion = score/max ratio, color-coded by directionality label
 - Footer: shows HHS score, IES score, hhs_status badge
 
@@ -71,6 +73,7 @@ Derived from `score / max` ratio (frontend computation, no API change):
 
 - Location: `src/frontend/src/app/portfolios/[id]/tabs/health-tab.tsx`
 - Behavior: clicking a row expands it inline to reveal a compact 2-column layout (Income | Durability side by side, Technical below)
+- Layout: Income Pillar | Durability Pillar side by side, IES Pillar below
 - Uses same directionality logic as modal
 - "Full breakdown →" link at bottom opens `ScoreBreakdownModal` for that ticker
 
@@ -105,13 +108,15 @@ Derived from `score / max` ratio (frontend computation, no API change):
 
 **Priority order (revised):**
 
+UNSAFE is inserted as a new priority 0; existing priorities 1–4 (VETO, OVERWEIGHT, BELOW_GRADE, DEPLOY_CAPITAL) are unchanged in their relative ordering.
+
 | Priority | Condition | Action |
 |---|---|---|
-| 0 | `unsafe_flag is True` (HHS durability ≤ 20) | SELL |
-| 1 | `total_score < quality_gate_threshold` | SELL |
-| 2 | `weight_pct > max_position_pct` | TRIM |
-| 3 | `grade_val < min_grade_val` | SELL |
-| 4 | `ies_calculated is True AND ies_score >= 70` AND capital available | ADD |
+| 0 | `unsafe_flag is True` (HHS durability ≤ 20) — NEW | SELL |
+| 1 | `total_score < quality_gate_threshold` — unchanged | SELL |
+| 2 | `weight_pct > max_position_pct` — unchanged | TRIM |
+| 3 | `grade_val < min_grade_val` — unchanged | SELL |
+| 4 | `ies_calculated is True AND ies_score >= 70` AND capital available — updated gate | ADD |
 
 **ADD proposal logic changes:**
 - Gate: `ies_calculated === True AND ies_score >= 70` (replaces `total_score >= 70`)
@@ -147,15 +152,15 @@ income_contribution_est: Optional[float] = None  # estimated annual $ income add
 }
 ```
 
-**Scoring client update:**
-`scoring_client.py` must extract `hhs_score`, `hhs_status`, `unsafe_flag`, `ies_score`, `ies_calculated` from Agent 03 response and pass them through to engine.
+**Scoring client note:**
+`scoring_client.py` already returns the full Agent 03 JSON dict. No extraction changes needed there. The engine just needs to read `score_data.get("hhs_score")`, `score_data.get("unsafe_flag")`, etc. from the existing `score_data` dict.
 
 ### API Changes
 
 **File:** `src/rebalancing-service/app/api/rebalance.py`
 
 - `RebalanceProposal` model gains the 5 new optional fields above
-- `RebalanceResponse` gains `violations_summary` typed as `dict` (already is — no model change needed, just richer content)
+- `RebalanceResponse` must gain an explicit `violations_summary: dict` field — it currently exposes only `violations_count: int`; the full summary dict is computed in `RebalanceEngineResult` but never serialized to the API response
 - No new endpoints; existing `POST /rebalance/{portfolio_id}` returns enriched data
 
 ### Tests
@@ -167,6 +172,7 @@ New test cases in `src/rebalancing-service/tests/`:
 - ADD proposals sorted by income_contribution_est descending
 - `violations_summary.hhs_tiers` populated correctly
 - Income gap string appears in ADD reason when gap > 0
+- ADD reason degrades gracefully when `income_gap_annual is None` (no income metrics for portfolio)
 
 ---
 
@@ -177,6 +183,7 @@ New test cases in `src/rebalancing-service/tests/`:
 `src/frontend/src/app/api/portfolios/[id]/rebalance/route.ts`
 
 - `POST` → forwards to Agent 08 `POST /rebalance/{portfolio_id}` with `save=false`
+- Auth: uses `SERVICE_JWT_TOKEN` env var in `Authorization: Bearer` header, matching the pattern used by all other Next.js proxy routes (e.g. existing `/api/portfolios/[id]/route.ts`)
 - Returns `RebalanceResponse` as-is
 - No persistence on frontend side (analysis only)
 
@@ -184,7 +191,7 @@ New test cases in `src/rebalancing-service/tests/`:
 
 `src/frontend/src/components/RebalanceCard.tsx`
 
-Props: `portfolioId: string`, `portfolioName: string`
+Props: `defaultPortfolioId?: string` (optional pre-selected portfolio). The component calls `usePortfolio()` internally to get the full `portfolios` list for the dropdown — it does not receive `portfolios[]` as a prop. `defaultPortfolioId` sets the initial selection when the card mounts.
 
 **States:**
 - `idle` — shows "Run Analysis" button
@@ -193,11 +200,12 @@ Props: `portfolioId: string`, `portfolioName: string`
 - `error` — shows error message with retry
 
 **Result layout:**
-```
+
+```text
 ┌─ Portfolio Health Check ──────────────────── [▼ collapse] ─┐
 │  [Portfolio dropdown if multiple]  [Run Analysis]           │
 │                                                              │
-│  Last run: 2h ago · 4 violations · $1,200 tax savings avail │
+│  4 violations · $1,200 tax savings available                 │
 │                                                              │
 │  UNSAFE ×1  VETO ×1  OVERWEIGHT ×0  BELOW_GRADE ×1         │
 │  HHS tiers: 1 UNSAFE · 3 WATCH · 8 GOOD · 2 STRONG         │
@@ -209,9 +217,12 @@ Props: `portfolioId: string`, `portfolioName: string`
 └──────────────────────────────────────────────────────────────┘
 ```
 
+Note: no "Last run: X ago" timestamp — results are session-only (not persisted). State resets on page refresh. The card shows "Analysis ready" when results exist in session state and "Run Analysis" when idle.
+
 **Behavior:**
+
 - "Run Analysis" calls `POST /api/portfolios/[id]/rebalance`
-- Results cached in component state (no DB write)
+- Results cached in component state only (no DB write; `save=false`)
 - "↗ score" icon on each row opens `ScoreBreakdownModal` for that ticker
 - Tax impact shown per SELL/TRIM: "Est. $340 savings · Long-term · No wash-sale risk"
 - No "execute" button — this is read-only analysis; execution happens via manual proposals below
@@ -220,9 +231,12 @@ Props: `portfolioId: string`, `portfolioName: string`
 
 **File:** `src/frontend/src/app/proposals/page.tsx`
 
-- Add `<RebalanceCard>` above the existing proposals table
-- Collapsed by default (user expands when they want the analysis)
-- Portfolio selector uses the same portfolio list already fetched on the page
+The proposals page uses a fixed `flex h-[calc(100vh-4rem)] overflow-hidden` split layout (left sidebar w-72 + right panel flex-1). The `<RebalanceCard>` is placed **inside the right panel** as the default content shown when no proposals are selected and the sidebar is in "pending" view — replacing the current "Select proposals from the left to begin" empty state placeholder.
+
+Concretely: in the right panel's `setup` phase with no selection and `sidebarView === "pending"`, render `<RebalanceCard>` above the "Select proposals..." message (or as a scrollable section within the right panel's existing overflow container). This requires no layout restructuring.
+
+- Portfolio selector inside the card uses `portfolios` from `usePortfolio()` context (already available on the page)
+- Collapsed by default; user expands to trigger analysis
 
 ---
 
