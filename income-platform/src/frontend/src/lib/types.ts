@@ -68,7 +68,7 @@ export interface Position {
   technical_entry_score?: number;
   nav_erosion_penalty?: number;
   signal_penalty?: number;
-  factor_details?: Record<string, { value: number; score: number; weight: number }> | null;
+  factor_details?: Record<string, { value: number | null; score: number; max: number }> | null;
   nav_erosion_details?: { prob_erosion_gt_5pct?: number; median_annual_nav_change_pct?: number; risk_classification?: string; penalty_applied?: number } | null;
   // HHS/IES v3.0
   hhs_score?: number | null;
