@@ -192,7 +192,7 @@ class TestBasicRebalance:
         mock_reader.get_portfolio = AsyncMock(return_value=_portfolio(value=100_000.0, capital=10_000.0))
         mock_reader.get_constraints = AsyncMock(return_value=_constraints(max_pct=10.0))
         mock_reader.get_latest_income_metrics = AsyncMock(return_value=_metrics())
-        mock_score.return_value = _score(85.0, grade="A")
+        mock_score.return_value = _score_hhs(85.0, grade="A")
         result = await run_rebalance("pid-1", include_tax_impact=False)
         assert len(result.proposals) == 1
         assert result.proposals[0]["action"] == "ADD"
@@ -499,7 +499,7 @@ class TestTaxEnrichment:
         mock_reader.get_portfolio = AsyncMock(return_value=_portfolio(value=100_000.0, capital=10_000.0))
         mock_reader.get_constraints = AsyncMock(return_value=_constraints(max_pct=10.0))
         mock_reader.get_latest_income_metrics = AsyncMock(return_value=_metrics())
-        mock_score.return_value = _score(90.0, grade="A")
+        mock_score.return_value = _score_hhs(90.0, grade="A")
         mock_tax.return_value = _tax_impact()
         result = await run_rebalance("pid-1", include_tax_impact=True)
         add_proposals = [p for p in result.proposals if p["action"] == "ADD"]

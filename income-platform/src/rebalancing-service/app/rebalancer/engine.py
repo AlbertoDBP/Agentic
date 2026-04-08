@@ -122,9 +122,7 @@ async def run_rebalance(
         unsafe_flag = score_data.get("unsafe_flag")   # bool or None
         ies_score_val = score_data.get("ies_score")
         ies_score_f = float(ies_score_val) if ies_score_val is not None else None
-        # ies_calculated: None means key absent (legacy scores) — treat as True with fallback gate
-        _ies_calc_raw = score_data.get("ies_calculated", None)
-        ies_calculated = bool(_ies_calc_raw) if _ies_calc_raw is not None else None
+        ies_calculated = bool(score_data.get("ies_calculated", False))
         yield_pct = float(pos.get("yield_on_value") or 0.0)
 
         # Track HHS tier for violations_summary
@@ -262,16 +260,12 @@ async def run_rebalance(
             }
             violation_count += 1
 
-        # Priority 4 — ADD (IES-gated when IES data present, else legacy score >= 70 gate)
+        # Priority 4 — ADD (IES-only gate)
         else:
-            # ies_calculated=None means legacy score (no HHS/IES fields) — use old total_score gate
-            ies_gate_pass = (
-                ies_calculated is True
+            if (
+                ies_calculated
                 and ies_score_f is not None
                 and ies_score_f >= 70.0
-            ) if ies_calculated is not None else (total_score >= 70.0)
-            if (
-                ies_gate_pass
                 and weight_pct < max_pos_pct
                 and capital_to_deploy > 0
             ):
