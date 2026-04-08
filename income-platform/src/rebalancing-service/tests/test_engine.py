@@ -58,6 +58,28 @@ def _score(score: float, grade: str = None, chowder_signal: str = "ATTRACTIVE",
     }
 
 
+def _score_hhs(
+    score: float,
+    grade: str = None,
+    hhs_score: float = 75.0,
+    hhs_status: str = "GOOD",
+    unsafe_flag: bool = False,
+    ies_score: float = 75.0,
+    ies_calculated: bool = True,
+    yield_on_value: float = 5.0,
+) -> dict:
+    """Extended score dict including HHS/IES fields used by updated engine."""
+    base = _score(score, grade)
+    base.update({
+        "hhs_score": hhs_score,
+        "hhs_status": hhs_status,
+        "unsafe_flag": unsafe_flag,
+        "ies_score": ies_score,
+        "ies_calculated": ies_calculated,
+    })
+    return base
+
+
 def _portfolio(value: float = 100_000.0, capital: float = 0.0) -> dict:
     return {"total_value": value, "capital_to_deploy": capital}
 
@@ -711,3 +733,169 @@ class TestAgentIntegration:
         result = await run_rebalance("pid-1", include_tax_impact=False)
         assert result.proposals == []
         assert result.portfolio_value == 0.0
+
+
+# ── Class 5: HHS/IES enhancements ────────────────────────────────────────────
+
+class TestEngineHhsIesEnhancements:
+    """Tests for UNSAFE priority, IES gate, income gap, and hhs_tiers."""
+
+    @pytest.mark.anyio
+    @patch("app.rebalancer.engine.get_harvest_impact", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.score_ticker", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.portfolio_reader")
+    async def test_unsafe_generates_priority_0_above_veto(
+        self, mock_reader, mock_score, mock_tax
+    ):
+        """UNSAFE flag must produce priority=0, beating VETO at priority=1."""
+        mock_reader.get_positions = AsyncMock(return_value=[_pos("UNSAFE_TICKER", weight=5.0)])
+        mock_reader.get_portfolio = AsyncMock(return_value=_portfolio())
+        mock_reader.get_constraints = AsyncMock(return_value=_constraints())
+        mock_reader.get_latest_income_metrics = AsyncMock(return_value=_metrics())
+        mock_score.return_value = _score_hhs(80.0, grade="A", unsafe_flag=True, hhs_score=30.0)
+        result = await run_rebalance("pid-hhs-1", include_tax_impact=False)
+        assert len(result.proposals) == 1
+        assert result.proposals[0]["priority"] == 0
+        assert result.proposals[0]["violation_type"] == "UNSAFE"
+        assert result.proposals[0]["action"] == "SELL"
+
+    @pytest.mark.anyio
+    @patch("app.rebalancer.engine.get_harvest_impact", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.score_ticker", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.portfolio_reader")
+    async def test_unsafe_priority_beats_veto_in_sort(
+        self, mock_reader, mock_score, mock_tax
+    ):
+        """When both UNSAFE and VETO exist, UNSAFE comes first."""
+        mock_reader.get_positions = AsyncMock(return_value=[
+            _pos("VETO_TICKER", weight=5.0),
+            _pos("UNSAFE_TICKER", weight=5.0),
+        ])
+        mock_reader.get_portfolio = AsyncMock(return_value=_portfolio())
+        mock_reader.get_constraints = AsyncMock(return_value=_constraints())
+        mock_reader.get_latest_income_metrics = AsyncMock(return_value=_metrics())
+        mock_score.side_effect = [
+            _score_hhs(50.0, grade="D"),                            # VETO_TICKER
+            _score_hhs(80.0, grade="A", unsafe_flag=True, hhs_score=15.0),  # UNSAFE_TICKER
+        ]
+        result = await run_rebalance("pid-hhs-2", include_tax_impact=False)
+        assert result.proposals[0]["violation_type"] == "UNSAFE"
+        assert result.proposals[1]["violation_type"] == "VETO"
+
+    @pytest.mark.anyio
+    @patch("app.rebalancer.engine.get_harvest_impact", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.score_ticker", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.portfolio_reader")
+    async def test_add_blocked_when_ies_not_calculated(
+        self, mock_reader, mock_score, mock_tax
+    ):
+        """ADD proposal must not be generated when ies_calculated=False."""
+        mock_reader.get_positions = AsyncMock(return_value=[_pos("MAIN", weight=3.0)])
+        mock_reader.get_portfolio = AsyncMock(return_value=_portfolio(capital=10_000.0))
+        mock_reader.get_constraints = AsyncMock(return_value=_constraints(max_pct=10.0))
+        mock_reader.get_latest_income_metrics = AsyncMock(return_value=_metrics())
+        mock_score.return_value = _score_hhs(80.0, grade="A", ies_calculated=False, ies_score=None)
+        result = await run_rebalance("pid-hhs-3", include_tax_impact=False)
+        assert result.proposals == []
+
+    @pytest.mark.anyio
+    @patch("app.rebalancer.engine.get_harvest_impact", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.score_ticker", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.portfolio_reader")
+    async def test_add_blocked_when_ies_below_70(
+        self, mock_reader, mock_score, mock_tax
+    ):
+        """ADD proposal must not be generated when ies_score < 70."""
+        mock_reader.get_positions = AsyncMock(return_value=[_pos("LOW_IES", weight=3.0)])
+        mock_reader.get_portfolio = AsyncMock(return_value=_portfolio(capital=10_000.0))
+        mock_reader.get_constraints = AsyncMock(return_value=_constraints(max_pct=10.0))
+        mock_reader.get_latest_income_metrics = AsyncMock(return_value=_metrics())
+        mock_score.return_value = _score_hhs(80.0, grade="A", ies_calculated=True, ies_score=65.0)
+        result = await run_rebalance("pid-hhs-4", include_tax_impact=False)
+        assert result.proposals == []
+
+    @pytest.mark.anyio
+    @patch("app.rebalancer.engine.get_harvest_impact", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.score_ticker", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.portfolio_reader")
+    async def test_add_proposals_sorted_by_income_contribution_desc(
+        self, mock_reader, mock_score, mock_tax
+    ):
+        """ADD proposals must be ranked by income_contribution_est descending."""
+        mock_reader.get_positions = AsyncMock(return_value=[
+            {**_pos("LOW_YIELD", weight=3.0), "yield_on_value": 2.0},
+            {**_pos("HIGH_YIELD", weight=3.0), "yield_on_value": 8.0},
+        ])
+        mock_reader.get_portfolio = AsyncMock(return_value=_portfolio(capital=20_000.0))
+        mock_reader.get_constraints = AsyncMock(return_value=_constraints(max_pct=10.0))
+        mock_reader.get_latest_income_metrics = AsyncMock(return_value=_metrics())
+        mock_score.return_value = _score_hhs(80.0, grade="A", ies_calculated=True, ies_score=80.0)
+        result = await run_rebalance("pid-hhs-5", include_tax_impact=False)
+        add_proposals = [p for p in result.proposals if p["action"] == "ADD"]
+        assert len(add_proposals) == 2
+        assert add_proposals[0]["symbol"] == "HIGH_YIELD"
+        assert add_proposals[0]["income_contribution_est"] > add_proposals[1]["income_contribution_est"]
+
+    @pytest.mark.anyio
+    @patch("app.rebalancer.engine.get_harvest_impact", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.score_ticker", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.portfolio_reader")
+    async def test_hhs_tiers_populated_in_violations_summary(
+        self, mock_reader, mock_score, mock_tax
+    ):
+        """violations_summary must include hhs_tiers with counts per status."""
+        mock_reader.get_positions = AsyncMock(return_value=[
+            _pos("A", weight=5.0), _pos("B", weight=5.0), _pos("C", weight=5.0),
+        ])
+        mock_reader.get_portfolio = AsyncMock(return_value=_portfolio())
+        mock_reader.get_constraints = AsyncMock(return_value=_constraints())
+        mock_reader.get_latest_income_metrics = AsyncMock(return_value=_metrics())
+        mock_score.side_effect = [
+            _score_hhs(80.0, grade="A", unsafe_flag=True, hhs_status="UNSAFE"),
+            _score_hhs(72.0, grade="B", hhs_status="GOOD"),
+            _score_hhs(78.0, grade="A", hhs_status="STRONG"),
+        ]
+        result = await run_rebalance("pid-hhs-6", include_tax_impact=False)
+        tiers = result.violations_summary.get("hhs_tiers", {})
+        assert tiers["UNSAFE"] == 1
+        assert tiers["GOOD"] == 1
+        assert tiers["STRONG"] == 1
+        assert tiers.get("WATCH", 0) == 0
+
+    @pytest.mark.anyio
+    @patch("app.rebalancer.engine.get_harvest_impact", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.score_ticker", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.portfolio_reader")
+    async def test_add_reason_includes_income_gap_string(
+        self, mock_reader, mock_score, mock_tax
+    ):
+        """ADD reason must include gap percentage when income gap exists."""
+        mock_reader.get_positions = AsyncMock(return_value=[_pos("MAIN", weight=3.0)])
+        mock_reader.get_portfolio = AsyncMock(return_value=_portfolio(capital=10_000.0))
+        mock_reader.get_constraints = AsyncMock(return_value=_constraints(max_pct=10.0))
+        mock_reader.get_latest_income_metrics = AsyncMock(
+            return_value=_metrics(actual=4000.0, target=6000.0, gap=-2000.0)
+        )
+        mock_score.return_value = _score_hhs(80.0, grade="A", ies_calculated=True, ies_score=80.0)
+        result = await run_rebalance("pid-hhs-7", include_tax_impact=False)
+        add_proposals = [p for p in result.proposals if p["action"] == "ADD"]
+        assert len(add_proposals) == 1
+        assert "gap" in add_proposals[0]["reason"].lower()
+
+    @pytest.mark.anyio
+    @patch("app.rebalancer.engine.get_harvest_impact", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.score_ticker", new_callable=AsyncMock)
+    @patch("app.rebalancer.engine.portfolio_reader")
+    async def test_add_reason_graceful_when_income_gap_none(
+        self, mock_reader, mock_score, mock_tax
+    ):
+        """ADD reason must not crash when income_gap_annual is None."""
+        mock_reader.get_positions = AsyncMock(return_value=[_pos("MAIN", weight=3.0)])
+        mock_reader.get_portfolio = AsyncMock(return_value=_portfolio(capital=10_000.0))
+        mock_reader.get_constraints = AsyncMock(return_value=_constraints(max_pct=10.0))
+        mock_reader.get_latest_income_metrics = AsyncMock(return_value=None)  # no metrics
+        mock_score.return_value = _score_hhs(80.0, grade="A", ies_calculated=True, ies_score=80.0)
+        result = await run_rebalance("pid-hhs-8", include_tax_impact=False)
+        add_proposals = [p for p in result.proposals if p["action"] == "ADD"]
+        assert len(add_proposals) == 1
+        assert isinstance(add_proposals[0]["reason"], str)

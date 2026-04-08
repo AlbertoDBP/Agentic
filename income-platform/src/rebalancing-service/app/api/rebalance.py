@@ -38,6 +38,12 @@ class RebalanceProposal(BaseModel):
     income_grade: Optional[str] = None
     score_commentary: Optional[str] = None
     chowder_signal: Optional[str] = None
+    hhs_score: Optional[float] = None
+    hhs_status: Optional[str] = None
+    unsafe_flag: Optional[bool] = None
+    ies_score: Optional[float] = None
+    ies_calculated: Optional[bool] = None
+    income_contribution_est: Optional[float] = None
     tax_impact: Optional[TaxImpactSummary] = None
 
 
@@ -55,6 +61,7 @@ class RebalanceResponse(BaseModel):
     target_income_annual: Optional[float] = None
     income_gap_annual: Optional[float] = None
     violations_count: int
+    violations_summary: dict = {}
     proposals: List[RebalanceProposal]
     tax_impact_total_savings: Optional[float] = None
     generated_at: str
@@ -119,6 +126,7 @@ async def post_rebalance(
         target_income_annual=result.target_income_annual,
         income_gap_annual=result.income_gap_annual,
         violations_count=result.violations_count,
+        violations_summary=result.violations_summary,
         proposals=proposals,
         tax_impact_total_savings=tax_savings,
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -167,6 +175,7 @@ def _row_to_response(row: RebalancingResult) -> RebalanceResponse:
         target_income_annual=filters.get("target_income_annual"),
         income_gap_annual=filters.get("income_gap_annual"),
         violations_count=row.violations.get("count", 0) if row.violations else 0,
+        violations_summary=row.violations or {},
         proposals=proposals,
         tax_impact_total_savings=float(row.total_tax_savings) if row.total_tax_savings else None,
         generated_at=str(row.created_at),

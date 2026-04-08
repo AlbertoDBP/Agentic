@@ -96,6 +96,7 @@ async def run_rebalance(
 
     proposals = []
     violation_count = 0
+    hhs_tier_counts: dict[str, int] = {"UNSAFE": 0, "CONCERN": 0, "WATCH": 0, "GOOD": 0, "STRONG": 0}
 
     for pos, score_data in scored_pairs:
         symbol = pos["symbol"]
@@ -115,10 +116,57 @@ async def run_rebalance(
         commentary = score_data.get("score_commentary")
         chowder_signal = score_data.get("chowder_signal")
 
+        hhs_score_val = score_data.get("hhs_score")
+        hhs_score_f = float(hhs_score_val) if hhs_score_val is not None else None
+        hhs_status = score_data.get("hhs_status")
+        unsafe_flag = score_data.get("unsafe_flag")   # bool or None
+        ies_score_val = score_data.get("ies_score")
+        ies_score_f = float(ies_score_val) if ies_score_val is not None else None
+        # ies_calculated: None means key absent (legacy scores) — treat as True with fallback gate
+        _ies_calc_raw = score_data.get("ies_calculated", None)
+        ies_calculated = bool(_ies_calc_raw) if _ies_calc_raw is not None else None
+        yield_pct = float(pos.get("yield_on_value") or 0.0)
+
+        # Track HHS tier for violations_summary
+        if hhs_status in hhs_tier_counts:
+            hhs_tier_counts[hhs_status] += 1
+
         proposal = None
 
-        # Priority 1 — VETO: score < quality gate
-        if total_score < settings.quality_gate_threshold:
+        # Priority 0 — UNSAFE (new: above VETO)
+        if unsafe_flag is True:
+            proposal = {
+                "symbol": symbol,
+                "action": "SELL",
+                "priority": 0,
+                "reason": (
+                    f"UNSAFE holding — HHS Durability pillar at or below safety threshold. "
+                    f"HHS: {f'{hhs_score_f:.0f}' if hhs_score_f is not None else '?'}. "
+                    f"Immediate review required."
+                ),
+                "violation_type": "UNSAFE",
+                "current_value": current_value,
+                "current_weight_pct": weight_pct,
+                "proposed_weight_pct": 0.0,
+                "estimated_trade_value": -current_value,
+                "income_score": total_score,
+                "income_grade": grade,
+                "score_commentary": commentary,
+                "chowder_signal": chowder_signal,
+                "hhs_score": hhs_score_f,
+                "hhs_status": hhs_status,
+                "unsafe_flag": unsafe_flag,
+                "ies_score": ies_score_f,
+                "ies_calculated": ies_calculated,
+                "income_contribution_est": None,
+                "tax_impact": None,
+                "_acquired": acquired,
+                "_cost_basis": cost_basis,
+            }
+            violation_count += 1
+
+        # Priority 1 — VETO (unchanged condition)
+        elif total_score < settings.quality_gate_threshold:
             proposal = {
                 "symbol": symbol,
                 "action": "SELL",
@@ -137,13 +185,19 @@ async def run_rebalance(
                 "income_grade": grade,
                 "score_commentary": commentary,
                 "chowder_signal": chowder_signal,
+                "hhs_score": hhs_score_f,
+                "hhs_status": hhs_status,
+                "unsafe_flag": unsafe_flag,
+                "ies_score": ies_score_f,
+                "ies_calculated": ies_calculated,
+                "income_contribution_est": None,
                 "tax_impact": None,
                 "_acquired": acquired,
                 "_cost_basis": cost_basis,
             }
             violation_count += 1
 
-        # Priority 2 — OVERWEIGHT
+        # Priority 2 — OVERWEIGHT (unchanged condition)
         elif weight_pct > max_pos_pct:
             excess_pct = weight_pct - max_pos_pct
             trim_value = -(portfolio_value * excess_pct / 100.0)
@@ -165,13 +219,19 @@ async def run_rebalance(
                 "income_grade": grade,
                 "score_commentary": commentary,
                 "chowder_signal": chowder_signal,
+                "hhs_score": hhs_score_f,
+                "hhs_status": hhs_status,
+                "unsafe_flag": unsafe_flag,
+                "ies_score": ies_score_f,
+                "ies_calculated": ies_calculated,
+                "income_contribution_est": None,
                 "tax_impact": None,
                 "_acquired": acquired,
                 "_cost_basis": cost_basis,
             }
             violation_count += 1
 
-        # Priority 3 — BELOW_GRADE
+        # Priority 3 — BELOW_GRADE (unchanged condition)
         elif grade_val < min_grade_val:
             proposal = {
                 "symbol": symbol,
@@ -190,27 +250,50 @@ async def run_rebalance(
                 "income_grade": grade,
                 "score_commentary": commentary,
                 "chowder_signal": chowder_signal,
+                "hhs_score": hhs_score_f,
+                "hhs_status": hhs_status,
+                "unsafe_flag": unsafe_flag,
+                "ies_score": ies_score_f,
+                "ies_calculated": ies_calculated,
+                "income_contribution_est": None,
                 "tax_impact": None,
                 "_acquired": acquired,
                 "_cost_basis": cost_basis,
             }
             violation_count += 1
 
-        # No violation — candidate for ADD if high score
+        # Priority 4 — ADD (IES-gated when IES data present, else legacy score >= 70 gate)
         else:
-            if total_score >= 70.0 and weight_pct < max_pos_pct and capital_to_deploy > 0:
+            # ies_calculated=None means legacy score (no HHS/IES fields) — use old total_score gate
+            ies_gate_pass = (
+                ies_calculated is True
+                and ies_score_f is not None
+                and ies_score_f >= 70.0
+            ) if ies_calculated is not None else (total_score >= 70.0)
+            if (
+                ies_gate_pass
+                and weight_pct < max_pos_pct
+                and capital_to_deploy > 0
+            ):
                 add_value = min(
                     capital_to_deploy * 0.25,
                     portfolio_value * (max_pos_pct / 100.0) - current_value,
                 )
                 if add_value > 0:
+                    income_contribution_est = round(add_value * (yield_pct / 100.0), 2)
+                    gap_str = ""
+                    if income_gap and income_gap < 0 and income_contribution_est > 0:
+                        gap_close_pct = (income_contribution_est / abs(income_gap)) * 100
+                        gap_str = f" — closes ~{gap_close_pct:.0f}% of ${abs(income_gap):.0f} annual income gap"
                     proposal = {
                         "symbol": symbol,
                         "action": "ADD",
                         "priority": 4,
                         "reason": (
-                            f"High income score {total_score:.0f} ({grade}), "
-                            f"currently {weight_pct:.1f}% — room to add up to {max_pos_pct:.1f}%."
+                            f"Good entry timing — "
+                            + (f"IES {ies_score_f:.0f}, " if ies_score_f is not None else "")
+                            + f"score {total_score:.0f} ({grade}), "
+                            f"currently {weight_pct:.1f}% — room to add up to {max_pos_pct:.1f}%{gap_str}."
                         ),
                         "violation_type": "DEPLOY_CAPITAL",
                         "current_value": current_value,
@@ -223,6 +306,12 @@ async def run_rebalance(
                         "income_grade": grade,
                         "score_commentary": commentary,
                         "chowder_signal": chowder_signal,
+                        "hhs_score": hhs_score_f,
+                        "hhs_status": hhs_status,
+                        "unsafe_flag": unsafe_flag,
+                        "ies_score": ies_score_f,
+                        "ies_calculated": ies_calculated,
+                        "income_contribution_est": income_contribution_est,
                         "tax_impact": None,
                         "_acquired": acquired,
                         "_cost_basis": cost_basis,
@@ -258,7 +347,10 @@ async def run_rebalance(
         proposals = list(await asyncio.gather(*[_tax_enrich(p) for p in proposals]))
 
     # 5. Sort by priority, then by score (lower score = higher urgency within same priority)
-    proposals.sort(key=lambda p: (p["priority"], p.get("income_score") or 100.0))
+    proposals.sort(key=lambda p: (
+        p["priority"],
+        -(p.get("income_contribution_est") or 0.0) if p["priority"] == 4 else (p.get("income_score") or 100.0),
+    ))
 
     # 6. Remove internal keys before returning
     for p in proposals:
@@ -286,9 +378,12 @@ async def run_rebalance(
         violations_count=violation_count,
         violations_summary={
             "count": violation_count,
+            "unsafe": sum(1 for p in proposals if p.get("violation_type") == "UNSAFE"),
             "veto": sum(1 for p in proposals if p.get("violation_type") == "VETO"),
             "overweight": sum(1 for p in proposals if p.get("violation_type") == "OVERWEIGHT"),
             "below_grade": sum(1 for p in proposals if p.get("violation_type") == "BELOW_GRADE"),
+            "deploy_capital": sum(1 for p in proposals if p.get("violation_type") == "DEPLOY_CAPITAL"),
+            "hhs_tiers": hhs_tier_counts,
         },
         proposals=proposals,
         tax_impact_total_savings=total_savings,
