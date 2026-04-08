@@ -9,17 +9,8 @@ import { HHS_HELP, HOLDINGS_HELP } from "@/lib/help-content";
 import { cn, scoreTextColor, scoreBadgeColor } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
-
-const FACTOR_PILLAR: Record<string, "INC" | "DUR" | "IES"> = {
-  yield_vs_market: "INC", payout_sustainability: "INC", fcf_coverage: "INC",
-  debt_safety: "DUR", dividend_consistency: "DUR", volatility_score: "DUR",
-  price_momentum: "IES", price_range_position: "IES",
-};
-const PILLAR_COLOR: Record<string, string> = {
-  INC: "text-green-400 bg-green-950/40",
-  DUR: "text-blue-400 bg-blue-950/40",
-  IES: "text-slate-400 bg-slate-800/40",
-};
+import { ScoreBreakdownModal } from "@/components/ScoreBreakdownModal";
+import { directionality, DIRECTIONALITY_BAR, DIRECTIONALITY_COLOR, FACTOR_LABEL, FACTOR_PILLAR, PILLAR_FACTORS, PILLAR_LABEL } from "@/lib/score-breakdown";
 
 function DetailRow({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
@@ -45,6 +36,7 @@ export function HealthTab({ portfolioId, refreshKey = 0 }: HealthTabProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Position | null>(null);
+  const [modalPosition, setModalPosition] = useState<Position | null>(null);
 
   useEffect(() => {
     if (!portfolioId) return;
@@ -84,7 +76,16 @@ export function HealthTab({ portfolioId, refreshKey = 0 }: HealthTabProps) {
       accessorKey: "hhs_score",
       header: () => <ColHeader label="HHS" helpKey="hhs_score" helpMap={HHS_HELP} />,
       meta: { label: "HHS Score" },
-      cell: ({ row }) => <HhsBadge status={row.original.hhs_status} score={row.original.hhs_score} />,
+      cell: ({ row }) => (
+        <button
+          className="cursor-pointer focus:outline-none"
+          onClick={(e) => { e.stopPropagation(); setModalPosition(row.original); }}
+          title="View factor breakdown"
+          aria-label={`View score breakdown for ${row.original.symbol}`}
+        >
+          <HhsBadge status={row.original.hhs_status} score={row.original.hhs_score} />
+        </button>
+      ),
     },
     {
       accessorKey: "income_pillar_score",
@@ -267,36 +268,52 @@ export function HealthTab({ portfolioId, refreshKey = 0 }: HealthTabProps) {
           </section>
 
           {/* Factor breakdown */}
-          {selected.factor_details && Object.keys(selected.factor_details).length > 0 && (
+          {selected.factor_details && (
             <section>
               <SectionTitle label="Factor Breakdown" />
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-muted-foreground text-[0.65rem] uppercase border-b border-border">
-                    <th className="text-left pb-1">Factor</th>
-                    <th className="text-center pb-1">Pillar</th>
-                    <th className="text-right pb-1">Score</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(selected.factor_details)
-                    .filter(([k]) => !["chowder_number", "chowder_signal"].includes(k))
-                    .map(([key, val]) => {
-                      const pillar = FACTOR_PILLAR[key] ?? "INC";
-                      return (
-                        <tr key={key} className={cn("border-b border-border/30", pillar === "IES" && "opacity-60")}>
-                          <td className="py-1 pr-2">{key.replace(/_/g, " ")}</td>
-                          <td className="py-1 text-center">
-                            <span className={cn("text-[0.6rem] font-bold px-1 rounded", PILLAR_COLOR[pillar])}>{pillar}</span>
-                          </td>
-                          <td className={cn("py-1 text-right tabular-nums", val?.score != null ? scoreTextColor(val.score) : "text-muted-foreground")}>
-                            {val?.score?.toFixed(1) ?? "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
+              {(["INC", "DUR", "IES"] as const).map((pillar) => {
+                const factors = PILLAR_FACTORS[pillar].filter(
+                  (k) => selected.factor_details?.[k]
+                );
+                if (factors.length === 0) return null;
+                return (
+                  <div key={pillar} className="mb-3">
+                    <div className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground/60 mb-1.5">
+                      {PILLAR_LABEL[pillar]}
+                    </div>
+                    <div className="space-y-1.5">
+                      {factors.map((k) => {
+                        const entry = selected.factor_details![k];
+                        if (!entry) return null;
+                        const pct = entry.max > 0 ? Math.min(100, (entry.score / entry.max) * 100) : 0;
+                        const dir = directionality(entry.score, entry.max);
+                        return (
+                          <div key={k} className="flex items-center gap-1.5">
+                            <div className="w-24 shrink-0 text-[10px] text-muted-foreground truncate">
+                              {FACTOR_LABEL[k] ?? k.replace(/_/g, " ")}
+                            </div>
+                            <div className="flex-1 bg-muted/30 rounded-full h-1 overflow-hidden">
+                              <div
+                                className={cn("h-full rounded-full", DIRECTIONALITY_BAR[dir])}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <div className={cn("text-[9px] font-semibold px-1 py-0.5 rounded min-w-[42px] text-center", DIRECTIONALITY_COLOR[dir])}>
+                              {dir}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              <button
+                className="mt-1 text-[10px] text-blue-400 hover:text-blue-300 underline"
+                onClick={() => setModalPosition(selected)}
+              >
+                Full breakdown →
+              </button>
             </section>
           )}
 
@@ -337,6 +354,18 @@ export function HealthTab({ portfolioId, refreshKey = 0 }: HealthTabProps) {
             ) : null}
           </section>
         </div>
+      )}
+      {modalPosition && (
+        <ScoreBreakdownModal
+          ticker={modalPosition.symbol}
+          factorDetails={modalPosition.factor_details ?? null}
+          hhsScore={modalPosition.hhs_score}
+          iesScore={modalPosition.ies_score}
+          hhsStatus={modalPosition.hhs_status}
+          iesCalculated={modalPosition.ies_calculated}
+          iesBlockedReason={modalPosition.ies_blocked_reason}
+          onClose={() => setModalPosition(null)}
+        />
       )}
     </div>
   );
