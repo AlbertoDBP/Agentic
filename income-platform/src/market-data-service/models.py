@@ -98,6 +98,7 @@ class StockFundamentalsResponse(BaseModel):
     free_cash_flow: Optional[float] = None
     market_cap: Optional[float] = None
     sector: Optional[str] = None
+    industry: Optional[str] = None
     source: str
 
 

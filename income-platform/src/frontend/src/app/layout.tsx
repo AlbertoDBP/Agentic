@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryProvider } from "@/lib/query-provider";
 import { PortfolioProvider } from "@/lib/portfolio-context";
@@ -8,9 +8,11 @@ import { MainContent } from "@/components/main-content";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import "./globals.css";
 
-const inter = Inter({
-  variable: "--font-inter",
+// HK Grotesk — IMC brand font (published on Google Fonts as Hanken Grotesk)
+const hankenGrotesk = Hanken_Grotesk({
+  variable: "--font-hk-grotesk",
   subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700", "800"],
 });
 
 const jetbrains = JetBrains_Mono({
@@ -30,7 +32,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.variable} ${jetbrains.variable} antialiased`}>
+      <body className={`${hankenGrotesk.variable} ${jetbrains.variable} antialiased`}>
         <QueryProvider>
           <PortfolioProvider>
             <TooltipProvider>

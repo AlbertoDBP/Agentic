@@ -58,6 +58,8 @@ The benchmark ticker is fetched and price-updated by the same market data refres
 
 All new columns are nullable. Old entries remain valid with nulls in new columns.
 
+**`hold_period_days` handling:** New entries set `hold_period_days = 365` (the longest pillar hold period). The old `get_pending_past_hold()` query — which filtered on this column — is replaced by three per-pillar pending queries in the new `ShadowPortfolioManager`, each using the appropriate cutoff (T+60 for Technical, T+365 for Income/Durability).
+
 **Entry-time capture (new parameters to `maybe_record_entry()`):**
 
 ```sql
@@ -65,6 +67,8 @@ benchmark_ticker          VARCHAR(20)   -- snapshot from weight profile at entry
 benchmark_entry_price     FLOAT         -- benchmark price at entry (fetched once per asset class per scoring batch)
 durability_score_at_entry FLOAT         -- financial_durability_score at time of entry
 income_ttm_at_entry       FLOAT         -- TTM dividend sum at time of entry (from dividend_history)
+                                        -- Set to NULL for instruments with no dividend history;
+                                        -- income_outcome_label will be set NEUTRAL at populate time.
 ```
 
 **Technical outcome block (populated at T+60):**
@@ -137,10 +141,17 @@ INCORRECT if change_pct <= -5.0   (income meaningfully cut)
 NEUTRAL   otherwise               (-5% to +2%: held steady, inconclusive)
 ```
 
+**Guard evaluation order (explicit):**
+
+1. If `income_ttm_at_entry` is NULL or 0 → set NEUTRAL, skip formula (prevents division by zero)
+2. Else if `ttm_at_exit == 0` → force INCORRECT (dividend suspended)
+3. Else compute `change_pct` and apply thresholds
+
 **Edge cases:**
-- `ttm_at_exit == 0` (dividend suspended) → force INCORRECT regardless of entry TTM
-- `ttm_at_entry == 0` → set NEUTRAL (cannot compute change; should not have been recorded, but guard exists)
-- Dividend history unavailable → set NEUTRAL, log warning
+
+- `ttm_at_exit == 0` (dividend suspended) → force INCORRECT regardless of entry TTM (checked after guard 1)
+- `ttm_at_entry == 0` or NULL → set NEUTRAL, log warning (checked first — no formula executed)
+- Dividend history unavailable at exit → set NEUTRAL, log warning
 
 ### Durability — derived from Income, at T+365
 
@@ -198,15 +209,35 @@ signal_t = mean(e.technical_entry_score / wt for e in tech_correct)
 
 ### Review cadence — two separate schedules
 
+The existing quarterly scheduler (APScheduler/Prefect job that currently calls `trigger_review`) is reused. The schedule splits into two jobs:
+
 **Technical review — quarterly (every 90 days)**
-- Adjusts only `weight_technical`
-- Uses `technical_outcome_label`; Income/Durability outcomes ignored
+
+- Calls `POST /learning-loop/review/{asset_class}` with `pillar = "technical"`
+- Adjusts only `weight_technical`; Income/Durability outcome labels are ignored
 - After adjustment: normalize all three weights to sum=100 (absorb rounding in the largest pillar)
+- Writes one `WeightReviewRun` with `pillar_reviewed = "technical"`
 
 **Income/Durability review — annual (every 365 days)**
-- Adjusts `weight_yield` and `weight_durability` together
-- Uses `income_outcome_label` and `durability_outcome_label` independently
+
+- Calls `POST /learning-loop/review/{asset_class}` with `pillar = "income_durability"`
+- Adjusts `weight_yield` and `weight_durability` independently using their respective outcome labels
 - After adjustment: normalize all three to sum=100
+- Writes one `WeightReviewRun` with `pillar_reviewed = "income_durability"`
+
+**"all" pillar selector** (used by backtest and manual admin calls):
+
+- Runs Technical and Income/Durability adjustments sequentially within the same request
+- Writes a single `WeightReviewRun` with `pillar_reviewed = "all"`
+- Weight adjustments are applied once after both signals are computed, then normalized to sum=100
+
+### WeightReviewRun aggregate counts
+
+`correct_count`, `incorrect_count`, and `neutral_count` on `WeightReviewRun` are computed from the **pillar under review**, not from the legacy `outcome_label` column:
+
+- Technical review (`pillar_reviewed = "technical"`) → counts from `technical_outcome_label`
+- Income/Durability review (`pillar_reviewed = "income_durability"`) → counts are the **sum** across both Income and Durability outcome labels (i.e., a single entry may contribute one Income label count and one Durability label count)
+- "all" review → same as income_durability counts plus technical counts, aggregated across pillars
 
 ### MIN_SAMPLES per pillar
 
@@ -229,6 +260,8 @@ MIN_REVIEW_GAP_DAYS      = 30     # minimum days between reviews for same class+
 ```
 
 If `incorrect_count / (correct_count + incorrect_count) > 0.60` AND total usable ≥ 20, and it has been ≥ 30 days since the last review for that asset class + pillar combination → trigger `apply_review()` immediately.
+
+**Gap-check query for threshold trigger:** The 30-day gap is checked per `(asset_class, pillar_reviewed)` pair. A review row with `pillar_reviewed = "all"` counts as resetting the gap for **all three** individual pillars — i.e., it blocks early triggers for Technical, Income, and Durability for the same asset class for 30 days. Query: `WHERE asset_class = :ac AND pillar_reviewed IN (:pillar, 'all') AND triggered_at >= now() - interval '30 days'`.
 
 Logged in `WeightReviewRun` with `triggered_by = "SIGNAL_THRESHOLD"`.
 
@@ -309,9 +342,11 @@ The backtest endpoint runs the following pipeline for a given asset class:
    - Fetch dividend history from `data_client.get_dividend_history(ticker)` → compute `income_ttm_at_exit` (TTM sum 365 days after `entry_date`)
    - If dividend data available → populate `income_outcome_label`
    - Fetch most recent `income_scores.financial_durability_score` near `entry_date + 365d` → populate `durability_outcome_label`
-3. **For each entry with `benchmark_entry_price` populated:**
-   - Fetch price at `entry_date + 60d` from market data cache → populate `technical_outcome_label`
-4. **Trigger `apply_review()`** with the full populated outcome set → immediately produces calibrated weights
+3. **For each entry regardless of `benchmark_entry_price`:**
+   - If `benchmark_entry_price` is NULL (pre-migration entry): attempt to retroactively fetch the benchmark's historical price at `entry_date` from the market data cache. If found, store it in `benchmark_entry_price` and proceed; if not available, set `technical_outcome_label = NEUTRAL` and skip.
+   - If `benchmark_entry_price` is populated: fetch ticker price and benchmark price at `entry_date + 60d` from market data cache → populate `technical_outcome_label`.
+   - If market data cache has no price for `entry_date + 60d` (e.g., ticker too recent) → set `technical_outcome_label = NEUTRAL`.
+4. **Trigger `apply_review(pillar="all")`** with the full populated outcome set → immediately produces calibrated weights. This single call runs both Technical and Income/Durability adjustment logic and writes one `WeightReviewRun` with `pillar_reviewed = "all"`.
 5. Return `WeightReviewRun` with `triggered_by = "BACKTEST"`
 
 The backtest is idempotent: entries already having a non-PENDING per-pillar outcome are not overwritten.

@@ -40,6 +40,24 @@ _COVERED_CALL_SYMBOLS = frozenset(
 )
 
 
+def _normalize_ticker(symbol: str) -> str:
+    """Normalise preferred-stock ticker formats to the FMP dash convention.
+
+    Common platform representations → FMP expected format:
+      AHL/PRD   →  AHL-PD   (slash + "PR" + letter → dash + "P" + letter)
+      CIM/PRC   →  CIM-PC
+      PMT/PRB   →  PMT-PB
+      PRIF/PRL  →  PRIF-PL
+
+    Tickers that don't match the pattern are returned unchanged.
+    """
+    import re
+    m = re.fullmatch(r"([A-Z0-9]+)/PR([A-Z])", symbol)
+    if m:
+        return f"{m.group(1)}-P{m.group(2)}"
+    return symbol
+
+
 class FMPClient(BaseDataProvider):
     """Financial Modeling Prep stable API client.
 
@@ -99,7 +117,7 @@ class FMPClient(BaseDataProvider):
         Returns:
             { symbol, price, volume, timestamp, source }
         """
-        symbol = symbol.upper()
+        symbol = _normalize_ticker(symbol.upper())
         cache_key = f"fmp:price:{symbol}"
 
         if self._cache:
@@ -158,7 +176,7 @@ class FMPClient(BaseDataProvider):
         Returns:
             List of dicts sorted by date descending (most recent first).
         """
-        symbol = symbol.upper()
+        symbol = _normalize_ticker(symbol.upper())
         cache_key = f"fmp:daily:{symbol}:{outputsize}"
 
         if self._cache:
@@ -227,7 +245,7 @@ class FMPClient(BaseDataProvider):
         Returns:
             List of dicts sorted by ex_date descending (newest first, per FMP default).
         """
-        symbol = symbol.upper()
+        symbol = _normalize_ticker(symbol.upper())
         cache_key = f"fmp:dividends:{symbol}"
 
         if self._cache:
@@ -312,7 +330,7 @@ class FMPClient(BaseDataProvider):
             earnings_growth — use /financial-growth endpoint for this metric.
             credit_rating   — use /rating endpoint or a dedicated credit API.
         """
-        symbol = symbol.upper()
+        symbol = _normalize_ticker(symbol.upper())
         cache_key = f"fmp:fundamentals:{symbol}"
 
         if self._cache:
@@ -421,7 +439,7 @@ class FMPClient(BaseDataProvider):
         Returns:
             { expense_ratio, aum, top_holdings, covered_call }
         """
-        symbol = symbol.upper()
+        symbol = _normalize_ticker(symbol.upper())
         cache_key = f"fmp:etf:{symbol}"
 
         if self._cache:

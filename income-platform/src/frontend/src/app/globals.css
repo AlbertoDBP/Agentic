@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-hk-grotesk);  /* Hanken Grotesk = HK Grotesk — IMC brand font */
   --font-mono: var(--font-jetbrains);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -46,90 +46,115 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 
-  /* Asset class colors */
-  --color-asset-stock: #3b82f6;
-  --color-asset-preferred: #8b5cf6;
-  --color-asset-bdc: #06b6d4;
-  --color-asset-cef: #f59e0b;
-  --color-asset-mlp: #10b981;
-  --color-asset-etf: #64748b;
-  --color-asset-bond: #a78bfa;
+  /* Asset class colors — preferred & etf reference vars for dark/light mode correction */
+  --color-asset-stock: var(--primary);
+  --color-asset-preferred: var(--asset-preferred);
+  --color-asset-bdc: var(--asset-bdc);
+  --color-asset-cef: var(--asset-cef);
+  --color-asset-mlp: var(--asset-mlp);
+  --color-asset-etf: var(--asset-etf);
+  --color-asset-bond: var(--asset-bond);
 
-  /* Semantic colors */
-  --color-income: #10b981;
-  --color-loss: #ef4444;
-  --color-warning: #f59e0b;
-  --color-sapphire: #3b82f6;
+  /* Semantic colors — reference vars so dark/light can override independently */
+  --color-income: var(--income);
+  --color-loss: var(--loss-color);
+  --color-warning: var(--warning-color);
+  /* Sapphire tracks primary so the logo bg is always mode-aware */
+  --color-sapphire: var(--primary);
 }
 
 /* Dark-first: dark is the default */
 :root {
-  --background: #0a0d11;
-  --foreground: #e8eaf0;
-  --card: #111520;
-  --card-foreground: #e8eaf0;
-  --popover: #111520;
-  --popover-foreground: #e8eaf0;
-  --primary: #3b82f6;
-  --primary-foreground: #ffffff;
-  --secondary: #181d2a;
-  --secondary-foreground: #e8eaf0;
-  --muted: #181d2a;
-  --muted-foreground: #b0b8cc;
-  --accent: #181d2a;
-  --accent-foreground: #e8eaf0;
-  --destructive: #ef4444;
-  --border: #2e3850;
-  --input: #2e3850;
-  --ring: #3b82f6;
-  --chart-1: #3b82f6;
-  --chart-2: #10b981;
-  --chart-3: #f59e0b;
-  --chart-4: #8b5cf6;
-  --chart-5: #06b6d4;
-  --radius: 0.5rem;
-  --sidebar: #0a0d11;
-  --sidebar-foreground: #e8eaf0;
-  --sidebar-primary: #3b82f6;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #111520;
-  --sidebar-accent-foreground: #e8eaf0;
-  --sidebar-border: #2e3850;
-  --sidebar-ring: #3b82f6;
+  --background:               #060E1B;   /* IMC_NEGRO */
+  --foreground:               #FFFFFF;
+  --card:                     #0D1A2E;   /* IMC_DARK_PANEL */
+  --card-foreground:          #FFFFFF;
+  --popover:                  #0D1A2E;
+  --popover-foreground:       #FFFFFF;
+  --primary:                  #627EE3;   /* IMC_VIOLETA_ON_PANEL — 5.17:1 on bg, 4.66:1 on card ✓ */
+  --primary-foreground:       #060E1B;   /* IMC_NEGRO — 5.17:1 on #627EE3 ✓ (dark text on lighter primary, matches original pattern) */
+  --secondary:                #0D1A2E;
+  --secondary-foreground:     #FFFFFF;
+  --muted:                    #0D1A2E;
+  --muted-foreground:         #8a909d;   /* WCAG-adjusted — 6.04:1 on bg, 5.44:1 on card, 4.52:1 on input ✓ */
+  --accent:                   #0D1A2E;
+  --accent-foreground:        #FFFFFF;
+  --destructive:              #ef4444;   /* keep — 5.08:1 on #060E1B ✓ */
+  --border:                   #1A2A40;   /* IMC_DARK_BORDER */
+  --input:                    #1A2A40;
+  --ring:                     #627EE3;
+  --chart-1:                  #627EE3;   /* IMC_VIOLETA_ON_PANEL — 4.66:1 on card ✓ (was IMC_AZUL, too dark on dark bg) */
+  --chart-2:                  #5D7AE2;   /* IMC_VIOLETA — 4.44:1 on card (large text ✓) */
+  --chart-3:                  #BBF0D1;   /* IMC_VERDE */
+  --chart-4:                  #5D7AE2;   /* IMC_VIOLETA — 4.44:1 on card ✓ (was IMC_AZUL_MID, too dark) */
+  --chart-5:                  #4456E7;   /* IMC_AZUL_ON_PANEL — 3.10:1 on card (large text ✓) */
+  --radius:                   0.5rem;
+  --sidebar:                  #060E1B;
+  --sidebar-foreground:       #FFFFFF;
+  --sidebar-primary:          #627EE3;   /* matches --primary — 5.17:1 on sidebar bg ✓ */
+  --sidebar-primary-foreground: #060E1B; /* IMC_NEGRO — 5.17:1 on #627EE3 ✓ */
+  --sidebar-accent:           #0D1A2E;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border:           #1A2A40;
+  --sidebar-ring:             #627EE3;
+  /* ── Semantic mode tokens (dark defaults) ── */
+  /* Semantic financial colors — intentional non-brand (universal financial conventions) */
+  --income:                   #10b981;   /* green — 7.19:1 on #0D1A2E ✓ */ /* financial semantic — intentional */
+  --loss-color:               #ef4444;   /* red   — 4.84:1 on #0D1A2E ✓ */ /* financial semantic — intentional */
+  --warning-color:            #f59e0b;   /* amber — 8.49:1 on #0D1A2E ✓ */ /* financial semantic — intentional */
+  /* ── Asset mode tokens (dark defaults — AA on #0D1A2E) ── */
+  --asset-preferred:          #8e61f6;   /* purple — 5.65:1 on #0D1A2E ✓ */ /* financial semantic — intentional */
+  --asset-etf:                #708198;   /* slate  — 4.59:1 on #0D1A2E ✓ */ /* financial semantic — intentional */
+  --asset-bdc:                #5D7AE2;   /* IMC_VIOLETA */ /* financial semantic — intentional */
+  --asset-cef:                #BBF0D1;   /* IMC_VERDE */ /* financial semantic — intentional */
+  --asset-mlp:                #10b981;   /* semantic green */ /* financial semantic — intentional */
+  --asset-bond:               #A6B6EF;   /* IMC_SUBLABEL_ON_AZUL */ /* financial semantic — intentional */
 }
 
 .light {
-  --background: #ffffff;
-  --foreground: #0a0d11;
-  --card: #f8fafc;
-  --card-foreground: #0a0d11;
-  --popover: #ffffff;
-  --popover-foreground: #0a0d11;
-  --primary: #3b82f6;
-  --primary-foreground: #ffffff;
-  --secondary: #f1f5f9;
-  --secondary-foreground: #0a0d11;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --accent: #f1f5f9;
-  --accent-foreground: #0a0d11;
-  --destructive: #ef4444;
-  --border: #e2e8f0;
-  --input: #e2e8f0;
-  --ring: #3b82f6;
-  --chart-1: #3b82f6;
-  --chart-2: #10b981;
-  --chart-3: #f59e0b;
-  --chart-4: #8b5cf6;
-  --chart-5: #06b6d4;
-  --sidebar: #f8fafc;
-  --sidebar-foreground: #0a0d11;
-  --sidebar-primary: #3b82f6;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f1f5f9;
-  --sidebar-accent-foreground: #0a0d11;
-  --sidebar-border: #e2e8f0;
-  --sidebar-ring: #3b82f6;
+  --background:               #FFFFFF;
+  --foreground:               #060E1B;   /* IMC_NEGRO on white = 20:1 ✓ */
+  --card:                     #E6F2FF;   /* IMC_GRIS */
+  --card-foreground:          #060E1B;
+  --popover:                  #FFFFFF;
+  --popover-foreground:       #060E1B;
+  --primary:                  #1A2ECE;   /* IMC_AZUL — 9.05:1 on white ✓ */
+  --primary-foreground:       #FFFFFF;
+  --secondary:                #E6F2FF;
+  --secondary-foreground:     #060E1B;
+  --muted:                    #E6F2FF;
+  --muted-foreground:         #656C79;   /* IMC_BODY_ON_GRIS — 4.66:1 on Gris, 5.25:1 on white ✓ */
+  --accent:                   #E6F2FF;
+  --accent-foreground:        #060E1B;
+  --destructive:              #db1212;   /* WCAG-corrected — 4.51:1 on card #E6F2FF, 5.01:1 on white ✓ */
+  --border:                   #C5D9F0;   /* IMC_GRIS_MID */
+  --input:                    #C5D9F0;
+  --ring:                     #1A2ECE;
+  --chart-1:                  #1A2ECE;   /* 9.05:1 on white ✓ */
+  --chart-2:                  #3D5AB8;   /* IMC_VIOLETA_MUTED — 5.75:1 on white ✓ */
+  --chart-3:                  #2D3FDD;   /* IMC_AZUL_MID — 6.70:1 on white ✓ */
+  --chart-4:                  #0F1E8A;   /* IMC_AZUL_DARK — high contrast ✓ */
+  --chart-5:                  #394CE6;   /* IMC_AZUL_ON_DARK — 5.2:1 on white ✓ */
+  --sidebar:                  #E6F2FF;   /* IMC_GRIS */
+  --sidebar-foreground:       #060E1B;
+  --sidebar-primary:          #1A2ECE;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent:           #C5D9F0;
+  --sidebar-accent-foreground: #060E1B;
+  --sidebar-border:           #C5D9F0;
+  --sidebar-ring:             #1A2ECE;
+  /* ── Semantic mode tokens (light overrides) ── */
+  /* Semantic financial colors — intentional non-brand (universal financial conventions) */
+  --income:                   #0a7a55;   /* WCAG-corrected — 4.71:1 on card #E6F2FF, 5.34:1 on white ✓ */ /* financial semantic — intentional */
+  --loss-color:               #db1212;   /* WCAG-corrected — 4.51:1 on card #E6F2FF, 5.01:1 on white ✓ */ /* financial semantic — intentional */
+  --warning-color:            #bc7808;   /* WCAG-corrected — 3.18:1 on card (AA large text) ✓ */ /* financial semantic — intentional */
+  /* Asset class colors — light mode overrides for Gris/white backgrounds */
+  --asset-preferred:          #3D5AB8;   /* IMC_VIOLETA_MUTED — 5.10:1 on Gris ✓ */ /* financial semantic — intentional */
+  --asset-etf:                #656C79;   /* IMC_BODY_ON_GRIS  — 4.66:1 on Gris ✓ */ /* financial semantic — intentional */
+  --asset-bdc:                #394CE6;   /* IMC_AZUL_ON_DARK  — 5.2:1 on Gris ✓ */ /* financial semantic — intentional */
+  --asset-cef:                #0F1E8A;   /* IMC_AZUL_DARK     — high contrast ✓ */ /* financial semantic — intentional */
+  --asset-mlp:                #0b815a;   /* semantic green */ /* financial semantic — intentional */
+  --asset-bond:               #2D3FDD;   /* IMC_AZUL_MID      — 6.70:1 on white ✓ */ /* financial semantic — intentional */
 }
 
 @layer base {
@@ -169,9 +194,9 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2e3850;
+  background: #1A2A40;   /* IMC_DARK_BORDER */
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4a5268;
+  background: #2D3FDD;   /* IMC_AZUL_MID */
 }

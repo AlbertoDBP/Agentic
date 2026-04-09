@@ -412,6 +412,7 @@ async def get_stock_fundamentals(symbol: str):
             free_cash_flow=data.get("free_cash_flow"),
             market_cap=data.get("market_cap"),
             sector=data.get("sector"),
+            industry=data.get("industry"),
             source="fmp",
         )
         # Fire-and-forget: persist security metadata from fundamentals data

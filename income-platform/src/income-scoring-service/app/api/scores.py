@@ -537,10 +537,18 @@ async def _fetch_market_data(ticker: str, asset_class: str) -> dict:
 def _run_gate_from_data(ticker: str, asset_class: str, gate_data: GateData):
     """Run quality gate using explicitly provided GateData fields.
 
-    Returns a GateResult with a dynamically attached ``dividend_history_years``
-    attribute so the scorer can read it without caring about the object type.
+    Returns a GateResult with dynamically attached ``dividend_history_years`` and
+    ``consecutive_positive_fcf_years`` attributes so the scorer can read them.
     """
     ac = asset_class.upper()
+
+    # Derive distribution_history_years from months (for income vehicle gates)
+    dist_years: int | None = None
+    if gate_data.distribution_history_months is not None:
+        dist_years = gate_data.distribution_history_months // 12
+    elif gate_data.dividend_history_years is not None:
+        dist_years = gate_data.dividend_history_years
+
     if ac in (AssetClass.DIVIDEND_STOCK, "DIVIDEND_STOCK"):
         gate_result = _gate.evaluate_dividend_stock(DividendStockGateInput(
             ticker=ticker,
@@ -553,11 +561,29 @@ def _run_gate_from_data(ticker: str, asset_class: str, gate_data: GateData):
         gate_result = _gate.evaluate_covered_call_etf(CoveredCallETFGateInput(
             ticker=ticker,
             aum_millions=gate_data.aum_millions,
-            track_record_years=gate_data.track_record_years,
+            track_record_years=gate_data.track_record_years or (float(dist_years) if dist_years else None),
             distribution_history_months=gate_data.distribution_history_months,
         ))
 
-    else:  # BOND or unknown
+    elif ac == "BDC":
+        gate_result = _gate.evaluate_bdc(ticker, dist_years, gate_data.credit_rating)
+
+    elif ac == "CEF":
+        gate_result = _gate.evaluate_cef(ticker, dist_years, gate_data.credit_rating)
+
+    elif ac in ("MORTGAGE_REIT", "MORTGAGE REIT"):
+        gate_result = _gate.evaluate_mortgage_reit(ticker, dist_years, gate_data.credit_rating)
+
+    elif ac in ("EQUITY_REIT", "REIT"):
+        gate_result = _gate.evaluate_equity_reit(ticker, dist_years, gate_data.credit_rating)
+
+    elif ac == "MLP":
+        gate_result = _gate.evaluate_mlp(ticker, dist_years, gate_data.credit_rating)
+
+    elif ac in ("PREFERRED_STOCK", "PREFERRED"):
+        gate_result = _gate.evaluate_preferred(ticker, dist_years, gate_data.credit_rating)
+
+    elif ac in (AssetClass.BOND, "BOND"):
         gate_result = _gate.evaluate_bond(BondGateInput(
             ticker=ticker,
             credit_rating=gate_data.credit_rating,
@@ -565,8 +591,19 @@ def _run_gate_from_data(ticker: str, asset_class: str, gate_data: GateData):
             issuer_type=gate_data.issuer_type,
         ))
 
-    # Attach dividend_history_years so the scorer can read it via getattr
-    gate_result.dividend_history_years = gate_data.dividend_history_years
+    else:
+        # Unknown asset class — use bond gate as conservative fallback
+        logger.warning("No gate defined for asset_class=%s (%s) — falling back to bond gate", ac, ticker)
+        gate_result = _gate.evaluate_bond(BondGateInput(
+            ticker=ticker,
+            credit_rating=gate_data.credit_rating,
+            duration_years=gate_data.duration_years,
+            issuer_type=gate_data.issuer_type,
+        ))
+
+    # Attach for scorer consumption via getattr
+    gate_result.dividend_history_years = gate_data.dividend_history_years or dist_years
+    gate_result.consecutive_positive_fcf_years = gate_data.consecutive_positive_fcf_years
     return gate_result
 
 
@@ -701,18 +738,109 @@ async def evaluate_score(req: ScoreRequest, db: Session = Depends(get_db)):
     gate_proxy = gate_db
     if gate_proxy is None:
         if req.gate_data is None:
-            # No gate record and no inline data — synthesize a provisional INSUFFICIENT_DATA proxy
-            # so HHS can be computed for existing portfolio holdings without full gate history.
+            # No gate record and no inline data.
+            # Derive gate inputs from already-fetched market data and run the gate engine.
+            div_history = market_data.get("dividend_history") or []
+            derived_div_years: int | None = None
+            if div_history:
+                years = {
+                    d["ex_date"][:4]
+                    for d in div_history
+                    if isinstance(d.get("ex_date"), str) and len(d["ex_date"]) >= 4
+                }
+                derived_div_years = len(years) if years else None
+
+            fundamentals = market_data.get("fundamentals") or {}
+            raw_fcf_years = fundamentals.get("consecutive_positive_fcf_years")
+            derived_fcf_years: int | None = int(raw_fcf_years) if raw_fcf_years is not None else None
+
+            # Preferred stock fallback: FMP/yfinance rarely cover preferred dividends.
+            # If the ticker has a valid price in market_data_cache (e.g. from broker sync),
+            # the preferred is actively trading and paying its stated contractual dividend.
+            # Infer the minimum gate threshold rather than leaving it as INSUFFICIENT_DATA.
+            if derived_div_years is None and asset_class.upper() in ("PREFERRED_STOCK", "PREFERRED"):
+                try:
+                    cache_row = db.execute(
+                        text("SELECT price FROM platform_shared.market_data_cache WHERE symbol = :s AND price IS NOT NULL LIMIT 1"),
+                        {"s": ticker},
+                    ).fetchone()
+                    if cache_row:
+                        derived_div_years = 2   # minimum gate threshold; inferred from active price
+                        logger.info(
+                            "PREFERRED_STOCK %s: no dividend history from provider; "
+                            "inferred div_years=2 from active market_data_cache price (contractual dividend)",
+                            ticker,
+                        )
+                except Exception as _pref_exc:
+                    logger.debug("PREFERRED_STOCK price cache check failed for %s: %s", ticker, _pref_exc)
+
+            # BOND / CUSIP fallback: FMP does not support CUSIP lookup on our plan.
+            # Use OpenFIGI (free, no key required) to resolve CUSIP → bond ticker string,
+            # then parse the maturity date to derive duration_years for the bond gate.
+            # Credit rating is left as None (gate skips that check rather than failing).
+            import re as _re
+            _CUSIP_RE = _re.compile(r"^[0-9]{2}[A-Z0-9]{7}$")
+            derived_duration_years: float | None = None
+            if asset_class.upper() == "BOND" and _CUSIP_RE.match(ticker):
+                try:
+                    import httpx as _httpx
+                    async with _httpx.AsyncClient(timeout=5) as _figi_client:
+                        _figi_resp = await _figi_client.post(
+                            "https://api.openfigi.com/v3/mapping",
+                            json=[{"idType": "ID_CUSIP", "idValue": ticker}],
+                            headers={"Content-Type": "application/json"},
+                        )
+                    if _figi_resp.status_code == 200:
+                        _figi_data = _figi_resp.json()
+                        _bond_ticker = (_figi_data[0].get("data") or [{}])[0].get("ticker", "")
+                        # bond_ticker format: "PSEC 3.437 10/15/28" or "HTGC 2 5/8 09/16/26"
+                        _mat = _re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})\s*$", _bond_ticker)
+                        if _mat:
+                            from datetime import date as _date
+                            _m, _d, _y = int(_mat.group(1)), int(_mat.group(2)), int(_mat.group(3))
+                            _year = 2000 + _y if _y < 100 else _y
+                            _maturity = _date(_year, _m, _d)
+                            _days = (_maturity - _date.today()).days
+                            derived_duration_years = max(0.0, round(_days / 365.25, 2))
+                            logger.info(
+                                "BOND CUSIP %s: OpenFIGI '%s' → maturity %s, duration=%.2fy",
+                                ticker, _bond_ticker, _maturity, derived_duration_years,
+                            )
+                except Exception as _cusip_exc:
+                    logger.warning("OpenFIGI CUSIP lookup failed for %s: %s", ticker, _cusip_exc)
+
             logger.info(
-                "No quality gate record for %s; using provisional INSUFFICIENT_DATA proxy", ticker
+                "No gate record for %s (%s) — derived div_years=%s fcf_years=%s duration_years=%s; running gate",
+                ticker, asset_class, derived_div_years, derived_fcf_years, derived_duration_years,
             )
-            gate_proxy = type("_ProvisionalGate", (), {
-                "status": GateStatus.INSUFFICIENT_DATA,
-                "passed": False,
-                "fail_reasons": ["No quality gate record — score is provisional"],
-                "id": None,
-            })()
-            gate_db = None  # no real gate_db to link quality_gate_id
+
+            derived_gate_data = GateData(
+                dividend_history_years=derived_div_years,
+                consecutive_positive_fcf_years=derived_fcf_years,
+                duration_years=derived_duration_years,
+                # distribution_history_months derived inside _run_gate_from_data from dividend_history_years
+            )
+            try:
+                derived_result = _run_gate_from_data(ticker, asset_class, derived_gate_data)
+            except Exception as _ge:
+                logger.warning("Derived gate run failed for %s: %s — falling back to INSUFFICIENT_DATA", ticker, _ge)
+                derived_result = None
+
+            if derived_result is not None:
+                # Persist derived gate result so next scoring run can use it from DB
+                gate_db = _persist_gate_result(db, derived_result, asset_class)
+                gate_proxy = derived_result
+            else:
+                # Last resort fallback — should rarely happen
+                gate_proxy = type("_ProvisionalGate", (), {
+                    "status": GateStatus.INSUFFICIENT_DATA,
+                    "passed": False,
+                    "fail_reasons": ["Gate derivation failed — score is provisional"],
+                    "id": None,
+                    "dividend_history_years": derived_div_years,
+                    "consecutive_positive_fcf_years": derived_fcf_years,
+                })()
+                gate_db = None
         else:
             pass  # fall through to inline gate evaluation below
     if gate_proxy is None and req.gate_data is not None:
