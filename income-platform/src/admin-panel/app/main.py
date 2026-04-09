@@ -31,6 +31,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 # ── Import and mount routes ──
 from app.routes import dashboard, services, scheduler, portfolio, alerts, proposals, analysts, newsletters, settings, proxy, api_portfolio, api_dashboard, api_preferences  # noqa: E402
+from app.routes.api_chat import router as chat_router, ensure_chat_tables
 
 app.include_router(dashboard.router)
 app.include_router(services.router)
@@ -44,7 +45,13 @@ app.include_router(settings.router)
 app.include_router(api_portfolio.router)   # JSON API — before proxy to avoid catch-all
 app.include_router(api_dashboard.router)   # Dashboard aggregate endpoint
 app.include_router(api_preferences.router) # User tax preferences
+app.include_router(chat_router)            # Chat assistant CRUD — before proxy
 app.include_router(proxy.router)
+
+
+@app.on_event("startup")
+async def startup():
+    ensure_chat_tables()
 
 
 @app.get("/health")
