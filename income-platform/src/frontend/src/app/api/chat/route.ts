@@ -66,14 +66,14 @@ export async function POST(req: NextRequest) {
         const threadId = thread_id ?? await createThread(truncateTitle(message));
         emit({ type: "thread_id", thread_id: threadId });
 
-        // 2. Save user message immediately (before any side effects)
+        // 2. Load thread history before saving the user message to avoid duplicates
+        const history = await loadHistory(threadId);
+
+        // 3. Save user message (after history load so it isn't included in history)
         await saveMessages(threadId, [{ role: "user", raw: { role: "user", content: message } }]);
 
-        // 3. Assemble context
+        // 4. Assemble context
         const contextStr = await assembleContext({ portfolioId: portfolio_id, userAuthHeader: userAuth });
-
-        // 4. Load thread history (excludes the message we just saved — it's appended below)
-        const history = await loadHistory(threadId);
 
         // 5. Build messages array
         let messages: Anthropic.MessageParam[] = [
@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
 
         // 6. Multi-turn streaming loop (max 5 rounds)
         let finalContentBlocks: Anthropic.ContentBlock[] = [];
+        const intermediateMessages: Array<{ role: string; raw: object }> = [];
 
         for (let round = 0; round < 5; round++) {
           const response = await anthropic.messages.create({
@@ -155,13 +156,19 @@ export async function POST(req: NextRequest) {
             { role: "assistant", content: contentBlocks },
             { role: "user", content: toolResults },
           ];
+
+          // Collect intermediate messages for persistence
+          intermediateMessages.push(
+            { role: "assistant", raw: { role: "assistant", content: contentBlocks } },
+            { role: "user", raw: { role: "user", content: toolResults } },
+          );
         }
 
-        // 7. Save assistant message
-        await saveMessages(threadId, [{
-          role: "assistant",
-          raw: { role: "assistant", content: finalContentBlocks },
-        }]);
+        // 7. Save intermediate tool turns + final assistant message
+        await saveMessages(threadId, [
+          ...intermediateMessages,
+          { role: "assistant", raw: { role: "assistant", content: finalContentBlocks } },
+        ]);
 
         emit({ type: "done" });
       } catch (err) {
