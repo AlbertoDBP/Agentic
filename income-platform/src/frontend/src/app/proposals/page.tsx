@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { ExecutionPanel } from "@/components/proposals/execution-panel";
 import { OrderStatusPanel } from "@/components/proposals/order-status-panel";
+import { RebalanceCard } from "@/components/RebalanceCard";
 import type {
   ProposalWithPortfolio,
   OrderParams,
@@ -711,8 +712,13 @@ export default function ProposalsPage() {
               loading={submitting}
             />
           ) : (
-            <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-              Select proposals from the left to begin
+            <div className="flex flex-col h-full overflow-y-auto p-4 gap-4">
+              <RebalanceCard
+                defaultPortfolioId={focusedPortfolioId ?? portfolios[0]?.id}
+              />
+              <div className="text-muted-foreground text-sm text-center pt-2">
+                Select proposals from the left to begin execution
+              </div>
             </div>
           )
         ) : submittedAt ? (
