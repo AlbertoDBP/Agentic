@@ -556,6 +556,8 @@ services:
       - AGENT14_URL=http://agent-14-data-quality:8014
       - AGENT08_URL=http://agent-08-rebalancing:8008
       - PROJECTION_SERVICE_URL=http://agent-09-income-projection:8009
+      - AGENT03_URL=http://agent-03-income-scoring:8003
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - SERVICE_TOKEN=${SERVICE_TOKEN}
     ports:
       - "8200:8200"

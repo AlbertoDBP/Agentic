@@ -14,6 +14,7 @@ import {
   PanelLeftOpen,
   ScanLine,
   Leaf,
+  MessageCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PortfolioSwitcher } from "./portfolio-switcher";
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { href: "/proposals",          label: "Proposals",          icon: FileCheck },
   { href: "/scanner",            label: "Scanner",            icon: ScanLine },
   { href: "/tax",                label: "Tax Optimizer",      icon: Leaf },
+  { href: "/assistant",            label: "Assistant",          icon: MessageCircle },
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

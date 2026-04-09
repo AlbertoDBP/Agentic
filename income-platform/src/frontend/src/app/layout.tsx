@@ -5,6 +5,7 @@ import { QueryProvider } from "@/lib/query-provider";
 import { PortfolioProvider } from "@/lib/portfolio-context";
 import { Sidebar } from "@/components/sidebar";
 import { MainContent } from "@/components/main-content";
+import { ChatWidget } from "@/components/chat/ChatWidget";
 import "./globals.css";
 
 const inter = Inter({
@@ -37,6 +38,7 @@ export default function RootLayout({
                 <Sidebar />
                 <MainContent>{children}</MainContent>
               </div>
+              <ChatWidget />
             </TooltipProvider>
           </PortfolioProvider>
         </QueryProvider>
