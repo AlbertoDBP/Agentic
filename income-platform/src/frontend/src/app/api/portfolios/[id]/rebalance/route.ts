@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 const AGENT08 = process.env.AGENT08_URL ?? "http://localhost:8008";
 
 function serviceToken(): string {
-  return process.env.SERVICE_JWT_TOKEN ?? "dev-token";
+  return process.env.SERVICE_JWT_TOKEN ?? process.env.SERVICE_TOKEN ?? "dev-token";
 }
 
 const headers = () => ({

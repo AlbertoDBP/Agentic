@@ -10,7 +10,7 @@ import { cn, scoreTextColor, scoreBadgeColor } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/config";
 import type { Position } from "@/lib/types";
 import { ScoreBreakdownModal } from "@/components/ScoreBreakdownModal";
-import { directionality, DIRECTIONALITY_BAR, DIRECTIONALITY_COLOR, FACTOR_LABEL, FACTOR_PILLAR, PILLAR_FACTORS, PILLAR_LABEL } from "@/lib/score-breakdown";
+import { directionality, DIRECTIONALITY_BAR, DIRECTIONALITY_COLOR, FACTOR_LABEL, PILLAR_FACTORS, PILLAR_LABEL } from "@/lib/score-breakdown";
 
 function DetailRow({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
