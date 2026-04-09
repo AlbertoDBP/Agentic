@@ -1,4 +1,5 @@
 // src/frontend/src/components/chat/ChatMessage.tsx
+"use client";
 import { cn } from "@/lib/utils";
 import { ToolCard } from "./ToolCard";
 
@@ -31,7 +32,7 @@ function renderText(text: string) {
     const line = lines[i];
 
     // Table detection
-    if (line.includes("|") && lines[i + 1]?.match(/^\|[-| ]+\|$/)) {
+    if (line.includes("|") && lines[i + 1]?.match(/^\|[-|: ]+\|$/)) {
       const headers = line.split("|").filter(Boolean).map((s) => s.trim());
       i += 2; // skip separator
       const rows: string[][] = [];
@@ -114,7 +115,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
         ))}
 
         {/* Text bubble */}
-        {message.text && (
+        {(message.text || message.streaming) && (
           <div className={cn(
             "rounded-lg px-3 py-2 text-sm",
             isUser
@@ -124,7 +125,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
             {isUser ? (
               <p className="text-sm whitespace-pre-wrap">{message.text}</p>
             ) : (
-              <div className="space-y-1">{renderText(message.text)}</div>
+              <div className="space-y-1">{renderText(message.text ?? "")}</div>
             )}
             {message.streaming && (
               <span className="inline-block w-1.5 h-3.5 bg-blue-400 ml-0.5 animate-pulse rounded-sm" />

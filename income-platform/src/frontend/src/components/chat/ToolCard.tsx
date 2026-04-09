@@ -45,7 +45,7 @@ export function ToolCard({ name, result, pending = false }: ToolCardProps) {
           {JSON.stringify(result, null, 2)}
         </pre>
       )}
-      {typeof result?.link === "string" && (
+      {!pending && typeof result?.link === "string" && (
         <div className="px-2.5 pb-1.5">
           <a href={result.link} className="text-blue-400 hover:underline text-[10px]">
             View in Proposals →
