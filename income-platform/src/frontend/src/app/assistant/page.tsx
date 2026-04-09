@@ -35,7 +35,7 @@ function groupByDate(threads: Array<{ id: string; title: string; updated_at: str
 
 export default function AssistantPage() {
   const { threads, activeThreadId, messages, input, loading, threadsLoading,
-    setInput, send, fetchThreads, loadThread, startNewThread } = useChat();
+    setInput, send, retry, fetchThreads, loadThread, startNewThread } = useChat();
 
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -175,6 +175,7 @@ export default function AssistantPage() {
         loading={loading}
         onInputChange={setInput}
         onSend={send}
+        onRetry={retry}
         className="flex-1 min-w-0"
         placeholder="Ask about your portfolio, run an analysis, or define a new skill…"
       />

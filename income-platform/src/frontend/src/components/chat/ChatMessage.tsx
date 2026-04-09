@@ -9,10 +9,12 @@ export interface ChatMessageData {
   text?: string;
   toolCards?: Array<{ id: string; name: string; result?: Record<string, unknown>; pending?: boolean }>;
   streaming?: boolean;
+  isError?: boolean;
 }
 
 interface ChatMessageProps {
   message: ChatMessageData;
+  onRetry?: () => void;
 }
 
 // Minimal markdown renderer — bold, inline code, links
@@ -98,7 +100,7 @@ function renderText(text: string) {
   return elements;
 }
 
-export function ChatMessage({ message }: ChatMessageProps) {
+export function ChatMessage({ message, onRetry }: ChatMessageProps) {
   const isUser = message.role === "user";
 
   return (
@@ -120,6 +122,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
             "rounded-lg px-3 py-2 text-sm",
             isUser
               ? "bg-blue-600/20 border border-blue-500/30 text-foreground"
+              : message.isError
+              ? "bg-red-950/40 border border-red-900/50 text-red-400"
               : "bg-muted/30 border border-border/30 text-foreground"
           )}>
             {isUser ? (
@@ -129,6 +133,14 @@ export function ChatMessage({ message }: ChatMessageProps) {
             )}
             {message.streaming && (
               <span className="inline-block w-1.5 h-3.5 bg-blue-400 ml-0.5 animate-pulse rounded-sm" />
+            )}
+            {message.isError && onRetry && (
+              <button
+                onClick={onRetry}
+                className="mt-2 flex items-center gap-1 text-[11px] text-red-400 hover:text-red-300 transition-colors"
+              >
+                ↺ Retry
+              </button>
             )}
           </div>
         )}

@@ -12,6 +12,7 @@ interface ChatPanelProps {
   loading: boolean;
   onInputChange: (v: string) => void;
   onSend: () => void;
+  onRetry?: () => void;
   className?: string;
   placeholder?: string;
 }
@@ -22,6 +23,7 @@ export function ChatPanel({
   loading,
   onInputChange,
   onSend,
+  onRetry,
   className,
   placeholder = "Ask anything about your portfolio…",
 }: ChatPanelProps) {
@@ -50,7 +52,7 @@ export function ChatPanel({
           </div>
         )}
         {messages.map((msg) => (
-          <ChatMessage key={msg.id} message={msg} />
+          <ChatMessage key={msg.id} message={msg} onRetry={msg.isError ? onRetry : undefined} />
         ))}
         <div ref={bottomRef} />
       </div>

@@ -21,6 +21,7 @@ export function useChat(opts: UseChatOptions = {}) {
   const [loading, setLoading] = useState(false);
   const [threadsLoading, setThreadsLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const lastFailedTextRef = useRef<string | null>(null);
 
   // ── Thread list ──────────────────────────────────────────────────────────────
 
@@ -75,6 +76,7 @@ export function useChat(opts: UseChatOptions = {}) {
     if (!msg.trim() || loading) return;
     setInput("");
     setLoading(true);
+    lastFailedTextRef.current = null;
 
     // Optimistic user message
     const userMsg: ChatMessageData = { id: `user-${Date.now()}`, role: "user", text: msg };
@@ -181,10 +183,11 @@ export function useChat(opts: UseChatOptions = {}) {
       }
     } catch (err: unknown) {
       if ((err as Error).name !== "AbortError") {
+        lastFailedTextRef.current = msg;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, text: "Request failed. Please try again.", streaming: false }
+              ? { ...m, text: "Request failed. Please try again.", streaming: false, isError: true }
               : m
           )
         );
@@ -193,6 +196,14 @@ export function useChat(opts: UseChatOptions = {}) {
       setLoading(false);
     }
   }, [input, loading, activeThreadId, opts.portfolioId, fetchThreads]);
+
+  const retry = useCallback(() => {
+    const text = lastFailedTextRef.current;
+    if (!text) return;
+    // Remove the failed user + assistant message pair, then re-send
+    setMessages((prev) => prev.slice(0, -2));
+    send(text);
+  }, [send]);
 
   return {
     threads,
@@ -206,5 +217,6 @@ export function useChat(opts: UseChatOptions = {}) {
     loadThread,
     startNewThread,
     send,
+    retry,
   };
 }

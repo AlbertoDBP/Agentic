@@ -14,7 +14,7 @@ export function ChatWidget() {
   // Extract portfolio ID from /portfolios/[id] URLs
   const portfolioId = pathname.match(/\/portfolios\/([^/]+)/)?.[1];
 
-  const { messages, input, loading, setInput, send, threads, fetchThreads, loadThread } =
+  const { messages, input, loading, setInput, send, retry, threads, fetchThreads, loadThread } =
     useChat({ portfolioId });
 
   // Load most recent thread when widget opens
@@ -76,6 +76,7 @@ export function ChatWidget() {
             loading={loading}
             onInputChange={setInput}
             onSend={send}
+            onRetry={retry}
             className="flex-1 min-h-0"
           />
         </div>

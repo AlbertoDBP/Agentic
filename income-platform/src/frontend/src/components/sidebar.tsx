@@ -3,8 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard,
-  Briefcase,
   TrendingUp,
   Bell,
   FileCheck,
@@ -17,12 +15,9 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { PortfolioSwitcher } from "./portfolio-switcher";
 import { usePortfolio } from "@/lib/portfolio-context";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard", label: "Portfolios", icon: Briefcase },
   { href: "/income-projection",  label: "Income Projection",  icon: TrendingUp },
   { href: "/alerts",             label: "Alerts",             icon: Bell },
   { href: "/proposals",          label: "Proposals",          icon: FileCheck },
@@ -47,7 +42,7 @@ export function Sidebar() {
       {/* Header */}
       <div className="flex h-14 items-center border-b border-border px-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sapphire">
-          <span className="text-xs font-bold text-white">IF</span>
+          <span className="text-xs font-bold text-primary-foreground">IF</span>
         </div>
         {!sidebarCollapsed && (
           <span className="ml-2 text-sm font-semibold tracking-tight">Income Fortress</span>
@@ -67,13 +62,6 @@ export function Sidebar() {
           )}
         </button>
       </div>
-
-      {/* Portfolio Switcher */}
-      {!sidebarCollapsed && (
-        <div className="px-3 py-3">
-          <PortfolioSwitcher />
-        </div>
-      )}
 
       {/* Nav */}
       <nav className={cn("flex-1 space-y-0.5", sidebarCollapsed ? "px-2 pt-3" : "px-3")}>
