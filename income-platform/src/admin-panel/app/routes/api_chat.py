@@ -117,7 +117,7 @@ def append_messages(thread_id: str, messages: list[MessageItem]):
         for msg in messages:
             conn.execute(text(
                 "INSERT INTO platform_shared.chat_messages (thread_id, role, raw) "
-                "VALUES (:tid, :role, :raw::jsonb)"
+                "VALUES (:tid, :role, CAST(:raw AS jsonb))"
             ), {"tid": thread_id, "role": msg.role, "raw": json.dumps(msg.raw)})
         conn.execute(text(
             "UPDATE platform_shared.chat_threads SET updated_at = now() WHERE id = :id"
