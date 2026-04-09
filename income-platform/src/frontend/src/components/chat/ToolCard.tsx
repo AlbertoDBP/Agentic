@@ -13,6 +13,7 @@ interface ToolCardProps {
 const TOOL_LABELS: Record<string, string> = {
   create_proposal_draft: "Created ProposalDraft",
   get_position_details: "Position Details",
+  get_portfolio_income: "Portfolio Income",
   get_score_breakdown: "Score Breakdown",
   get_scanner_results: "Scanner Results",
   get_analyst_signals: "Analyst Signals",

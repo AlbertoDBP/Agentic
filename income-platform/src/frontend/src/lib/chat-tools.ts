@@ -80,6 +80,18 @@ export function buildToolDefinitions(): Anthropic.Tool[] {
       },
     },
     {
+      name: "get_portfolio_income",
+      description:
+        "Returns monthly income distribution for a portfolio: per-month totals ($), per-position breakdown by frequency (Monthly/Quarterly/Semi-Annual/Annual), and annual income total. Use when the user asks about income, monthly income, distributions, cash flow, or dividend schedule.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          portfolio_id: { type: "string", description: "UUID of the portfolio" },
+        },
+        required: ["portfolio_id"],
+      },
+    },
+    {
       name: "save_memory",
       description:
         "Stores a fact, preference, or rule about the user or their portfolio in persistent memory. Call whenever the user says 'remember', 'always', or states a preference.",
@@ -187,6 +199,15 @@ export async function executeTool(
         );
         if (!r.ok) return { signals: [], message: "No analyst data available" };
         return { signals: await r.json() };
+      }
+
+      case "get_portfolio_income": {
+        const r = await fetch(
+          `${ADMIN_PANEL_URL}/api/portfolios/${input.portfolio_id}/income-by-month`,
+          { headers: svcHeaders() }
+        );
+        if (!r.ok) return { error: `Income fetch failed: HTTP ${r.status}` };
+        return await r.json();
       }
 
       case "save_memory": {
