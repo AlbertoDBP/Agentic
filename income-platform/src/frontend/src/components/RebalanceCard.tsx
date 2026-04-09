@@ -198,9 +198,9 @@ export function RebalanceCard({ defaultPortfolioId }: RebalanceCardProps) {
               {/* Proposals table */}
               {result.proposals.length > 0 ? (
                 <div className="space-y-1">
-                  {result.proposals.map((p, i) => (
+                  {result.proposals.map((p) => (
                     <div
-                      key={i}
+                      key={p.symbol}
                       className="flex items-start gap-2 py-2 border-b border-border/30 last:border-0"
                     >
                       {/* Violation badge */}
