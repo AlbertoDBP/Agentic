@@ -625,12 +625,13 @@ async def list_portfolios(db: Session = Depends(get_db)):
     rows = db.execute(text("""
         SELECT p.id, p.portfolio_name AS name, a.account_type AS tax_status, a.broker,
                COUNT(pos.id) AS holding_count, p.last_refreshed_at,
+               p.cash_balance,
                SUM(pos.current_value) AS total_value,
                SUM(pos.annual_income) AS annual_income
         FROM platform_shared.portfolios p
         LEFT JOIN platform_shared.accounts a ON a.id = p.account_id
-        LEFT JOIN platform_shared.positions pos ON pos.portfolio_id = p.id
-        GROUP BY p.id, p.portfolio_name, a.account_type, a.broker, p.last_refreshed_at
+        LEFT JOIN platform_shared.positions pos ON pos.portfolio_id = p.id AND pos.status = 'ACTIVE'
+        GROUP BY p.id, p.portfolio_name, a.account_type, a.broker, p.last_refreshed_at, p.cash_balance
         ORDER BY p.portfolio_name
     """)).mappings().all()
 
@@ -647,6 +648,7 @@ async def list_portfolios(db: Session = Depends(get_db)):
             "name": row["name"],
             "tax_status": row["tax_status"],
             "broker": row["broker"],
+            "cash_balance": float(row["cash_balance"]) if row["cash_balance"] is not None else None,
             "last_refresh": row["last_refreshed_at"].isoformat() if row["last_refreshed_at"] else None,
             **agg,
         })

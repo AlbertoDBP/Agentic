@@ -37,7 +37,7 @@ export function PortfolioCard({ portfolio: p }: PortfolioCardProps) {
       {/* KPI grid 3×2 */}
       <div className="grid grid-cols-3 gap-px bg-border/30 border-b border-border/50">
         {[
-          { label: "Value",        value: formatCurrency(p.total_value), positive: null },
+          { label: "Value",        value: formatCurrency((p.total_value ?? 0) + (p.cash_balance ?? 0)), positive: null },
           { label: "Ann. Income",  value: formatCurrency(p.annual_income), positive: null },
           { label: "NAA Yield",    value: p.naa_yield != null ? `${(p.naa_yield * 100).toFixed(2)}%` : "—", positive: null },
           { label: "YoC",          value: p.agg_yoc != null ? `${(p.agg_yoc * 100).toFixed(2)}%` : "—", positive: null },
