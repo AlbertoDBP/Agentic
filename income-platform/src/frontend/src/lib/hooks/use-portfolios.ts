@@ -8,7 +8,8 @@ const authHeader = () => ({
 });
 
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, { headers: authHeader() });
+  // Always use Next.js API routes (server-side service token, no browser JWT needed)
+  const res = await fetch(path, { headers: authHeader() });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json() as Promise<T>;
 }
@@ -17,7 +18,7 @@ async function apiFetch<T>(path: string): Promise<T> {
 export function usePortfolios() {
   return useQuery<PortfolioListItem[]>({
     queryKey: ["portfolios"],
-    queryFn: () => apiFetch("/broker/portfolios"),
+    queryFn: () => apiFetch("/api/broker/portfolios"),
     staleTime: 30_000,
   });
 }
@@ -26,7 +27,7 @@ export function usePortfolios() {
 export function usePortfolioSummary(portfolioId: string | undefined) {
   return useQuery<PortfolioSummary>({
     queryKey: ["portfolio-summary", portfolioId],
-    queryFn: () => apiFetch(`/broker/portfolios/${portfolioId}/summary`),
+    queryFn: () => apiFetch(`/api/broker/portfolios/${portfolioId}/summary`),
     enabled: !!portfolioId,
     staleTime: 30_000,
   });

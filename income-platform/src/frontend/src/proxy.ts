@@ -25,6 +25,7 @@ const NEXTJS_API_PREFIXES = [
   "/api/analyst-ideas/",    // /api/analyst-ideas/analysts, /api/analyst-ideas/ttl-config
   "/api/tax/",              // /api/tax/summary, /api/tax/calculate, /api/tax/harvest, /api/tax/optimize/portfolio
   "/api/chat",              // /api/chat (streaming), /api/chat/threads, /api/chat/memories, /api/chat/skills
+  "/api/broker/",           // /api/broker/portfolios, /api/broker/portfolios/[id]/summary
 ];
 
 export function proxy(request: NextRequest) {
