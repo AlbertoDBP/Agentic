@@ -13,11 +13,13 @@ import {
   ScanLine,
   Leaf,
   MessageCircle,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePortfolio } from "@/lib/portfolio-context";
 
 const NAV_ITEMS = [
+  { href: "/dashboard",          label: "Portfolio",          icon: Briefcase },
   { href: "/income-projection",  label: "Income Projection",  icon: TrendingUp },
   { href: "/alerts",             label: "Alerts",             icon: Bell },
   { href: "/proposals",          label: "Proposals",          icon: FileCheck },
@@ -66,7 +68,10 @@ export function Sidebar() {
       {/* Nav */}
       <nav className={cn("flex-1 space-y-0.5", sidebarCollapsed ? "px-2 pt-3" : "px-3")}>
         {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || (href !== "/" && pathname.startsWith(href));
+          const active =
+            pathname === href ||
+            (href !== "/" && pathname.startsWith(href)) ||
+            (href === "/dashboard" && pathname.startsWith("/portfolios"));
           return (
             <Link
               key={href}
