@@ -279,7 +279,7 @@ export async function executeTool(
         const r = await fetch(`${ADMIN_PANEL_URL}/api/scanner/scan`, {
           method: "POST",
           headers: { ...svcHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({ tickers: [input.symbol.toUpperCase()], limit: 1 }),
+          body: JSON.stringify({ tickers: [String(input.symbol).toUpperCase()], limit: 1 }),
         });
         if (!r.ok) return { signals: [], message: "No analyst data available" };
         const data = await r.json();
