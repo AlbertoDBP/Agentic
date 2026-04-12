@@ -32,6 +32,7 @@ export function buildPositionSummary(positions: any[]): string {
 
 export function buildPortfolioSnapshot(portfolio: any, isActive: boolean): string {
   let out = `### ${portfolio.name}${isActive ? " *(active)*" : ""}\n`;
+  out += `- portfolio_id: ${portfolio.id}\n`;
   out += `- Value: $${(portfolio.total_value ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
   out += `, Yield: ${portfolio.blended_yield?.toFixed(1) ?? "—"}%`;
   out += `, Positions: ${portfolio.position_count ?? 0}\n`;
