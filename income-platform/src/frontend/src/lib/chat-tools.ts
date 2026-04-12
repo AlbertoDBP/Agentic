@@ -263,21 +263,29 @@ export async function executeTool(
       }
 
       case "get_scanner_results": {
-        const r = await fetch(
-          `${ADMIN_PANEL_URL}/api/scanner/results?portfolio_id=${input.portfolio_id}`,
-          { headers: svcHeaders() }
-        );
-        if (!r.ok) return { error: `Scanner results fetch failed: HTTP ${r.status}` };
-        return { results: await r.json() };
+        // Run a fresh scan for this portfolio and return the top results
+        const r = await fetch(`${ADMIN_PANEL_URL}/api/scanner/scan`, {
+          method: "POST",
+          headers: { ...svcHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ portfolio_id: input.portfolio_id, limit: 20 }),
+        });
+        if (!r.ok) return { error: `Scanner fetch failed: HTTP ${r.status}` };
+        const data = await r.json();
+        return { results: data.items ?? [], scan_id: data.scan_id, total_passed: data.total_passed };
       }
 
       case "get_analyst_signals": {
-        const r = await fetch(
-          `${ADMIN_PANEL_URL}/api/newsletters/signals?ticker=${input.symbol}`,
-          { headers: svcHeaders() }
-        );
+        // Scan a single ticker to get its analyst context and scoring details
+        const r = await fetch(`${ADMIN_PANEL_URL}/api/scanner/scan`, {
+          method: "POST",
+          headers: { ...svcHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ tickers: [input.symbol.toUpperCase()], limit: 1 }),
+        });
         if (!r.ok) return { signals: [], message: "No analyst data available" };
-        return { signals: await r.json() };
+        const data = await r.json();
+        const item = (data.items ?? [])[0];
+        if (!item) return { signals: [], message: "No data found for ticker" };
+        return { symbol: item.ticker, analyst_context: item.analyst_context, score_details: item.score_details, recommendation: item.recommendation };
       }
 
       case "get_portfolio_income": {
@@ -291,7 +299,7 @@ export async function executeTool(
 
       case "get_tax_profile": {
         const r = await fetch(
-          `${ADMIN_PANEL_URL}/api/tax/calculate/${input.symbol}`,
+          `${ADMIN_PANEL_URL}/api/tax/profile/${input.symbol}`,
           { headers: svcHeaders() }
         );
         if (!r.ok) return { error: `Tax profile fetch failed: HTTP ${r.status}` };
