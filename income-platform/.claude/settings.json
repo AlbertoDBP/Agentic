@@ -16,10 +16,32 @@
       "Bash(chmod +x /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/scripts/platform-ctl.sh)",
       "Bash(find /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform -name *migration* -type f)",
       "Bash(find /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src -name *.sql -o -name alembic -type d)",
-      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --no-import-alias --use-npm)"
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --no-import-alias --use-npm)",
+      "Bash(PYTHONPATH=. python3 -c \"from app.main import app; print\\(''OK''\\)\")",
+      "Bash(PYTHONPATH=. python3 -m pytest tests/ -v --ignore=tests/test_phase5_integration.py --ignore=tests/test_phase6_framework.py -x)",
+      "Bash(PYTHONPATH=. python3 -m pytest tests/test_phase4_api.py::TestAnalystsAPI::test_list_analysts_returns_200 -v)",
+      "Bash(find /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src/frontend/src/app -name \"page.tsx\" -exec dirname {})",
+      "Bash(grep -n \"export.*usePortfolio\" /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src/frontend/src/lib/*.ts /Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src/frontend/src/lib/*.tsx)",
+      "Bash(/tmp/analyst_check.py:*)",
+      "Bash(scp /tmp/analyst_check.py root@138.197.78.238:/tmp/analyst_check.py)",
+      "Bash(/tmp/analyst_check2.py:*)",
+      "Bash(scp /tmp/analyst_check2.py root@138.197.78.238:/tmp/analyst_check2.py)",
+      "Bash(1 ssh:*)",
+      "Bash(SERVER=root@138.197.78.238)",
+      "Bash(scp src/asset-classification-service/app/main.py $SERVER:/tmp/ac_main.py)",
+      "Bash(ssh $SERVER \"docker cp /tmp/ac_main.py agent-04-asset-classification:/app/app/main.py && echo ''copied''\")",
+      "Bash(ssh $SERVER \"docker restart agent-04-asset-classification 2>&1 && sleep 8 && docker logs agent-04-asset-classification --tail 20 2>&1\")",
+      "Bash(SERVER=root@138.197.78.238 rsync -avz src/opportunity-scanner-service/ $SERVER:/opt/income-platform/src/opportunity-scanner-service/ --exclude '__pycache__' --exclude '*.pyc')",
+      "Bash(ssh root@138.197.78.238 \":*)",
+      "Bash(ssh root@138.197.78.238 \"docker exec agent-03-income-scoring python3 -c \"\":*)",
+      "Bash(ssh root@138.197.78.238 \"docker exec admin-panel python3 -c \"\":*)",
+      "Bash(ssh root@138.197.78.238 \"docker exec agent-04-asset-classification python3 -c \"\":*)",
+      "Bash(git diff *)"
     ],
     "additionalDirectories": [
-      "/Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src/scenario-simulation-service/app"
+      "/Volumes/CH-DataOne/AlbertoDBP/Agentic/income-platform/src/scenario-simulation-service/app",
+      "/Users/alberto/.config/superpowers/worktrees/income-platform/feat/analyst-ideas-scanner-tab/income-platform/src/agent-02-newsletter-ingestion/app",
+      "/Users/alberto/.config/superpowers/worktrees/income-platform/feat/analyst-ideas-scanner-tab/income-platform/src/admin-panel/app/routes"
     ]
   }
 }

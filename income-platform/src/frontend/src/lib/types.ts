@@ -312,6 +312,14 @@ export interface PortfolioListItem {
   agg_hhs?: number | null;
   total_return?: number | null;
   hhi?: number;
+  /** Weighted-avg expense ratio across all holdings (fraction, e.g. 0.012 = 1.2%). */
+  agg_expense_ratio?: number | null;
+  /** After-tax, after-fee yield on current portfolio value (fraction). */
+  after_tax_yield?: number | null;
+  /** Income-weighted % of distributions that are qualified dividends. */
+  agg_tax_qualified_pct?: number | null;
+  /** Income-weighted % of distributions that are ordinary income. */
+  agg_tax_ordinary_pct?: number | null;
   unsafe_count: number;
   gate_fail_count: number;
   concentration_by_class: Array<{ class: string; value: number; pct: number }>;

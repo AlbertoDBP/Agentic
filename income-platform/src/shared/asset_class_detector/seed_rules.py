@@ -121,8 +121,13 @@ SEED_RULES = [
         "asset_class": "PREFERRED_STOCK",
         "rule_type": "ticker_pattern",
         "rule_config": {
-            "suffixes": ["-PA", "-PB", "-PC", "-PD", "-PE", "-PF",
-                         ".PR", "^A", "^B", "^C"]
+            "suffixes": [
+                # Standard preferred series A-Z (covers AGNCZ and any other -PZ issuer)
+                "-PA", "-PB", "-PC", "-PD", "-PE", "-PF", "-PG", "-PH", "-PI",
+                "-PJ", "-PK", "-PL", "-PM", "-PN", "-PO", "-PP", "-PQ", "-PR",
+                "-PS", "-PT", "-PU", "-PV", "-PW", "-PX", "-PY", "-PZ",
+                ".PR", "^A", "^B", "^C", "^D", "^E", "^F",
+            ]
         },
         "priority": 5,
         "confidence_weight": 0.90,

@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import type { DataQualityIssue } from "@/lib/types";
+import { X } from "lucide-react";
 
 async function fetchIssues(params: Record<string, string>): Promise<DataQualityIssue[]> {
   const qs = new URLSearchParams(params).toString();
@@ -20,6 +21,7 @@ export default function DataQualityPage() {
   const [severity, setSeverity] = useState("");
   const [status, setStatus] = useState("missing");
   const [loading, setLoading] = useState(false);
+  const [detail, setDetail] = useState<DataQualityIssue | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -104,12 +106,15 @@ export default function DataQualityPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {issues.map((issue) => (
-                <IssueRow key={issue.id} issue={issue} onAction={load} />
+                <IssueRow key={issue.id} issue={issue} onAction={load} onDetail={setDetail} />
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {/* Detail panel */}
+      {detail && <DetailPanel issue={detail} onClose={() => setDetail(null)} onAction={async () => { setDetail(null); await load(); }} />}
     </div>
   );
 }
@@ -123,7 +128,7 @@ function KpiCard({ label, value, color }: { label: string; value: number; color:
   );
 }
 
-function IssueRow({ issue, onAction }: { issue: DataQualityIssue; onAction: () => void }) {
+function IssueRow({ issue, onAction, onDetail }: { issue: DataQualityIssue; onAction: () => void; onDetail: (i: DataQualityIssue) => void }) {
   const [actioning, setActioning] = useState(false);
 
   const action = async (endpoint: string) => {
@@ -136,7 +141,7 @@ function IssueRow({ issue, onAction }: { issue: DataQualityIssue; onAction: () =
   const diagCode = (issue.diagnostic as Record<string, string> | null)?.code ?? "—";
 
   return (
-    <tr className="hover:bg-muted/50">
+    <tr className="hover:bg-muted/50 cursor-pointer" onClick={() => onDetail(issue)}>
       <td className="px-3 py-2 font-mono font-medium text-foreground">{issue.symbol}</td>
       <td className="px-3 py-2 text-muted-foreground">{issue.asset_class}</td>
       <td className="px-3 py-2 font-mono text-foreground">{issue.field_name}</td>
@@ -147,10 +152,10 @@ function IssueRow({ issue, onAction }: { issue: DataQualityIssue; onAction: () =
       </td>
       <td className="px-3 py-2 text-muted-foreground">{issue.status}</td>
       <td className="px-3 py-2 text-center text-muted-foreground">{issue.attempt_count}</td>
-      <td className="px-3 py-2" title={JSON.stringify(issue.diagnostic, null, 2)}>
-        <span className="cursor-help font-mono text-xs text-muted-foreground">{diagCode}</span>
-      </td>
       <td className="px-3 py-2">
+        <span className="font-mono text-xs text-muted-foreground">{diagCode}</span>
+      </td>
+      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
         <div className="flex gap-2">
           <button
             disabled={actioning}
@@ -177,4 +182,102 @@ function IssueRow({ issue, onAction }: { issue: DataQualityIssue; onAction: () =
       </td>
     </tr>
   );
+}
+
+function DetailPanel({ issue, onClose, onAction }: { issue: DataQualityIssue; onClose: () => void; onAction: () => Promise<void> }) {
+  const [actioning, setActioning] = useState(false);
+
+  const action = async (endpoint: string) => {
+    setActioning(true);
+    await fetch(`/api/data-quality/issues/${issue.id}/${endpoint}`, { method: "POST" });
+    setActioning(false);
+    await onAction();
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+
+      {/* Panel */}
+      <div className="fixed right-0 top-0 h-full w-full max-w-md bg-card border-l border-border z-50 flex flex-col overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div>
+            <span className="font-mono font-bold text-foreground text-base">{issue.symbol}</span>
+            <span className="ml-2 text-sm text-muted-foreground">{issue.field_name}</span>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Summary grid */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Severity" value={issue.severity} className={issue.severity === "critical" ? "text-red-400" : "text-amber-400"} />
+            <Field label="Status" value={issue.status ?? "—"} />
+            <Field label="Asset Class" value={issue.asset_class ?? "—"} />
+            <Field label="Attempts" value={String(issue.attempt_count ?? 0)} />
+            <Field label="Created" value={fmt(issue.created_at)} />
+            <Field label="Last Attempt" value={fmt(issue.last_attempted_at)} />
+            {issue.source_used && <Field label="Source Used" value={issue.source_used} />}
+            {issue.resolved_at && <Field label="Resolved At" value={fmt(issue.resolved_at)} />}
+          </div>
+
+          {/* Diagnostic */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Diagnostic</p>
+            {issue.diagnostic ? (
+              <pre className="rounded-md bg-muted/60 border border-border p-3 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-all">
+                {JSON.stringify(issue.diagnostic, null, 2)}
+              </pre>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No diagnostic data</p>
+            )}
+          </div>
+        </div>
+
+        {/* Actions footer */}
+        <div className="px-5 py-4 border-t border-border flex gap-3">
+          <button
+            disabled={actioning}
+            onClick={() => action("retry")}
+            className="flex-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 disabled:opacity-50 transition-colors"
+          >
+            Retry
+          </button>
+          <button
+            disabled={actioning}
+            onClick={() => action("reclassify")}
+            className="flex-1 rounded-md border border-border hover:bg-muted text-foreground text-sm font-medium py-2 disabled:opacity-50 transition-colors"
+          >
+            Reclassify
+          </button>
+          <button
+            disabled={actioning}
+            onClick={() => action("mark-na")}
+            className="flex-1 rounded-md border border-border hover:bg-muted text-muted-foreground text-sm font-medium py-2 disabled:opacity-50 transition-colors"
+          >
+            Mark N/A
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Field({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">{label}</p>
+      <p className={`text-sm font-medium text-foreground ${className ?? ""}`}>{value}</p>
+    </div>
+  );
+}
+
+function fmt(v: string | null | undefined): string {
+  if (!v) return "—";
+  try { return new Date(v).toLocaleString(); } catch { return String(v); }
 }

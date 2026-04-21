@@ -121,15 +121,29 @@ export default function SettingsPage() {
     }
   }, [activePortfolio, configPortfolioId]);
 
-  // Reload config whenever the selected portfolio changes
+  // Reload config whenever the selected portfolio changes.
+  // Seed income_goal from portfolio.monthly_income_target * 12 when no localStorage entry.
   useEffect(() => {
     if (!configPortfolioId) return;
     try {
       const s = localStorage.getItem(`portfolioConfig-${configPortfolioId}`);
-      if (s) setConfig(JSON.parse(s));
-      else setConfig(DEFAULT_CONFIG);
+      if (s) {
+        const parsed = JSON.parse(s) as PortfolioConfig;
+        // If income_goal is the default placeholder, prefer backend value
+        if (!parsed.income_goal || parsed.income_goal === DEFAULT_CONFIG.income_goal) {
+          const p = portfolios.find((x) => x.id === configPortfolioId);
+          if (p?.monthly_income_target && p.monthly_income_target > 0) {
+            parsed.income_goal = Math.round(p.monthly_income_target * 12);
+          }
+        }
+        setConfig(parsed);
+      } else {
+        const p = portfolios.find((x) => x.id === configPortfolioId);
+        const backendGoal = p?.monthly_income_target ? Math.round(p.monthly_income_target * 12) : DEFAULT_CONFIG.income_goal;
+        setConfig({ ...DEFAULT_CONFIG, income_goal: backendGoal });
+      }
     } catch { setConfig(DEFAULT_CONFIG); }
-  }, [configPortfolioId]);
+  }, [configPortfolioId, portfolios]);
 
   // Load TTL config
   useEffect(() => {
@@ -180,9 +194,19 @@ export default function SettingsPage() {
     flash();
   };
 
-  const saveConfig = () => {
+  const saveConfig = async () => {
     if (!configPortfolioId) return;
     localStorage.setItem(`portfolioConfig-${configPortfolioId}`, JSON.stringify(config));
+    // Persist income goal to backend so income-projection can read it without localStorage
+    try {
+      await fetch(`/api/portfolios/${configPortfolioId}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          monthly_income_target: config.income_goal > 0 ? config.income_goal / 12 : null,
+        }),
+      });
+    } catch { /* non-critical — localStorage save already done */ }
     flash();
   };
 

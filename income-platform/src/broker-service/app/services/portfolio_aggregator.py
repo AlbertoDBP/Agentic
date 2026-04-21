@@ -100,6 +100,8 @@ async def aggregate_portfolio(
     total_income = sum(p.get("annual_income") or 0 for p in positions)
     total_cost = sum(p.get("cost_basis") or 0 for p in positions)
     total_dividends = sum(p.get("total_dividends_received") or 0 for p in positions)
+    total_fee_drag = sum(p.get("annual_fee_drag") or 0 for p in positions)
+    total_net_income = sum(p.get("net_annual_income") or 0 for p in positions)
 
     hhs_values, hhs_weights = [], []
     unsafe_count = 0
@@ -156,14 +158,8 @@ async def aggregate_portfolio(
         naa_yield = round(total_income / total_value, 4) if total_value > 0 else None
         naa_yield_pre_tax = True
 
-    # Aggregate Yield on Cost = income / total cost basis.
-    # Use after-tax income (same basis as NAA Yield) to stay comparable: if tax service
-    # is available, rebase the after-tax yield from current value to cost basis.
-    if _tax_nay is not None and total_value > 0 and total_cost > 0:
-        _after_tax_income = _tax_nay * float(total_value)   # recover dollar amount
-        agg_yoc = round(_after_tax_income / float(total_cost), 4)
-    else:
-        agg_yoc = round(total_income / total_cost, 4) if total_cost > 0 else None
+    # Aggregate Yield on Cost = gross income / cost basis (pre-tax, cost-basis denominator).
+    agg_yoc = round(total_income / total_cost, 4) if total_cost > 0 else None
 
     # HHI on position weights
     weights = [p.get("current_value", 0) / total_value for p in positions if total_value > 0]
@@ -198,11 +194,38 @@ async def aggregate_portfolio(
 
     unrealized_gl = round(total_value - total_cost, 2) if total_cost > 0 else None
 
+    # Aggregate expense ratio = total fee drag / portfolio value
+    agg_expense_ratio = round(total_fee_drag / total_value, 4) if total_value > 0 and total_fee_drag > 0 else None
+
+    # After-tax yield = (gross income - taxes) / portfolio value, i.e. nay + fee drag.
+    # Prefer tax service derivation; fall back to position-level net_annual_income if unavailable.
+    if _tax_nay is not None:
+        _fee_ratio = agg_expense_ratio or 0.0
+        after_tax_yield = round(_tax_nay + _fee_ratio, 4)
+    elif total_value > 0 and total_net_income > 0:
+        after_tax_yield = round(total_net_income / total_value, 4)
+    else:
+        after_tax_yield = None
+
+    # Income-weighted avg tax character (qualified/ordinary percentages)
+    if total_income > 0:
+        _q_sum = sum((p.get("tax_qualified_pct") or 100) * (p.get("annual_income") or 0) for p in positions)
+        _o_sum = sum((p.get("tax_ordinary_pct") or 0) * (p.get("annual_income") or 0) for p in positions)
+        agg_tax_qualified_pct = round(_q_sum / total_income, 1)
+        agg_tax_ordinary_pct = round(_o_sum / total_income, 1)
+    else:
+        agg_tax_qualified_pct = None
+        agg_tax_ordinary_pct = None
+
     return {
         "agg_hhs": agg_hhs,
         "naa_yield": naa_yield,
         "naa_yield_pre_tax": naa_yield_pre_tax,
         "agg_yoc": agg_yoc,
+        "agg_expense_ratio": agg_expense_ratio,
+        "after_tax_yield": after_tax_yield,
+        "agg_tax_qualified_pct": agg_tax_qualified_pct,
+        "agg_tax_ordinary_pct": agg_tax_ordinary_pct,
         "total_value": round(total_value, 2),
         "total_cost": round(total_cost, 2),
         "unrealized_gl": unrealized_gl,
@@ -221,6 +244,8 @@ async def aggregate_portfolio(
 def _empty_aggregate() -> dict:
     return {
         "agg_hhs": None, "naa_yield": None, "naa_yield_pre_tax": True, "agg_yoc": None,
+        "agg_expense_ratio": None, "after_tax_yield": None,
+        "agg_tax_qualified_pct": None, "agg_tax_ordinary_pct": None,
         "total_value": 0.0, "total_cost": 0.0, "unrealized_gl": None,
         "annual_income": 0.0, "total_return": None, "hhi": 0.0,
         "unsafe_count": 0, "gate_fail_count": 0, "holding_count": 0,

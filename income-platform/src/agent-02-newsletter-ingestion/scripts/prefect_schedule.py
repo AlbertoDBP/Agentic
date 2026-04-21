@@ -3,8 +3,8 @@ Agent 02 — Newsletter Ingestion Service
 Script: Register Prefect flow schedules
 
 Registers two flows with their production schedules:
-  harvester_flow    — Tuesday + Friday 7AM ET  (0 7 * * 2,5)
-  intelligence_flow — Monday 6AM ET            (0 6 * * 1)
+  harvester_flow    — Daily 7AM ET             (0 7 * * *)
+  intelligence_flow — Daily 6AM ET             (0 6 * * *)
 
 Usage:
     python scripts/prefect_schedule.py
@@ -26,7 +26,7 @@ FLOW_SCHEDULES = [
         "name": "agent-02-harvester",
         "module": "app.flows.harvester_flow",
         "flow_fn": "harvester_flow",
-        "cron": "0 7 * * 2,5",          # Tuesday + Friday 7AM ET
+        "cron": "0 7 * * *",             # Daily 7AM ET
         "timezone": "America/New_York",
         "description": "Ingest SA analyst articles + extract income signals",
     },
@@ -34,7 +34,7 @@ FLOW_SCHEDULES = [
         "name": "agent-02-intelligence",
         "module": "app.flows.intelligence_flow",
         "flow_fn": "intelligence_flow",
-        "cron": "0 6 * * 1",            # Monday 6AM ET
+        "cron": "0 6 * * *",            # Daily 6AM ET
         "timezone": "America/New_York",
         "description": "Staleness decay + backtest + philosophy + consensus rebuild",
     },

@@ -92,15 +92,30 @@ export default function ProjectionPage() {
 
   const monthlyAvg = data.length > 0 ? totalProjected / 12 : 0;
 
-  const goal = useMemo(() => {
-    if (typeof window === "undefined") return 0;
+  // Goal: primary source is monthly_income_target from portfolio (backend-persisted),
+  // fall back to localStorage income_goal for backward compatibility.
+  const [goal, setGoal] = useState(0);
+  useEffect(() => {
+    const getGoalForPortfolio = (p: typeof portfolios[0] | null | undefined): number => {
+      if (!p) return 0;
+      // Backend value takes priority
+      if (p.monthly_income_target != null && p.monthly_income_target > 0) {
+        return p.monthly_income_target * 12;
+      }
+      // Fallback: localStorage
+      try {
+        const c = JSON.parse(localStorage.getItem(`portfolioConfig-${p.id}`) ?? "{}");
+        return Number(c.income_goal) || 0;
+      } catch { return 0; }
+    };
+
     if (selectedScope === "all") {
-      return portfolios.reduce((sum, p) => {
-        try { const c = JSON.parse(localStorage.getItem(`portfolioConfig-${p.id}`) ?? "{}"); return sum + (Number(c.income_goal) || 0); } catch { return sum; }
-      }, 0);
+      setGoal(portfolios.reduce((sum, p) => sum + getGoalForPortfolio(p), 0));
+    } else {
+      const pid = selectedScope === "active" ? (activePortfolio?.id ?? "") : selectedScope;
+      const p = portfolios.find((x) => x.id === pid) ?? activePortfolio;
+      setGoal(getGoalForPortfolio(p));
     }
-    const pid = selectedScope === "active" ? (activePortfolio?.id ?? "") : selectedScope;
-    try { const c = JSON.parse(localStorage.getItem(`portfolioConfig-${pid}`) ?? "{}"); return Number(c.income_goal) || 0; } catch { return 0; }
   }, [selectedScope, portfolios, activePortfolio]);
 
   const goalPct = goal > 0 ? (totalProjected / goal) * 100 : 0;

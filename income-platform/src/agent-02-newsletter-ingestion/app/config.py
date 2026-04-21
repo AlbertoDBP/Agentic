@@ -64,8 +64,8 @@ class Settings(BaseSettings):
     default_min_accuracy_threshold: float = 0.5
     default_kmeans_min_articles: int = 20      # articles before K-Means promotion
     default_kmeans_k: int = 5                  # number of philosophy clusters
-    harvester_cron: str = "0 7 * * 2,5"        # Tue + Fri 7AM ET
-    intelligence_cron: str = "0 6 * * 1"       # Monday 6AM ET
+    harvester_cron: str = "0 7 * * *"           # Daily 7AM ET
+    intelligence_cron: str = "0 6 * * *"       # Daily 6AM ET
 
     # ── Agent 03 Integration ──────────────────────────────────────────────────
     income_scoring_url: str = "http://income-scoring-service:8003"

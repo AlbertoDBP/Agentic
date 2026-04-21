@@ -29,8 +29,12 @@ def fetch_active_suggestions(
 ) -> list:
     """
     Query platform_shared.analyst_suggestions joined with analysts.
+    Returns ALL suggestions (active + expired) so analysts who published
+    recommendations are always visible — expired ones carry is_expired=True
+    so the scanner UI can surface them as stale/vetoed rather than hiding them.
+
     When include_history=False (default): only is_active=TRUE rows.
-    When include_history=True: all rows within TTL window (active + historical).
+    When include_history=True: all rows (active + historical).
     Each result dict includes is_proposed + proposed_at from proposal_drafts.
     """
     active_filter = "" if include_history else "AND s.is_active = TRUE"
@@ -57,8 +61,7 @@ def fetch_active_suggestions(
         FROM platform_shared.analyst_suggestions s
         JOIN platform_shared.analysts a ON a.id = s.analyst_id
         LEFT JOIN platform_shared.securities sec ON sec.symbol = s.ticker
-        WHERE s.expires_at > NOW()
-          AND s.staleness_weight >= :staleness_weight
+        WHERE s.staleness_weight >= :staleness_weight
           {active_filter}
     """
     params: dict = {"staleness_weight": min_staleness_weight}
@@ -75,9 +78,21 @@ def fetch_active_suggestions(
 
     rows = conn.execute(text(query), params).fetchall()
     result = []
+    from datetime import timezone
+    from datetime import datetime as _dt
+    now_utc = _dt.now(timezone.utc)
     for row in rows:
         row_dict = dict(zip(_SUGGESTION_COLUMNS, row))
         row_dict.setdefault("is_active", True)
+        # Mark whether the TTL window has passed so the UI can show stale/vetoed
+        exp = row_dict.get("expires_at")
+        if exp is not None:
+            if hasattr(exp, "tzinfo") and exp.tzinfo is None:
+                from datetime import timezone as _tz
+                exp = exp.replace(tzinfo=_tz.utc)
+            row_dict["is_expired"] = exp < now_utc
+        else:
+            row_dict["is_expired"] = False
         result.append(row_dict)
 
     # Annotate is_proposed + proposed_at from proposal_drafts
@@ -117,8 +132,10 @@ def build_analyst_context(suggestion_row: dict) -> dict:
         "price_guidance_value": suggestion_row.get("price_guidance_value"),
         "staleness_weight":     _to_float(suggestion_row.get("staleness_weight")),
         "sourced_at":           str(suggestion_row["sourced_at"]) if suggestion_row.get("sourced_at") else None,
+        "expires_at":           str(suggestion_row["expires_at"]) if suggestion_row.get("expires_at") else None,
         "recommendation":       suggestion_row.get("recommendation"),
         "is_active":            bool(suggestion_row.get("is_active", True)),
+        "is_expired":           bool(suggestion_row.get("is_expired", False)),
         "is_proposed":          bool(suggestion_row.get("is_proposed", False)),
         "proposed_at":          suggestion_row.get("proposed_at"),
     }

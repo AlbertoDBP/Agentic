@@ -700,6 +700,11 @@ def _get_positions_for_portfolio(db: Session, portfolio_id: str) -> list[dict]:
         SELECT pos.symbol, pos.current_value, pos.annual_income,
                pos.total_cost_basis AS cost_basis,
                pos.total_dividends_received,
+               COALESCE(pos.annual_fee_drag, 0)    AS annual_fee_drag,
+               COALESCE(pos.net_annual_income, pos.annual_income, 0) AS net_annual_income,
+               COALESCE(sec.management_fee, 0)     AS management_fee,
+               COALESCE(sec.tax_qualified_pct, 100) AS tax_qualified_pct,
+               COALESCE(sec.tax_ordinary_pct,  0)   AS tax_ordinary_pct,
                sec.asset_type,
                COALESCE(
                    NULLIF(pos.sector, ''),
