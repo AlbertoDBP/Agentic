@@ -200,7 +200,7 @@ async def aggregate_portfolio(
     # After-tax yield = (gross income - taxes) / portfolio value, i.e. nay + fee drag.
     # Prefer tax service derivation; fall back to position-level net_annual_income if unavailable.
     if _tax_nay is not None:
-        _fee_ratio = agg_expense_ratio or 0.0
+        _fee_ratio = float(agg_expense_ratio or 0.0)
         after_tax_yield = round(_tax_nay + _fee_ratio, 4)
     elif total_value > 0 and total_net_income > 0:
         after_tax_yield = round(total_net_income / total_value, 4)
