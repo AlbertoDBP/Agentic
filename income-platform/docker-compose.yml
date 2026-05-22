@@ -81,6 +81,7 @@ services:
       - PYTHONUNBUFFERED=1
       - PREFECT_SERVER_ALLOW_EPHEMERAL_MODE=true
       - PREFECT_HOME=/tmp/prefect
+      - PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS=120
     ports:
       - "8002:8002"
     restart: unless-stopped
