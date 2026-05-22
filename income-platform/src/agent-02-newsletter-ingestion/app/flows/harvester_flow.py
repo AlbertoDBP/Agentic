@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from prefect import flow, task, get_run_logger
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db_context
@@ -523,7 +524,6 @@ def harvester_flow(analyst_ids: Optional[list[int]] = None):
     duration_seconds = (flow_end - flow_start).total_seconds()
 
     try:
-        from sqlalchemy import text
         with get_db_context() as db:
             db.execute(text("""
                 INSERT INTO platform_shared.flow_run_log
