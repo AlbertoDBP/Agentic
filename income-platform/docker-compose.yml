@@ -34,6 +34,32 @@ services:
       start_period: 30s
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Self-hosted Valkey (replaces DO managed Valkey). Pure cache — no persistence.
+# See documentation/deployment/migrate-do-valkey-to-self-hosted.md
+# ─────────────────────────────────────────────────────────────────────────────
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: valkey
+    command:
+      - "valkey-server"
+      - "--maxmemory"
+      - "256mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--save"
+      - ""
+      - "--appendonly"
+      - "no"
+    restart: unless-stopped
+    mem_limit: 320m
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PgBouncer — Connection pooler, upstream = self-hosted `postgres` container
 # Upstream:  DATABASE_URL (real DO Postgres, set in .env)
 # Services connect to:  PGBOUNCER_URL (e.g. postgresql://user:pass@pgbouncer:5432/dbname)
