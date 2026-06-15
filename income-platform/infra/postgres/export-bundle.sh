@@ -22,7 +22,7 @@ REPO_DIR="${REPO_DIR:-/opt/Agentic/income-platform}"
 OUT_DIR="${OUT_DIR:-/opt/backups}"
 DB_USER="${DB_USER:-dbpmanager}"
 DB_NAME="${DB_NAME:-income_platform}"
-PG_IMAGE="${PG_IMAGE:-pgvector/pgvector:pg16}"
+PG_IMAGE="${PG_IMAGE:-pgvector/pgvector:pg18}"   # must be >= source server major (DO is PG 18.x)
 SOURCE_DSN="${SOURCE_DSN:-}"          # empty = dump from local `postgres` container
 
 TS="$(date +%Y%m%d_%H%M%S)"

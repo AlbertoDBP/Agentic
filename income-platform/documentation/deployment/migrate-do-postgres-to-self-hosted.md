@@ -23,7 +23,7 @@ working) and just move *where it runs* — into a `pgvector/pgvector` container 
 | DO upstream | `income-platform-db-do-user-32765812-0.j.db.ondigitalocean.com:25060` |
 | DB / user / schema | db `income_platform`, user `dbpmanager`, primary schema `platform_shared` (~97 objects) |
 | Extensions required | `vector` (pgvector), `uuid-ossp`, `pg_trgm` |
-| Source PG version | 15.x (DO managed) → target **pg16** (restore 15→16 is supported; never the reverse) |
+| Source PG version | **18.4** (DO managed) → target **pg18** (restore/dump major must be ≥ source; never the reverse) |
 | `.env` | git-ignored ✅ |
 
 > ⚠️ **Rotate the password.** The DO password is currently embedded in `.env`/`DATABASE_URL`.
@@ -43,7 +43,7 @@ named volume at the bottom of the file.
   # Only PgBouncer talks to it over the docker network — no host port exposed.
   # ───────────────────────────────────────────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg18
     container_name: postgres
     environment:
       - POSTGRES_USER=${PG_USER}
@@ -190,10 +190,10 @@ cd /opt/Agentic/income-platform
 docker compose stop $(docker compose config --services | grep -vx postgres)
 ```
 
-**Dump** (run pg_dump from the pg16 image so the dumper version ≥ DO's 15; reach DO over the internet):
+**Dump** (run pg_dump from the pg18 image so the dumper major ≥ DO's 18.4; reach DO over the internet):
 
 ```bash
-docker run --rm -v "$PWD/backups:/backups" pgvector/pgvector:pg16 \
+docker run --rm -v "$PWD/backups:/backups" pgvector/pgvector:pg18 \
   pg_dump --no-owner --no-privileges -Fc \
   "postgresql://dbpmanager:<DO_PASSWORD>@income-platform-db-do-user-32765812-0.j.db.ondigitalocean.com:25060/income_platform?sslmode=require" \
   -f /backups/income_platform_predump.dump
@@ -299,7 +299,7 @@ For point-in-time recovery later, add WAL archiving; nightly dumps are the minim
 Test a restore at least once into a throwaway DB:
 
 ```bash
-docker run --rm -d --name pgrestore-test -e POSTGRES_PASSWORD=test pgvector/pgvector:pg16
+docker run --rm -d --name pgrestore-test -e POSTGRES_PASSWORD=test pgvector/pgvector:pg18
 # ...createdb, pg_restore the latest dump, count rows, then: docker rm -f pgrestore-test
 ```
 
