@@ -68,6 +68,14 @@ temp/
 # Backups
 *.bak
 *.backup
+# DB dumps / export bundles — NEVER commit (contain secrets + financial data).
+# Keep these on local/off-box storage, not in git history.
+*.dump
+*.tgz
+*.tar.gz
+*.gpg
+/backups/
+income_platform_export_*
 .env
 src/*/.env
 .env
