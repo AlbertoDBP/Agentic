@@ -47,6 +47,8 @@ API runs at `http://localhost:3000`.
 
 ### 3. Mobile (iPhone via Expo Go)
 
+See **[mobile/README.md](./mobile/README.md)** for full mobile setup.
+
 ```bash
 cd charity-inventory/mobile
 cp .env.example .env

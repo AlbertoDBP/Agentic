@@ -2,14 +2,21 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Alert } from 'react-native';
 import { api } from '../src/api/client';
-import { Field, PrimaryButton, Screen, Subtitle, Title } from '../src/components/ui';
+import { Card, Field, LoadingState, PrimaryButton, Screen, Subtitle, Title } from '../src/components/ui';
 import { useApp } from '../src/context/AppContext';
+import { useRequireSession } from '../src/hooks/useRequireAuth';
 
 export default function ProductScreen() {
   const { scanContext, setScanContext } = useApp();
+  const { loading } = useRequireSession();
   const [name, setName] = useState(scanContext?.product?.name ?? '');
   const [description, setDescription] = useState(scanContext?.product?.description ?? '');
+  const [unit, setUnit] = useState(scanContext?.product?.unit ?? 'each');
   const [submitting, setSubmitting] = useState(false);
+
+  if (loading) {
+    return <LoadingState />;
+  }
 
   if (!scanContext) {
     router.replace('/scan');
@@ -31,16 +38,14 @@ export default function ProductScreen() {
         const created = await api.createProduct({
           name: name.trim(),
           description: description.trim() || undefined,
+          unit: unit.trim() || 'each',
           barcode: scanContext.barcode,
           centerId: scanContext.centerId,
         });
         product = created.product;
       }
 
-      setScanContext({
-        ...scanContext,
-        product,
-      });
+      setScanContext({ ...scanContext, product });
       router.push('/quantity');
     } catch {
       Alert.alert('Unable to save product', 'Please try again.');
@@ -50,31 +55,37 @@ export default function ProductScreen() {
   };
 
   return (
-    <Screen>
+    <Screen scroll>
       <Title>{knownProduct ? 'Product Found' : 'New Product'}</Title>
       <Subtitle>Barcode: {scanContext.barcode}</Subtitle>
-      {knownProduct ? (
-        <>
-          <Subtitle>
-            {scanContext.product?.name} ({scanContext.product?.unit})
-          </Subtitle>
-          <PrimaryButton
-            label={submitting ? 'Continuing...' : 'Continue to Quantity'}
-            onPress={continueWithProduct}
-            disabled={submitting}
-          />
-        </>
+
+      {knownProduct && scanContext.product ? (
+        <Card>
+          <Subtitle>{scanContext.product.name}</Subtitle>
+          <Subtitle>Unit: {scanContext.product.unit}</Subtitle>
+          {scanContext.product.description ? (
+            <Subtitle>{scanContext.product.description}</Subtitle>
+          ) : null}
+        </Card>
       ) : (
         <>
-          <Field label="Product name" value={name} onChangeText={setName} />
-          <Field label="Description (optional)" value={description} onChangeText={setDescription} />
-          <PrimaryButton
-            label={submitting ? 'Saving...' : 'Create and Continue'}
-            onPress={continueWithProduct}
-            disabled={submitting}
+          <Field label="Product name" value={name} onChangeText={setName} placeholder="e.g. Canned Beans" />
+          <Field label="Unit" value={unit} onChangeText={setUnit} placeholder="each, can, bag..." />
+          <Field
+            label="Description (optional)"
+            value={description}
+            onChangeText={setDescription}
+            placeholder="Size, brand, notes..."
           />
         </>
       )}
+
+      <PrimaryButton
+        label={submitting ? 'Continuing...' : knownProduct ? 'Continue to Quantity' : 'Create and Continue'}
+        onPress={continueWithProduct}
+        disabled={submitting}
+      />
+      <PrimaryButton label="Scan Again" variant="secondary" onPress={() => router.back()} />
     </Screen>
   );
 }

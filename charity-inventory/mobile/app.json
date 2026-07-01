@@ -4,15 +4,33 @@
     "slug": "charity-inventory",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "scheme": "charity-inventory",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1d4ed8"
+    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.charity.inventory",
       "infoPlist": {
         "NSCameraUsageDescription": "Camera access is required to scan product barcodes for inventory."
       }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1d4ed8"
+      },
+      "package": "com.charity.inventory",
+      "permissions": ["android.permission.CAMERA"]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
     },
     "plugins": [
       "expo-router",
@@ -25,6 +43,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "replace-with-eas-project-id"
+      }
     }
   }
 }

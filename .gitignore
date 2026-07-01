@@ -148,6 +148,7 @@ dist/
 # Expo
 .expo/
 web-build/
+dist-web/
 
 # Charity inventory local env
 charity-inventory/api/.env

@@ -3,12 +3,14 @@ import { useCallback, useState } from 'react';
 import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../src/api/client';
-import { PrimaryButton, Screen, Subtitle, Title } from '../src/components/ui';
+import { LoadingState, PrimaryButton, Screen, Subtitle, Title } from '../src/components/ui';
 import { useApp } from '../src/context/AppContext';
+import { useRequireSession } from '../src/hooks/useRequireAuth';
 import type { InventoryEntry } from '../src/types';
 
 export default function SummaryScreen() {
   const { sessionId, selectedCenter, setSessionId, setSelectedCenter } = useApp();
+  const { loading: authLoading } = useRequireSession();
   const [entries, setEntries] = useState<InventoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [completing, setCompleting] = useState(false);
@@ -30,7 +32,7 @@ export default function SummaryScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadSession();
+      void loadSession();
     }, [sessionId])
   );
 
@@ -51,11 +53,17 @@ export default function SummaryScreen() {
     }
   };
 
+  const totalUnits = entries.reduce((sum, entry) => sum + entry.quantity, 0);
+
+  if (authLoading) {
+    return <LoadingState />;
+  }
+
   return (
     <Screen>
       <Title>Session Summary</Title>
       <Subtitle>
-        {selectedCenter?.name ?? 'Center'} · {entries.length} item(s)
+        {selectedCenter?.name ?? 'Center'} · {entries.length} product(s) · {totalUnits} unit(s)
       </Subtitle>
       {loading ? (
         <Subtitle>Loading entries...</Subtitle>
@@ -63,16 +71,22 @@ export default function SummaryScreen() {
         <FlatList
           data={entries}
           keyExtractor={(item) => String(item.id)}
-          contentContainerStyle={styles.list}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
           renderItem={({ item }) => (
             <View style={styles.row}>
               <Text style={styles.rowTitle}>{item.product_name}</Text>
               <Text style={styles.rowMeta}>
                 Qty {item.quantity} {item.product_unit}
               </Text>
+              {item.scanned_barcode ? (
+                <Text style={styles.rowBarcode}>UPC {item.scanned_barcode}</Text>
+              ) : null}
             </View>
           )}
-          ListEmptyComponent={<Subtitle>No entries yet. Scan a product to begin.</Subtitle>}
+          ListEmptyComponent={
+            <Subtitle>No entries yet. Scan a product to begin.</Subtitle>
+          }
         />
       )}
       <PrimaryButton label="Continue Scanning" onPress={() => router.push('/scan')} />
@@ -87,6 +101,9 @@ export default function SummaryScreen() {
 
 const styles = StyleSheet.create({
   list: {
+    flex: 1,
+  },
+  listContent: {
     gap: 10,
     paddingBottom: 8,
   },
@@ -105,6 +122,11 @@ const styles = StyleSheet.create({
   rowMeta: {
     fontSize: 14,
     color: '#64748b',
+    marginTop: 4,
+  },
+  rowBarcode: {
+    fontSize: 12,
+    color: '#94a3b8',
     marginTop: 4,
   },
 });
