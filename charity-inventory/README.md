@@ -97,35 +97,16 @@ Sample UPCs in seed data: `041331024816`, `071518000012`.
 
 ## Hostinger deployment
 
-### MySQL
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for the full step-by-step guide.
 
-1. Create a MySQL database in Hostinger hPanel.
-2. Note host, port, database name, user, and password.
+Quick reference:
 
-### Node.js API
-
-1. Upload or deploy `charity-inventory/api` to Hostinger Node.js hosting.
-2. Set environment variables in hPanel:
-
-```
-PORT=3000
-NODE_ENV=production
-DB_HOST=<hostinger-mysql-host>
-DB_PORT=3306
-DB_USER=<user>
-DB_PASSWORD=<password>
-DB_NAME=<database>
-JWT_SECRET=<long-random-secret>
-JWT_EXPIRES_IN=24h
-CORS_ORIGIN=*
-```
-
-3. Set start command: `npm run migrate && npm start`
-4. Build step: `npm install && npm run build`
-
-### Mobile production
-
-Point `EXPO_PUBLIC_API_URL` to your Hostinger API URL (e.g. `https://api.yourdomain.com`).
+1. Provision MySQL in hPanel and note connection details.
+2. Deploy `charity-inventory/api/` to Hostinger Node.js hosting.
+3. Set environment variables (see `api/.env.example`).
+4. Build: `npm install && npm run build`
+5. Start: `npm run start:prod` (runs migrations, then starts the API)
+6. Point mobile `EXPO_PUBLIC_API_URL` to your HTTPS API URL (e.g. `https://api.yourdomain.com`).
 
 ## Database schema
 
