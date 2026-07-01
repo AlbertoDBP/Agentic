@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Charity Inventory",
+    "slug": "charity-inventory",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "charity-inventory",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.charity.inventory",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera access is required to scan product barcodes for inventory."
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Charity Inventory to access your camera to scan barcodes."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

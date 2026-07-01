@@ -1,0 +1,21 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: charity-inventory-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: charity_inventory
+      MYSQL_USER: charity_user
+      MYSQL_PASSWORD: change_me
+    ports:
+      - "3306:3306"
+    volumes:
+      - charity_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  charity_mysql_data:
