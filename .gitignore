@@ -139,3 +139,17 @@ local/
 # Project specific
 *.backup
 *.tmp
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Expo
+.expo/
+web-build/
+dist-web/
+
+# Charity inventory local env
+charity-inventory/api/.env
+charity-inventory/mobile/.env
